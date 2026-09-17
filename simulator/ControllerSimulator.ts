@@ -10,7 +10,8 @@
  *
  * @since 0.0.0
  */
-import { Deferred, Duration, Effect, Fiber, Match, pipe, Queue, Ref, Stream } from "effect"
+import { NodeSocketServer } from "@effect/platform-node"
+import { Deferred, Duration, Effect, Fiber, Match, pipe, Queue, Ref, Scope, Stream } from "effect"
 import * as A from "effect/Array"
 import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
@@ -33,7 +34,7 @@ import {
   TighteningResult
 } from "../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork, type ServerSide } from "../src/transport/InMemoryTransport.ts"
-import type { Endpoint } from "../src/transport/Transport.ts"
+import { ConnectionLost, type Endpoint } from "../src/transport/Transport.ts"
 
 const simulatorDevice = DeviceId.make("simulator")
 
@@ -219,8 +220,10 @@ const latestOf = (current: SessionState): O.Option<number> =>
  * @category constructors
  * @since 0.0.0
  */
-export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
-  const network = yield* InMemoryNetwork
+export const makeWith = Effect.fnUntraced(function* (
+  options: SimulatorOptions,
+  accept: Effect.Effect<Queue.Dequeue<ServerSide>, never, Scope.Scope>
+) {
   const store = MutableHashMap.empty<number, TighteningResult>()
   const state = yield* Ref.make<SessionState>({
     subscribed: false,
@@ -233,7 +236,7 @@ export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
   })
   const ackTimeout = options.ackTimeout ?? Duration.seconds(5)
   const ackAttempts = options.ackAttempts ?? 3
-  const accepted = yield* network.bind(options.endpoint)
+  const accepted = yield* accept
 
   const acceptLoop = yield* pipe(
     Queue.take(accepted),
@@ -332,4 +335,69 @@ export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
     produce,
     drop
   } satisfies Simulator
+})
+
+/**
+ * Starts a simulated controller on the in-memory network.
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
+export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
+  const network = yield* InMemoryNetwork
+  return yield* makeWith(options, network.bind(options.endpoint))
+})
+
+/**
+ * Starts a simulated controller on a real TCP port.
+ *
+ * Used by the localhost smoke test and by the demo when it runs over TCP: the
+ * same behaviour as the in-memory simulator, one socket layer lower.
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
+export const makeTcp = Effect.fnUntraced(function* (options: SimulatorOptions) {
+  const server = yield* Effect.mapError(
+    NodeSocketServer.make({ host: options.endpoint.host, port: options.endpoint.port }),
+    (error) => new Error(`could not listen: ${error}`)
+  )
+  const queue = yield* Queue.bounded<ServerSide>(64)
+  const openSockets = yield* Ref.make<ReadonlyArray<Deferred.Deferred<void>>>([])
+
+  // Node keeps a listening server alive until its sockets are gone, so the
+  // scope finalizer releases every accepted connection first.
+  yield* Effect.addFinalizer(() =>
+    pipe(
+      Ref.getAndSet(openSockets, []),
+      Effect.flatMap((pending) =>
+        Effect.forEach(pending, (closed) => Deferred.succeed(closed, undefined), { discard: true })
+      )
+    )
+  )
+
+  yield* Effect.forkChild(
+    server.run((socket) =>
+      Effect.gen(function* () {
+        const reader = yield* socket.reader
+        const writer = yield* socket.writer
+        const closed = yield* Deferred.make<void>()
+        yield* Ref.update(openSockets, (current) => A.append(current, closed))
+        const side: ServerSide = {
+          incoming: pipe(
+            Stream.fromPull(Effect.succeed(reader.pull)),
+            Stream.map((chunk) => typeof chunk === "string" ? encoder.encode(chunk) : chunk),
+            Stream.mapError((error) => new ConnectionLost({ reason: `${error}` }))
+          ),
+          send: (bytes) =>
+            Effect.mapError(writer.write(bytes), (error) => new ConnectionLost({ reason: `${error}` })),
+          close: () => Effect.asVoid(Deferred.succeed(closed, undefined))
+        }
+        yield* Queue.offer(queue, side)
+        return yield* Deferred.await(closed)
+      }).pipe(Effect.scoped, Effect.catchCause((cause) => Effect.logDebug("simulator socket ended", cause)))
+    )
+  )
+
+  return yield* makeWith(options, Effect.succeed(queue))
 })

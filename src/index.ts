@@ -71,7 +71,17 @@ export * as ResultRecovery from "./results/ResultRecovery.ts"
 /**
  * @since 0.0.0
  */
+export * as DevicePool from "./pool/DevicePool.ts"
+
+/**
+ * @since 0.0.0
+ */
 export * as InMemoryTransport from "./transport/InMemoryTransport.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * as TcpTransport from "./transport/TcpTransport.ts"
 
 /**
  * @since 0.0.0

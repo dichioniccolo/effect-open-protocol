@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: `in-progress` — P0 to P3 complete; next is P4 Pool + TCP
+Status: `in-progress` — P0 to P4 complete; next is P5 Chaos
 
 ## Phases
 
@@ -16,7 +16,7 @@ lands with its tests; `bunx tsc --noEmit` + `bun run test` green before the next
 | P1 Protocol | complete | Header, framer, encoder, MID Schemas, protocol errors; `Transport` service + in-memory transport; minimal simulator (handshake, keep-alive). | Roundtrip + chunking property tests pass. |
 | P2 Connection | complete | Pure state machine; handshake, keep-alive + silent death, single in-flight request/reply, reconnect Schedule, per-attempt Scope, observable state. | Plan `08` connection matrix passes under `TestClock`. |
 | P3 Delivery | complete | Subscribe + restore, handler-then-ACK, bounded dedup, backpressure; simulator resends un-ACKed per confirmed behavior. | Plan `08` delivery matrix passes. |
-| P4 Pool + TCP | pending | `DevicePool`, `TcpTransport`, simulator TCP server, localhost smoke test. | Isolation, add/remove, shutdown tests pass. |
+| P4 Pool + TCP | complete | `DevicePool`, `TcpTransport`, simulator TCP server, localhost smoke test. | Isolation, add/remove, shutdown tests pass. |
 | P5 Chaos | pending | Seeded faults; chaos demo CLI with summary; e2e invariant test. | Demo lost = 0; e2e zero lost / zero duplicate. |
 | P6 Hardening | pending | Review errors vs defects, races (disconnect during request/ACK), interruption, logging, API ergonomics, test quality (`quality-review-fix-loop`). | Zero required findings. |
 | P7 Docs | pending | README per plan `09`, 7 ADRs, scale-out ADR, NestJS vs Effect drafted with questions and completed with user, AI usage, learnings; clean-clone DoD run. | SPEC acceptance satisfied. |
