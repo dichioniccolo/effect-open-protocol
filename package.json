@@ -1,12 +1,38 @@
 {
-  "name": "effect-flow",
-  "module": "index.ts",
+  "name": "effect-open-protocol",
+  "version": "0.0.0",
+  "description": "Open Protocol client for tightening controllers, built with Effect: resilient connections and at-least-once result delivery.",
   "type": "module",
   "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
+  "engines": {
+    "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "bunx --bun vitest run",
+    "check": "tsc --noEmit",
+    "build": "tsdown",
+    "demo": "bun run demo/chaos.ts"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.0-rc.115",
+    "@types/bun": "latest",
+    "tsdown": "0.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
   }
 }

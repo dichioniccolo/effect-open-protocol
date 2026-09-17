@@ -11,6 +11,9 @@
 
     // Bundler mode
     "moduleResolution": "bundler",
+    "paths": {
+      "effect-open-protocol": ["./src/index.ts"]
+    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
