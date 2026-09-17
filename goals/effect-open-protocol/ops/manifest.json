@@ -3,13 +3,13 @@
   "initiative": {
     "id": "effect-open-protocol",
     "title": "Effect Open Protocol",
-    "status": "active",
+    "status": "completed-retained",
     "created": "2026-09-17",
     "updated": "2026-09-17",
     "packetAnchorDocument": "SPEC.md"
   },
   "packetPath": "goals/effect-open-protocol",
-  "lifecycle": "active",
+  "lifecycle": "completed-retained",
   "mission": "Effect v4 Open Protocol library with resilient connections, at-least-once ACK-after-handler delivery, device pool, seeded chaos simulator/demo, tsdown build and README.",
   "executionCapable": true,
   "reflectionRequired": true,
@@ -82,17 +82,17 @@
     {
       "id": "P7",
       "name": "Docs",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "id": "P8",
       "name": "PR to mergeable",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "id": "P9",
       "name": "Close",
-      "status": "pending"
+      "status": "complete"
     }
   ],
   "verificationCommands": [

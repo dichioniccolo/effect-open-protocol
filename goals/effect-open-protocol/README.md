@@ -2,7 +2,7 @@
 
 ## Status
 
-Lifecycle: `active`
+Lifecycle: `completed-retained`
 
 Source: [`ops/manifest.json`](./ops/manifest.json)
 
@@ -35,16 +35,15 @@ follow the instructions in goals/effect-open-protocol/GOAL.md
 
 ## Current Phase
 
-P4 Pool + TCP, next action: `DevicePool` over `FiberMap` (per-device
-supervision, runtime add/remove, failure isolation, aggregate state), the
-`TcpTransport` on `@effect/platform-node`, and a localhost smoke test.
+Closed. The work shipped as PR #1; the closeout reflection is in
+[`history/reflections/2026-09-17-claude.md`](./history/reflections/2026-09-17-claude.md).
 
 ## Latest Evidence
 
-2026-09-17, P0–P3: `bunx tsc --noEmit` clean, `bun run test` 49 passed
-(7 files), `bun run build` green. Delivery is proven end to end over a
-connection, gap recovery included: results produced while the link was down
-come back through MID 0064/0065 with no duplicates reaching the handler.
+PR: https://github.com/dichioniccolo/effect-open-protocol/pull/1 (CLEAN,
+mergeable). Clean clone verified 2026-09-17: `bun install`, `bun run check`,
+`bun run test` (60 passed), `bun run build`, `bun run demo` (116 generated,
+116 delivered, zero lost). Chaos invariant holds on every seed tried.
 
 ## Notes
 
