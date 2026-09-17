@@ -16,7 +16,7 @@
 import { Effect, Ref } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import type { TighteningId } from "../protocol/TighteningResult.ts"
+import { TighteningId } from "../protocol/TighteningResult.ts"
 
 /**
  * Remembers which results were already handed to the application.
@@ -41,7 +41,14 @@ export interface Dedup {
 
 interface State {
   readonly ids: ReadonlyArray<TighteningId>
-  readonly last: O.Option<TighteningId>
+  /**
+   * Highest identifier below which nothing is missing. It advances only
+   * contiguously: delivering 30 while 25 is still missing must not convince
+   * recovery that 25 was handled.
+   */
+  readonly watermark: O.Option<TighteningId>
+  /** Delivered identifiers sitting above the watermark, waiting for the gap to close. */
+  readonly ahead: ReadonlyArray<TighteningId>
 }
 
 /**
@@ -73,7 +80,18 @@ export const defaultCapacity = 1000
  * @since 0.0.0
  */
 export const make = Effect.fnUntraced(function* (capacity: number = defaultCapacity) {
-  const state = yield* Ref.make<State>({ ids: [], last: O.none() })
+  const state = yield* Ref.make<State>({ ids: [], watermark: O.none(), ahead: [] })
+
+  /** Advances the watermark across every identifier already delivered. */
+  const advance = (from: TighteningId, ahead: ReadonlyArray<TighteningId>): {
+    readonly watermark: O.Option<TighteningId>
+    readonly ahead: ReadonlyArray<TighteningId>
+  } => {
+    const next = TighteningId.make(from + 1)
+    return A.contains(ahead, next)
+      ? advance(next, A.filter(ahead, (id) => id !== next))
+      : { watermark: O.some(from), ahead }
+  }
 
   const seen = (id: TighteningId): Effect.Effect<boolean> =>
     Effect.map(Ref.get(state), (current) => A.contains(current.ids, id))
@@ -81,22 +99,28 @@ export const make = Effect.fnUntraced(function* (capacity: number = defaultCapac
   const remember = (id: TighteningId): Effect.Effect<void> =>
     Ref.update(state, (current) => {
       const kept = A.contains(current.ids, id) ? current.ids : A.append(current.ids, id)
-      return {
-        ids: A.length(kept) > capacity ? A.drop(kept, A.length(kept) - capacity) : kept,
-        last: O.match(current.last, {
-          onNone: () => O.some(id),
-          onSome: (previous) => O.some(previous > id ? previous : id)
-        })
-      }
+      const ids = A.length(kept) > capacity ? A.drop(kept, A.length(kept) - capacity) : kept
+      const ahead = A.contains(current.ahead, id) ? current.ahead : A.append(current.ahead, id)
+      return O.match(current.watermark, {
+        onNone: () =>
+          id === 1
+            ? { ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }
+            : { ids, watermark: current.watermark, ahead },
+        onSome: (mark) =>
+          id === mark + 1
+            ? { ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }
+            : { ids, watermark: current.watermark, ahead }
+      })
     })
 
   const markBaseline = (id: TighteningId): Effect.Effect<void> =>
-    Ref.update(state, (current) => O.isSome(current.last) ? current : { ...current, last: O.some(id) })
+    Ref.update(state, (current) =>
+      O.isSome(current.watermark) ? current : { ...current, ...advance(id, current.ahead) })
 
   return {
     seen,
     remember,
     markBaseline,
-    lastDelivered: Effect.map(Ref.get(state), (current) => current.last)
+    lastDelivered: Effect.map(Ref.get(state), (current) => current.watermark)
   } satisfies Dedup
 })

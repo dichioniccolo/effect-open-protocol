@@ -11,6 +11,7 @@
  * @since 0.0.0
  */
 import { Duration, Effect, Fiber, Match, pipe, Ref, Schedule, Stream, SubscriptionRef } from "effect"
+import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { frames } from "../protocol/Framer.ts"
 import {
@@ -195,9 +196,72 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       )
     )
 
-  const routeUnsolicited = (message: Message): Effect.Effect<void> =>
+  const recovering = yield* Ref.make(false)
+
+  /**
+   * Fetches whatever sits between the last contiguously delivered result and
+   * the newest one the controller holds. Runs at session start and whenever a
+   * pushed result reveals a gap, which is how the specification suggests an
+   * integrator notices missing results.
+   */
+  const recoverGap = (current: Session, pipeline: ResultDelivery): Effect.Effect<void> =>
+    Effect.uninterruptibleMask(() =>
+      Ref.getAndSet(recovering, true).pipe(
+        Effect.flatMap((busy) =>
+          busy ? Effect.void : pipe(
+            runRecovery({
+              dedup,
+              request: (message, mid) => current.replies.request(message, mid, expectReply(mid, "OldResult")),
+              submit: pipeline.submit,
+              limit: config.recoveryLimit
+            }),
+            Effect.tap((recovery) =>
+              A.length(recovery.recovered) === 0 && A.length(recovery.missing) === 0
+                ? Effect.void
+                : Effect.logInfo("recovered results missed during the outage").pipe(
+                  Effect.annotateLogs({
+                    deviceId: config.id,
+                    recovered: A.length(recovery.recovered),
+                    missing: A.length(recovery.missing),
+                    skipped: recovery.skipped
+                  })
+                )
+            ),
+            Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
+            Effect.asVoid,
+            Effect.ensuring(Ref.set(recovering, false))
+          )
+        )
+      )
+    )
+
+  const submitResult = (
+    current: Session,
+    pipeline: ResultDelivery,
+    result: TighteningResult
+  ): Effect.Effect<void> =>
+    pipe(
+      dedup.lastDelivered,
+      Effect.flatMap((watermark) =>
+        O.match(watermark, {
+          onNone: () => Effect.void,
+          onSome: (mark) =>
+            result.tighteningId > mark + 1
+              ? Effect.asVoid(Effect.forkChild(recoverGap(current, pipeline)))
+              : Effect.void
+        })
+      ),
+      Effect.andThen(pipeline.submit(result))
+    )
+
+  const routeUnsolicited = (current: Session, message: Message): Effect.Effect<void> =>
     Match.value(message).pipe(
-      Match.tag("LastResult", "OldResult", (carrier) =>
+      Match.tag("LastResult", (carrier) =>
+        O.match(delivery, {
+          onNone: () => Effect.logDebug("dropping a result: no handler is configured"),
+          onSome: (pipeline) => submitResult(current, pipeline, carrier.result)
+        })),
+      Match.tag("OldResult", (carrier) =>
         O.match(delivery, {
           onNone: () => Effect.logDebug("dropping a result: no handler is configured"),
           onSome: (pipeline) => pipeline.submit(carrier.result)
@@ -218,7 +282,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
           Effect.flatMap((message) =>
             pipe(
               current.replies.offer(message),
-              Effect.flatMap((consumed) => consumed ? Effect.void : routeUnsolicited(message))
+              Effect.flatMap((consumed) => consumed ? Effect.void : routeUnsolicited(current, message))
             )
           )
         )
@@ -307,28 +371,9 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       // two would otherwise be treated as history by the first baseline.
       yield* O.match(delivery, {
         onNone: () => Effect.void,
-        onSome: (pipeline) =>
-          pipe(
-            runRecovery({
-              dedup,
-              request: (message, mid) => current.replies.request(message, mid, expectReply(mid, "OldResult")),
-              submit: pipeline.submit,
-              limit: config.recoveryLimit
-            }),
-            Effect.tap((recovery) =>
-              Effect.logInfo("recovered results missed during the outage").pipe(
-                Effect.annotateLogs({
-                  deviceId: config.id,
-                  recovered: recovery.recovered.length,
-                  missing: recovery.missing.length,
-                  skipped: recovery.skipped
-                })
-              )
-            ),
-            Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
-            Effect.asVoid
-          )
+        onSome: (pipeline) => recoverGap(current, pipeline)
       })
+
       yield* O.match(O.fromNullishOr(config.onResult), {
         onNone: () => Effect.void,
         onSome: () =>
@@ -389,7 +434,10 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       return yield* use(found)
     })
 
-  const close = pipe(
+  // Closing an already closed connection is a normal thing for an application
+  // to do (a scope finalizer and an explicit close can both fire), so it is a
+  // no-op rather than a defect.
+  const closeOnce = pipe(
     emit(new CloseRequested()),
     Effect.andThen(
       withSession((current) =>
@@ -401,6 +449,13 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     ),
     Effect.andThen(Fiber.interrupt(fiber)),
     Effect.andThen(emit(new Released()))
+  )
+
+  const close = pipe(
+    SubscriptionRef.get(state),
+    Effect.flatMap((current) =>
+      current._tag === "Closed" || current._tag === "Closing" ? Effect.void : closeOnce
+    )
   )
 
   yield* Effect.addFinalizer(() =>

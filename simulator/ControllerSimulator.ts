@@ -15,6 +15,7 @@ import { Deferred, Duration, Effect, Fiber, Match, pipe, Queue, Ref, Scope, Stre
 import * as A from "effect/Array"
 import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
+import * as S from "effect/Schema"
 import { frames } from "../src/protocol/Framer.ts"
 import {
   CommandAccepted,
@@ -38,6 +39,17 @@ import { ConnectionLost, type Endpoint } from "../src/transport/Transport.ts"
 import * as Faults from "./Faults.ts"
 
 const simulatorDevice = DeviceId.make("simulator")
+
+/**
+ * The simulated controller could not take its TCP port.
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class SimulatorListenFailed extends S.TaggedError<SimulatorListenFailed>()("SimulatorListenFailed", {
+  endpoint: S.String,
+  reason: S.String
+}) {}
 
 /**
  * How a simulated controller should behave.
@@ -436,7 +448,7 @@ export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
 export const makeTcp = Effect.fnUntraced(function* (options: SimulatorOptions) {
   const server = yield* Effect.mapError(
     NodeSocketServer.make({ host: options.endpoint.host, port: options.endpoint.port }),
-    (error) => new Error(`could not listen: ${error}`)
+    (error) => new SimulatorListenFailed({ endpoint: `${options.endpoint.host}:${options.endpoint.port}`, reason: `${error}` })
   )
   const queue = yield* Queue.bounded<ServerSide>(64)
   const openSockets = yield* Ref.make<ReadonlyArray<Deferred.Deferred<void>>>([])
