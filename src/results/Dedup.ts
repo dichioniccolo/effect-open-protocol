@@ -102,10 +102,9 @@ export const make = Effect.fnUntraced(function* (capacity: number = defaultCapac
       const ids = A.length(kept) > capacity ? A.drop(kept, A.length(kept) - capacity) : kept
       const ahead = A.contains(current.ahead, id) ? current.ahead : A.append(current.ahead, id)
       return O.match(current.watermark, {
-        onNone: () =>
-          id === 1
-            ? { ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }
-            : { ids, watermark: current.watermark, ahead },
+        // Controllers do not start counting at one. The first result we
+        // deliver is the baseline, whatever number it carries.
+        onNone: () => ({ ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }),
         onSome: (mark) =>
           id === mark + 1
             ? { ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }

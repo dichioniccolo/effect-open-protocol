@@ -27,7 +27,13 @@ import type { Dedup } from "./Dedup.ts"
 export const defaultRecoveryLimit = 100
 
 /**
- * How a recovery run went.
+ * How a recovery pass went.
+ *
+ * `missing` and `pending` mean different things, and the difference decides
+ * whether a result is lost. The controller answering "I do not have it" is
+ * final. A request that timed out or died with the session is not: the result
+ * may still be there, so the pass reports it as pending and the caller tries
+ * again.
  *
  * @category models
  * @since 0.0.0
@@ -35,11 +41,19 @@ export const defaultRecoveryLimit = 100
 export interface Recovery {
   /** Identifiers that were fetched and submitted for delivery. */
   readonly recovered: ReadonlyArray<TighteningId>
-  /** Identifiers inside the gap the controller no longer had. */
+  /** Identifiers the controller no longer holds. */
   readonly missing: ReadonlyArray<TighteningId>
+  /** Identifiers that could not be fetched this time and deserve another attempt. */
+  readonly pending: ReadonlyArray<TighteningId>
   /** Identifiers left unfetched because the gap exceeded the limit. */
   readonly skipped: number
 }
+
+/** What became of one requested identifier. */
+type Attempt =
+  | { readonly _tag: "Recovered"; readonly id: TighteningId }
+  | { readonly _tag: "Missing"; readonly id: TighteningId }
+  | { readonly _tag: "Pending"; readonly id: TighteningId }
 
 const resultOf = (message: Message): O.Option<TighteningResult> =>
   message._tag === "OldResult" ? O.some(message.result) : O.none()
@@ -78,8 +92,15 @@ export const run = Effect.fnUntraced(function* (options: {
     // baseline and therefore fetch the gap.
     onNone: () =>
       pipe(
-        options.dedup.markBaseline(O.getOrElse(latest, () => TighteningId.make(0))),
-        Effect.as<Recovery>({ recovered: [], missing: [], skipped: 0 })
+        // Identifiers do not start at zero, and asking for "the latest" can
+        // fail. When it does, no baseline is recorded: the first result that
+        // reaches the handler sets it instead. Assuming zero here would turn
+        // a controller counting in the millions into a millions-wide gap.
+        O.match(latest, {
+          onNone: () => Effect.void,
+          onSome: (id) => options.dedup.markBaseline(id)
+        }),
+        Effect.as<Recovery>({ recovered: [], missing: [], pending: [], skipped: 0 })
       ),
     onSome: (delivered) =>
       Effect.gen(function* () {
@@ -92,6 +113,8 @@ export const run = Effect.fnUntraced(function* (options: {
         )
         const gap = newest <= delivered ? [] : A.range(delivered + 1, newest)
         const wanted = A.take(gap, limit)
+        // One failed request must not end the pass: a later identifier may
+        // still be reachable, and everything unfetched is reported as pending.
         const fetched = yield* Effect.forEach(
           wanted,
           (value) =>
@@ -103,20 +126,26 @@ export const run = Effect.fnUntraced(function* (options: {
                   onSome: (result) => options.submit(result)
                 })
               ),
-              Effect.catchCause((cause) =>
-                Effect.as(
-                  Effect.logWarning(`could not recover tightening ${value}`, cause),
-                  O.none<TighteningResult>()
-                )
+              Effect.map((found) =>
+                O.match(found, {
+                  onNone: (): Attempt => ({ _tag: "Missing", id: TighteningId.make(value) }),
+                  onSome: (): Attempt => ({ _tag: "Recovered", id: TighteningId.make(value) })
+                })
               ),
-              Effect.map((found) => ({ id: TighteningId.make(value), found }))
+              Effect.catchCause((cause) =>
+                pipe(
+                  Effect.logDebug(`could not recover tightening ${value} yet`, cause),
+                  Effect.as<Attempt>({ _tag: "Pending", id: TighteningId.make(value) })
+                )
+              )
             )
         )
+        const of = (tag: Attempt["_tag"]): ReadonlyArray<TighteningId> =>
+          A.getSomes(A.map(fetched, (attempt) => attempt._tag === tag ? O.some(attempt.id) : O.none()))
         return {
-          recovered: A.getSomes(A.map(fetched, ({ found, id }) => O.map(found, () => id))),
-          missing: A.getSomes(
-            A.map(fetched, ({ found, id }) => O.isNone(found) ? O.some(id) : O.none<TighteningId>())
-          ),
+          recovered: of("Recovered"),
+          missing: of("Missing"),
+          pending: of("Pending"),
           skipped: A.length(gap) - A.length(wanted)
         } satisfies Recovery
       })

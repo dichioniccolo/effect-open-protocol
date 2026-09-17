@@ -79,6 +79,14 @@ export interface DeviceConfig {
   readonly recoveryLimit?: number | undefined
   /** How long a graceful close waits for the communication stop to flush. Defaults to 1 second. */
   readonly stopTimeout?: Duration.Duration | undefined
+  /** How many times a recovery pass retries the identifiers it could not fetch. Defaults to 5. */
+  readonly recoveryAttempts?: number | undefined
+  /** How long to wait between recovery passes. Defaults to 500 milliseconds. */
+  readonly recoveryRetryDelay?: Duration.Duration | undefined
+  /** How long a single recovery request waits for its reply. Defaults to 1 second. */
+  readonly recoveryTimeout?: Duration.Duration | undefined
+  /** How often a still-incomplete recovery is retried while the session is up. Defaults to 5 seconds. */
+  readonly recoveryInterval?: Duration.Duration | undefined
 }
 
 /**
@@ -158,6 +166,10 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const responseTimeout = config.responseTimeout ?? Duration.seconds(5)
   const reconnect = config.reconnect ?? defaultReconnect
   const stopTimeout = config.stopTimeout ?? Duration.seconds(1)
+  const recoveryAttempts = config.recoveryAttempts ?? 5
+  const recoveryRetryDelay = config.recoveryRetryDelay ?? Duration.millis(500)
+  const recoveryTimeout = config.recoveryTimeout ?? Duration.seconds(1)
+  const recoveryInterval = config.recoveryInterval ?? Duration.seconds(5)
   const dedup = yield* makeDedup(config.dedupCapacity)
   const delivery = yield* O.match(O.fromNullishOr(config.onResult), {
     onNone: () => Effect.succeed(O.none<ResultDelivery>()),
@@ -200,6 +212,8 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     )
 
   const recovering = yield* Ref.make(false)
+  /** True while the controller still holds results we have not managed to fetch. */
+  const gapPending = yield* Ref.make(false)
 
   /**
    * Fetches whatever sits between the last contiguously delivered result and
@@ -207,36 +221,49 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
    * pushed result reveals a gap, which is how the specification suggests an
    * integrator notices missing results.
    */
-  const recoverGap = (current: Session, pipeline: ResultDelivery): Effect.Effect<void> =>
-    Effect.uninterruptibleMask(() =>
-      Ref.getAndSet(recovering, true).pipe(
-        Effect.flatMap((busy) =>
-          busy ? Effect.void : pipe(
-            runRecovery({
-              dedup,
-              request: (message, mid) => current.replies.request(message, mid, expectReply(mid, "OldResult")),
-              submit: pipeline.submit,
-              limit: config.recoveryLimit
-            }),
-            Effect.tap((recovery) =>
-              A.length(recovery.recovered) === 0 && A.length(recovery.missing) === 0
-                ? Effect.void
-                : Effect.logInfo("recovered results missed during the outage").pipe(
-                  Effect.annotateLogs({
-                    deviceId: config.id,
-                    recovered: A.length(recovery.recovered),
-                    missing: A.length(recovery.missing),
-                    skipped: recovery.skipped
-                  })
-                )
-            ),
-            Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
-            Effect.asVoid,
-            Effect.ensuring(Ref.set(recovering, false))
-          )
-        )
+  const recoverGap = (current: Session, pipeline: ResultDelivery): Effect.Effect<void> => {
+    const pass = (attempts: number): Effect.Effect<void> =>
+      pipe(
+        runRecovery({
+          dedup,
+          request: (message, mid) =>
+            // Recovery is bulk work that retries, so it waits far less than a
+            // command does: a slow reply here costs a whole pass.
+            current.replies.request(message, mid, expectReply(mid, "OldResult"), recoveryTimeout),
+          submit: pipeline.submit,
+          limit: config.recoveryLimit
+        }),
+        Effect.tap((recovery) =>
+          A.length(recovery.recovered) === 0 && A.length(recovery.missing) === 0 &&
+            A.length(recovery.pending) === 0
+            ? Effect.void
+            : Effect.logInfo("recovered results missed during the outage").pipe(
+              Effect.annotateLogs({
+                deviceId: config.id,
+                recovered: A.length(recovery.recovered),
+                missing: A.length(recovery.missing),
+                pending: A.length(recovery.pending),
+                skipped: recovery.skipped
+              })
+            )
+        ),
+        Effect.tap((recovery) => Ref.set(gapPending, A.length(recovery.pending) > 0)),
+        Effect.flatMap((recovery) =>
+          // A pending identifier is one the controller may still have: the
+          // request timed out or the link wobbled. Giving up on it here is how
+          // a result gets lost, so the pass repeats while the session lives.
+          A.length(recovery.pending) === 0 || attempts <= 1
+            ? Effect.void
+            : Effect.andThen(Effect.sleep(recoveryRetryDelay), pass(attempts - 1))
+        ),
+        Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
+        Effect.asVoid
       )
+
+    return Ref.getAndSet(recovering, true).pipe(
+      Effect.flatMap((busy) => busy ? Effect.void : Effect.ensuring(pass(recoveryAttempts), Ref.set(recovering, false)))
     )
+  }
 
   const submitResult = (
     current: Session,
@@ -403,10 +430,32 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     )
 
     const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent))
+    // Results only trigger recovery when they arrive. A line that goes quiet
+    // with a gap outstanding would keep it forever, so an unfinished recovery
+    // is retried on its own schedule.
+    const reconcile = yield* Effect.forkChild(
+      O.match(delivery, {
+        onNone: () => Effect.never,
+        onSome: (pipeline) =>
+          Effect.forever(
+            pipe(
+              Effect.sleep(recoveryInterval),
+              Effect.andThen(Ref.get(gapPending)),
+              Effect.flatMap((outstanding) => outstanding ? recoverGap(current, pipeline) : Effect.void)
+            )
+          )
+      })
+    )
     return yield* pipe(
       readerFailed,
       Effect.raceFirst(Fiber.join(keepAlive)),
-      Effect.onExit(() => Effect.andThen(Fiber.interrupt(keepAlive), Fiber.interrupt(reader)))
+      Effect.onExit(() =>
+        pipe(
+          Fiber.interrupt(reconcile),
+          Effect.andThen(Fiber.interrupt(keepAlive)),
+          Effect.andThen(Fiber.interrupt(reader))
+        )
+      )
     )
   }).pipe(Effect.scoped)
 

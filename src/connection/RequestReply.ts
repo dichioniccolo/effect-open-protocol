@@ -79,7 +79,8 @@ export interface RequestReply {
   readonly request: (
     message: Message,
     mid: number,
-    expectation: Expectation
+    expectation: Expectation,
+    timeout?: Duration.Duration | undefined
   ) => Effect.Effect<Message, RequestTimeout | CommandRejected | ConnectionLost>
   /**
    * Offers an incoming message to the pending request. Returns `true` when it
@@ -106,7 +107,8 @@ export const make = Effect.fnUntraced(function* (options: {
   const request = (
     message: Message,
     mid: number,
-    expectation: Expectation
+    expectation: Expectation,
+    timeout?: Duration.Duration | undefined
   ): Effect.Effect<Message, RequestTimeout | CommandRejected | ConnectionLost> =>
     gate.withPermits(1)(
       Effect.gen(function* () {
@@ -117,7 +119,7 @@ export const make = Effect.fnUntraced(function* (options: {
         return yield* pipe(
           Deferred.await(deferred),
           Effect.timeoutOrElse({
-            duration: options.responseTimeout,
+            duration: timeout ?? options.responseTimeout,
             orElse: () => Effect.fail(new RequestTimeout({ mid }))
           })
         )
