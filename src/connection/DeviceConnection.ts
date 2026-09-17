@@ -14,15 +14,19 @@ import { Duration, Effect, Fiber, Match, pipe, Ref, Schedule, Stream, Subscripti
 import * as O from "effect/Option"
 import { frames } from "../protocol/Framer.ts"
 import {
+  AcknowledgeResult,
   CommunicationStart,
-  decodeMessage,
   CommunicationStop,
+  decodeMessage,
   encodeMessage,
   KeepAlive,
   type Message,
   SubscribeResults
 } from "../protocol/Messages.ts"
 import type { DeviceId, TighteningResult } from "../protocol/TighteningResult.ts"
+import { make as makeDedup } from "../results/Dedup.ts"
+import { make as makeDelivery, type ResultDelivery, type ResultHandler } from "../results/ResultDelivery.ts"
+import { run as runRecovery } from "../results/ResultRecovery.ts"
 import { ConnectionLost, type Duplex, type Endpoint, Transport } from "../transport/Transport.ts"
 import { ConnectionClosed, HandshakeRejected, NotReady } from "./ConnectionError.ts"
 import {
@@ -63,7 +67,15 @@ export interface DeviceConfig {
   /** How long to wait for a reply before declaring the session dead. Defaults to 5 seconds. */
   readonly responseTimeout?: Duration.Duration | undefined
   /** Called for every result the controller pushes. Subscribing is skipped when absent. */
-  readonly onResult?: ((result: TighteningResult) => Effect.Effect<void>) | undefined
+  readonly onResult?: ResultHandler | undefined
+  /** Retries applied to a failing handler before the acknowledgement is skipped. */
+  readonly handlerRetry?: Schedule.Schedule<unknown> | undefined
+  /** How many results may wait for a slow handler. Defaults to 16. */
+  readonly resultBuffer?: number | undefined
+  /** How many identifiers the duplicate detector remembers. Defaults to 1000. */
+  readonly dedupCapacity?: number | undefined
+  /** Upper bound on results fetched after an outage. Defaults to 100. */
+  readonly recoveryLimit?: number | undefined
 }
 
 /**
@@ -86,6 +98,10 @@ export interface DeviceConnection {
   readonly send: (message: Message) => Effect.Effect<void, NotReady | ConnectionLost>
   /** Stops the connection and returns once every resource is released. */
   readonly close: Effect.Effect<void>
+  /** Results handed to the handler, duplicates excluded. */
+  readonly delivered: Effect.Effect<number>
+  /** Results recognised as resends of something already delivered. */
+  readonly duplicates: Effect.Effect<number>
 }
 
 const defaultReconnect: Schedule.Schedule<Duration.Duration> = pipe(
@@ -138,6 +154,33 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const keepAliveInterval = config.keepAliveInterval ?? Duration.seconds(10)
   const responseTimeout = config.responseTimeout ?? Duration.seconds(5)
   const reconnect = config.reconnect ?? defaultReconnect
+  const dedup = yield* makeDedup(config.dedupCapacity)
+  const delivery = yield* O.match(O.fromNullishOr(config.onResult), {
+    onNone: () => Effect.succeed(O.none<ResultDelivery>()),
+    onSome: (handler) =>
+      Effect.map(
+        makeDelivery({
+          delivery: { handler, handlerRetry: config.handlerRetry, bufferSize: config.resultBuffer },
+          dedup,
+          acknowledge: (result) =>
+            pipe(
+              Ref.get(session),
+              Effect.flatMap((open) =>
+                O.match(open, {
+                  onNone: () => Effect.fail(new ConnectionLost({ reason: "no session to acknowledge on" })),
+                  onSome: (current) => sendRaw(current.duplex, new AcknowledgeResult())
+                })
+              ),
+              Effect.tap(() =>
+                Effect.logDebug("acknowledged a result").pipe(
+                  Effect.annotateLogs({ deviceId: config.id, tighteningId: result.tighteningId })
+                )
+              )
+            )
+        }),
+        O.some
+      )
+  })
 
   const emit = (event: ConnectionEvent): Effect.Effect<void> =>
     pipe(
@@ -155,9 +198,9 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const routeUnsolicited = (message: Message): Effect.Effect<void> =>
     Match.value(message).pipe(
       Match.tag("LastResult", "OldResult", (carrier) =>
-        O.match(O.fromNullishOr(config.onResult), {
+        O.match(delivery, {
           onNone: () => Effect.logDebug("dropping a result: no handler is configured"),
-          onSome: (handler) => handler(carrier.result)
+          onSome: (pipeline) => pipeline.submit(carrier.result)
         })),
       Match.orElse((other) =>
         Effect.logWarning("unsolicited message dropped").pipe(
@@ -265,8 +308,30 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     })
     yield* emit(new Subscribed())
 
-    // Gap recovery lands with result delivery; today the connection is ready
-    // as soon as the subscription is restored.
+    yield* O.match(delivery, {
+      onNone: () => Effect.void,
+      onSome: (pipeline) =>
+        pipe(
+          runRecovery({
+            dedup,
+            request: (message, mid) => current.replies.request(message, mid, expectReply(mid, "OldResult")),
+            submit: pipeline.submit,
+            limit: config.recoveryLimit
+          }),
+          Effect.tap((recovery) =>
+            Effect.logInfo("recovered results missed during the outage").pipe(
+              Effect.annotateLogs({
+                deviceId: config.id,
+                recovered: recovery.recovered.length,
+                missing: recovery.missing.length,
+                skipped: recovery.skipped
+              })
+            )
+          ),
+          Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
+          Effect.asVoid
+        )
+    })
     yield* emit(new Recovered())
 
     const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent))
@@ -339,7 +404,15 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     request: (message, mid, direct) =>
       withSession((current) => current.replies.request(message, mid, expectReply(mid, direct))),
     send: (message) => withSession((current) => sendRaw(current.duplex, message)),
-    close
+    close,
+    delivered: O.match(delivery, {
+      onNone: () => Effect.succeed(0),
+      onSome: (pipeline) => pipeline.delivered
+    }),
+    duplicates: O.match(delivery, {
+      onNone: () => Effect.succeed(0),
+      onSome: (pipeline) => pipeline.duplicates
+    })
   } satisfies DeviceConnection
 })
 

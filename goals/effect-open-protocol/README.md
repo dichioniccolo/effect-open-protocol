@@ -35,16 +35,16 @@ follow the instructions in goals/effect-open-protocol/GOAL.md
 
 ## Current Phase
 
-P2 Connection — next action: `ConnectionState` transition table (pure), then
-session lifecycle (handshake, keep-alive, single in-flight request/reply,
-reconnect `Schedule`, per-attempt `Scope`) with `TestClock` tests.
+P4 Pool + TCP — next action: `DevicePool` over `FiberMap` (per-device
+supervision, runtime add/remove, failure isolation, aggregate state), the
+`TcpTransport` on `@effect/platform-node`, and a localhost smoke test.
 
 ## Latest Evidence
 
-2026-09-17, P0+P1: `bunx tsc --noEmit` clean, `bun run test` 23 passed
-(3 files), `bun run build` emits `dist/index.mjs` + `.d.mts` (44 exports,
-loads under plain Node). Design confirmed by the user; answers folded into
-`research/DESIGN.md` §10 and the SPEC decision log.
+2026-09-17, P0–P3: `bunx tsc --noEmit` clean, `bun run test` 49 passed
+(7 files), `bun run build` green. Delivery is proven end to end over a
+connection, gap recovery included: results produced while the link was down
+come back through MID 0064/0065 with no duplicates reaching the handler.
 
 ## Notes
 

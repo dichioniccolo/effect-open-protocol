@@ -10,7 +10,9 @@
  *
  * @since 0.0.0
  */
-import { Effect, Fiber, Match, pipe, Queue, Ref, Stream } from "effect"
+import { Deferred, Duration, Effect, Fiber, Match, pipe, Queue, Ref, Stream } from "effect"
+import * as A from "effect/Array"
+import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
 import { frames } from "../src/protocol/Framer.ts"
 import {
@@ -20,9 +22,16 @@ import {
   decodeMessage,
   encodeMessage,
   KeepAlive,
-  type Message
+  LastResult,
+  type Message,
+  OldResult
 } from "../src/protocol/Messages.ts"
-import { DeviceId } from "../src/protocol/TighteningResult.ts"
+import {
+  ControllerTimestamp,
+  DeviceId,
+  TighteningId,
+  TighteningResult
+} from "../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork, type ServerSide } from "../src/transport/InMemoryTransport.ts"
 import type { Endpoint } from "../src/transport/Transport.ts"
 
@@ -44,6 +53,12 @@ export interface SimulatorOptions {
   readonly rejectStartWith?: number | undefined
   /** Stops answering once the session is established: the socket stays open but goes quiet. */
   readonly silent?: boolean | undefined
+  /** Produces a tightening result on this interval once a subscription exists. */
+  readonly resultInterval?: Duration.Duration | undefined
+  /** How long to wait for MID 0062 before resending a result. Defaults to 5 seconds. */
+  readonly ackTimeout?: Duration.Duration | undefined
+  /** Attempts before the controller gives up on a result and drops the session. */
+  readonly ackAttempts?: number | undefined
 }
 
 /**
@@ -57,16 +72,49 @@ export interface Simulator {
   readonly isSubscribed: Effect.Effect<boolean>
   /** Number of keep-alives mirrored so far. */
   readonly keepAlives: Effect.Effect<number>
+  /** Results produced so far, acknowledged or not. */
+  readonly generated: Effect.Effect<number>
+  /** Results the controller gave up on: with Open Protocol semantics they are lost. */
+  readonly abandoned: Effect.Effect<ReadonlyArray<TighteningId>>
+  /** Produces one result immediately and returns it. */
+  readonly produce: Effect.Effect<TighteningResult>
+  /** Drops the current connection the way a controller does when it gives up. */
+  readonly drop: Effect.Effect<void>
 }
 
 interface SessionState {
   readonly subscribed: boolean
   readonly keepAlives: number
+  readonly nextId: number
+  readonly generated: number
+  readonly abandoned: ReadonlyArray<TighteningId>
+  readonly connection: O.Option<ServerSide>
+  readonly pendingAck: O.Option<Deferred.Deferred<void>>
 }
+
+const encoder = new TextEncoder()
+
+const timestamp = ControllerTimestamp.make("2026-09-17:10:14:16")
+
+const resultFor = (id: number): TighteningResult =>
+  new TighteningResult({
+    deviceId: simulatorDevice,
+    tighteningId: TighteningId.make(id),
+    vin: `VIN${id}`,
+    parameterSetId: id % 1000,
+    status: id % 10 === 0 ? "NOK" : "OK",
+    torqueStatus: "OK",
+    angleStatus: "OK",
+    torque: (1000 + (id % 500)) / 100,
+    angle: 90 + (id % 10),
+    timestamp
+  })
 
 const replyTo = (
   message: Message,
-  options: SimulatorOptions
+  options: SimulatorOptions,
+  store: MutableHashMap.MutableHashMap<number, TighteningResult>,
+  latest: O.Option<number>
 ): O.Option<Message> =>
   Match.value(message).pipe(
     Match.tag("CommunicationStart", () =>
@@ -88,6 +136,15 @@ const replyTo = (
     Match.tag("SubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 60 }))),
     Match.tag("UnsubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 63 }))),
     Match.tag("CommunicationStop", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 3 }))),
+    Match.tag("RequestOldResult", (request): O.Option<Message> => {
+      const wanted = request.tighteningId === 0 ? latest : O.some(request.tighteningId as number)
+      return O.some(
+        O.match(O.flatMap(wanted, (id) => MutableHashMap.get(store, id)), {
+          onNone: (): Message => new CommandError({ mid: 64, code: 15 }),
+          onSome: (result): Message => new OldResult({ result })
+        })
+      )
+    }),
     Match.orElse((): O.Option<Message> => O.none())
   )
 
@@ -99,36 +156,48 @@ const observe = (message: Message, current: SessionState): SessionState =>
     Match.orElse(() => current)
   )
 
-const encoder = new TextEncoder()
-
 const serve = (
   connection: ServerSide,
   state: Ref.Ref<SessionState>,
+  store: MutableHashMap.MutableHashMap<number, TighteningResult>,
   options: SimulatorOptions
 ): Effect.Effect<void> =>
   pipe(
-    connection.incoming,
-    frames,
-    Stream.runForEach((frame) =>
+    Ref.update(state, (current) => ({ ...current, connection: O.some(connection) })),
+    Effect.andThen(
       pipe(
-        decodeMessage(frame, simulatorDevice),
-        Effect.fromResult,
-        Effect.flatMap((message) =>
+        frames(connection.incoming),
+        Stream.runForEach((frame) =>
           pipe(
-            Ref.update(state, (current) => observe(message, current)),
-            Effect.andThen(
-              O.match(replyTo(message, options), {
-                onNone: () => Effect.void,
-                onSome: (reply) => connection.send(encoder.encode(encodeMessage(reply)))
-              })
-            )
+            decodeMessage(frame, simulatorDevice),
+            Effect.fromResult,
+            Effect.flatMap((message) =>
+              pipe(
+                Ref.modify(state, (current) => [current, observe(message, current)]),
+                Effect.flatMap((current) =>
+                  message._tag === "AcknowledgeResult"
+                    ? O.match(current.pendingAck, {
+                      onNone: () => Effect.void,
+                      onSome: (deferred) => Effect.asVoid(Deferred.succeed(deferred, undefined))
+                    })
+                    : O.match(replyTo(message, options, store, latestOf(current)), {
+                      onNone: () => Effect.void,
+                      onSome: (reply) => connection.send(encoder.encode(encodeMessage(reply)))
+                    })
+                )
+              )
+            ),
+            Effect.catchCause((cause) => Effect.logWarning("simulator dropped a frame", cause))
           )
         ),
-        Effect.catchCause((cause) => Effect.logWarning("simulator dropped a frame", cause))
+        Effect.catchCause((cause) => Effect.logDebug("simulator session ended", cause))
       )
     ),
-    Effect.catchCause((cause) => Effect.logDebug("simulator session ended", cause))
+    Effect.andThen(Ref.update(state, (current) => ({ ...current, connection: O.none() })))
   )
+
+const latestOf = (current: SessionState): O.Option<number> =>
+  current.nextId <= 1 ? O.none() : O.some(current.nextId - 1)
 
 /**
  * Starts a simulated controller on the in-memory network for the lifetime of
@@ -152,17 +221,115 @@ const serve = (
  */
 export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
   const network = yield* InMemoryNetwork
-  const state = yield* Ref.make<SessionState>({ subscribed: false, keepAlives: 0 })
+  const store = MutableHashMap.empty<number, TighteningResult>()
+  const state = yield* Ref.make<SessionState>({
+    subscribed: false,
+    keepAlives: 0,
+    nextId: 1,
+    generated: 0,
+    abandoned: [],
+    connection: O.none(),
+    pendingAck: O.none()
+  })
+  const ackTimeout = options.ackTimeout ?? Duration.seconds(5)
+  const ackAttempts = options.ackAttempts ?? 3
   const accepted = yield* network.bind(options.endpoint)
+
   const acceptLoop = yield* pipe(
     Queue.take(accepted),
-    Effect.flatMap((connection) => Effect.forkChild(serve(connection, state, options))),
+    Effect.flatMap((connection) => Effect.forkChild(serve(connection, state, store, options))),
     Effect.forever,
     Effect.forkChild
   )
+
+  /** Pushes a result and waits for its acknowledgement, resending as the specification prescribes. */
+  const push = (result: TighteningResult): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const current = yield* Ref.get(state)
+      return yield* O.match(current.connection, {
+        onNone: () => Effect.void,
+        onSome: (connection) =>
+          current.subscribed
+            ? Effect.gen(function* () {
+              const acknowledged = yield* Deferred.make<void>()
+              yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.some(acknowledged) }))
+              const attempt = pipe(
+                connection.send(encoder.encode(encodeMessage(new LastResult({ result })))),
+                Effect.andThen(Deferred.await(acknowledged)),
+                Effect.timeoutOption(ackTimeout),
+                Effect.catchCause(() => Effect.succeed(O.none<void>()))
+              )
+              const tryDeliver = (remaining: number): Effect.Effect<boolean> =>
+                remaining <= 0
+                  ? Effect.succeed(false)
+                  : Effect.flatMap(
+                    attempt,
+                    O.match({
+                      onNone: () => tryDeliver(remaining - 1),
+                      onSome: () => Effect.succeed(true)
+                    })
+                  )
+              const delivered = yield* tryDeliver(ackAttempts)
+              yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.none() }))
+              return yield* delivered
+                ? Effect.void
+                : pipe(
+                  Ref.update(state, (value) => ({
+                    ...value,
+                    abandoned: A.append(value.abandoned, result.tighteningId)
+                  })),
+                  Effect.andThen(
+                    Effect.logWarning("giving up on an unacknowledged result").pipe(
+                      Effect.annotateLogs({ tighteningId: result.tighteningId })
+                    )
+                  ),
+                  Effect.andThen(connection.close("no acknowledgement for the last tightening result"))
+                )
+            })
+            : Effect.void
+      })
+    })
+
+  const produce = Effect.gen(function* () {
+    const id = yield* Ref.modify(state, (current) => [current.nextId, {
+      ...current,
+      nextId: current.nextId + 1,
+      generated: current.generated + 1
+    }])
+    const result = resultFor(id)
+    MutableHashMap.set(store, id, result)
+    yield* Effect.forkChild(push(result))
+    return result
+  })
+
+  yield* O.match(O.fromNullishOr(options.resultInterval), {
+    onNone: () => Effect.void,
+    onSome: (interval) =>
+      Effect.asVoid(
+        Effect.forkChild(
+          Effect.forever(Effect.andThen(Effect.sleep(interval), produce))
+        )
+      )
+  })
+
   yield* Effect.addFinalizer(() => Fiber.interrupt(acceptLoop))
+
+  const drop = pipe(
+    Ref.getAndUpdate(state, (current) => ({ ...current, subscribed: false, connection: O.none() })),
+    Effect.flatMap((current) =>
+      O.match(current.connection, {
+        onNone: () => Effect.void,
+        onSome: (connection) => connection.close("the controller dropped the connection")
+      })
+    )
+  )
+
   return {
     isSubscribed: Effect.map(Ref.get(state), (current) => current.subscribed),
-    keepAlives: Effect.map(Ref.get(state), (current) => current.keepAlives)
+    keepAlives: Effect.map(Ref.get(state), (current) => current.keepAlives),
+    generated: Effect.map(Ref.get(state), (current) => current.generated),
+    abandoned: Effect.map(Ref.get(state), (current) => current.abandoned),
+    produce,
+    drop
   } satisfies Simulator
 })
