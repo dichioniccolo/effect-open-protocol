@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Context, Effect, Layer, pipe, Ref, Scope, Stream, SubscriptionRef } from "effect"
+import { Context, Duration, Effect, Fiber, Layer, pipe, Ref, Scope, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
@@ -82,6 +82,39 @@ describe("shutdown", () => {
 
       expect(yield* Ref.get(received)).toEqual([1])
       expect((yield* SubscriptionRef.get(connection.state))._tag).toBe("Closed")
+    })))
+
+  it.effect("says goodbye with a communication stop before closing", () =>
+    provided(Effect.gen(function* () {
+      const simulator = yield* makeSimulator({ endpoint })
+      const connection = yield* makeConnection({ id: DeviceId.make("tool-1"), endpoint })
+      yield* awaitState(connection.state, "Ready")
+      expect(yield* simulator.stops).toBe(0)
+
+      yield* connection.close
+
+      yield* settle(simulator.stops, (stops) => stops > 0)
+      expect(yield* simulator.stops).toBe(1)
+    })))
+
+  it.effect("fails an in-flight request as soon as the session ends", () =>
+    provided(Effect.gen(function* () {
+      const simulator = yield* makeSimulator({ endpoint, silent: true })
+      const connection = yield* makeConnection({
+        id: DeviceId.make("tool-1"),
+        endpoint,
+        responseTimeout: Duration.minutes(5)
+      })
+      yield* awaitState(connection.state, "Ready")
+
+      // The controller never answers, so this request would sit for five
+      // minutes if the session did not fail its waiters on the way out.
+      const pending = yield* Effect.forkChild(Effect.result(connection.request(new KeepAlive(), 9999, "KeepAlive")))
+      yield* Effect.yieldNow
+      yield* simulator.drop
+
+      const outcome = yield* Fiber.join(pending)
+      expect(outcome._tag).toBe("Failure")
     })))
 
   it.effect("is safe to close twice and refuses later work", () =>

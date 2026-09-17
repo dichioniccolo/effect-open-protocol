@@ -46,7 +46,12 @@ export * from "./connection/ConnectionState.ts"
 /**
  * @since 0.0.0
  */
-export * as DeviceConnection from "./connection/DeviceConnection.ts"
+export {
+  type DeviceConfig,
+  DeviceConnection,
+  type DeviceConnectionShape,
+  make as makeDeviceConnection
+} from "./connection/DeviceConnection.ts"
 
 /**
  * @since 0.0.0

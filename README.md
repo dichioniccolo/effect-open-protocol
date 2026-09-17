@@ -54,8 +54,11 @@ over from the original; see [NestJS vs Effect](#nestjs-vs-effect).
 - Recognises resends and never delivers the same result to your handler twice.
 - Fetches results produced while the link was down (MID 0064/0065) and detects
   gaps from the identifiers of incoming results.
-- Fails in-flight requests with typed errors when a session dies, instead of
-  leaving them hanging.
+- Fails in-flight requests with typed errors as soon as a session dies, instead
+  of leaving them waiting for a timeout.
+- Closes gracefully: a communication stop goes out before the socket does, so
+  the controller releases the client slot instead of waiting out its own idle
+  timeout.
 
 ## What it does not do
 
@@ -240,7 +243,7 @@ Each primitive is here because it solves a concrete problem in this domain.
 
 | Primitive | The problem it solves here |
 | --- | --- |
-| `Scope` | A connection attempt owns a socket and three fibers. When the attempt dies, all four are released before the next begins. |
+| `Scope` | A connection attempt owns a socket and three fibers. When the attempt dies, its finalizers fail the pending request and release all four before the next begins. |
 | `Layer` / `Context.Service` | `Transport` is a service, so the same connection code runs over TCP or in memory. |
 | `Schema` | Every MID payload is decoded and validated at the boundary; identifiers are branded so a device id cannot be passed as a tightening id. |
 | `Schema.TaggedError` | Expected failures (`ConnectionLost`, `HandshakeRejected`, `RequestTimeout`, `CommandRejected`) live in the error channel instead of being thrown. |

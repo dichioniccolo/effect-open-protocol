@@ -88,6 +88,8 @@ export interface Simulator {
   readonly isSubscribed: Effect.Effect<boolean>
   /** Number of keep-alives mirrored so far. */
   readonly keepAlives: Effect.Effect<number>
+  /** Number of communication stop messages received: a client that left politely. */
+  readonly stops: Effect.Effect<number>
   /** Results produced so far, acknowledged or not. */
   readonly generated: Effect.Effect<number>
   /** Results the controller gave up on: with Open Protocol semantics they are lost. */
@@ -105,6 +107,7 @@ export interface Simulator {
 interface SessionState {
   readonly subscribed: boolean
   readonly keepAlives: number
+  readonly stops: number
   readonly nextId: number
   readonly generated: number
   readonly abandoned: ReadonlyArray<TighteningId>
@@ -214,6 +217,7 @@ const observe = (message: Message, current: SessionState): SessionState =>
     Match.tag("SubscribeResults", () => ({ ...current, subscribed: true, everSubscribed: true })),
     Match.tag("UnsubscribeResults", () => ({ ...current, subscribed: false })),
     Match.tag("KeepAlive", () => ({ ...current, keepAlives: current.keepAlives + 1 })),
+    Match.tag("CommunicationStop", () => ({ ...current, subscribed: false, stops: current.stops + 1 })),
     Match.orElse(() => current)
   )
 
@@ -298,6 +302,7 @@ export const makeWith = Effect.fnUntraced(function* (
   const state = yield* Ref.make<SessionState>({
     subscribed: false,
     keepAlives: 0,
+    stops: 0,
     nextId: 1,
     generated: 0,
     abandoned: [],
@@ -418,6 +423,7 @@ export const makeWith = Effect.fnUntraced(function* (
     backlog: Queue.size(outbox),
     isSubscribed: Effect.map(Ref.get(state), (current) => current.subscribed),
     keepAlives: Effect.map(Ref.get(state), (current) => current.keepAlives),
+    stops: Effect.map(Ref.get(state), (current) => current.stops),
     generated: Effect.map(Ref.get(state), (current) => current.generated),
     abandoned: Effect.map(Ref.get(state), (current) => current.abandoned),
     produce,

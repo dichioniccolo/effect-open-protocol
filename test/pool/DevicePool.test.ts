@@ -4,7 +4,7 @@ import * as A from "effect/Array"
 import * as Str from "effect/String"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
-import type { DeviceConnection } from "../../src/connection/DeviceConnection.ts"
+import type { DeviceConnectionShape } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork, layer as layerInMemory } from "../../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
@@ -23,7 +23,7 @@ const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.provide(InMemoryNetwork.layer)
   )
 
-const awaitReady = (connection: DeviceConnection): Effect.Effect<ConnectionState> =>
+const awaitReady = (connection: DeviceConnectionShape): Effect.Effect<ConnectionState> =>
   pipe(
     SubscriptionRef.changes(connection.state),
     Stream.filter((current) => current._tag === "Ready"),

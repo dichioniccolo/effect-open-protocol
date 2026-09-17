@@ -14,7 +14,11 @@ import * as O from "effect/Option"
 import * as Context from "effect/Context"
 import * as S from "effect/Schema"
 import type { ConnectionState } from "../connection/ConnectionState.ts"
-import { type DeviceConfig, type DeviceConnection, make as makeConnection } from "../connection/DeviceConnection.ts"
+import {
+  type DeviceConfig,
+  type DeviceConnectionShape,
+  make as makeConnection
+} from "../connection/DeviceConnection.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
 import { Transport } from "../transport/Transport.ts"
 
@@ -49,11 +53,11 @@ export interface DeviceStatus {
  */
 export interface DevicePoolShape {
   /** Starts a connection for a device and returns once it is supervised. */
-  readonly add: (config: DeviceConfig) => Effect.Effect<DeviceConnection, DeviceAlreadyAdded>
+  readonly add: (config: DeviceConfig) => Effect.Effect<DeviceConnectionShape, DeviceAlreadyAdded>
   /** Stops a device and releases its resources. Unknown devices are ignored. */
   readonly remove: (deviceId: DeviceId) => Effect.Effect<void>
   /** The connection of a device, when it is in the pool. */
-  readonly get: (deviceId: DeviceId) => Effect.Effect<O.Option<DeviceConnection>>
+  readonly get: (deviceId: DeviceId) => Effect.Effect<O.Option<DeviceConnectionShape>>
   /** A snapshot of every device in the pool. */
   readonly status: Effect.Effect<ReadonlyArray<DeviceStatus>>
 }
@@ -61,13 +65,13 @@ export interface DevicePoolShape {
 const make = Effect.fnUntraced(function* () {
   const transport = yield* Transport
   const fibers = yield* FiberMap.make<DeviceId>()
-  const connections = MutableHashMap.empty<DeviceId, DeviceConnection>()
+  const connections = MutableHashMap.empty<DeviceId, DeviceConnectionShape>()
 
-  const add = (config: DeviceConfig): Effect.Effect<DeviceConnection, DeviceAlreadyAdded> =>
+  const add = (config: DeviceConfig): Effect.Effect<DeviceConnectionShape, DeviceAlreadyAdded> =>
     O.isSome(MutableHashMap.get(connections, config.id))
       ? Effect.fail(new DeviceAlreadyAdded({ deviceId: config.id }))
       : Effect.gen(function* () {
-        const started = yield* Deferred.make<DeviceConnection>()
+        const started = yield* Deferred.make<DeviceConnectionShape>()
         yield* FiberMap.run(
           fibers,
           config.id,
@@ -95,7 +99,7 @@ const make = Effect.fnUntraced(function* () {
 
   const remove = (deviceId: DeviceId): Effect.Effect<void> => FiberMap.remove(fibers, deviceId)
 
-  const get = (deviceId: DeviceId): Effect.Effect<O.Option<DeviceConnection>> =>
+  const get = (deviceId: DeviceId): Effect.Effect<O.Option<DeviceConnectionShape>> =>
     Effect.sync(() => MutableHashMap.get(connections, deviceId))
 
   const status = Effect.suspend(() =>

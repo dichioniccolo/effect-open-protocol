@@ -10,7 +10,7 @@
  *
  * @since 0.0.0
  */
-import { Duration, Effect, Fiber, Match, pipe, Ref, Schedule, Stream, SubscriptionRef } from "effect"
+import { Context, Duration, Effect, Fiber, Layer, Match, pipe, Ref, Schedule, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { frames } from "../protocol/Framer.ts"
@@ -77,6 +77,8 @@ export interface DeviceConfig {
   readonly dedupCapacity?: number | undefined
   /** Upper bound on results fetched after an outage. Defaults to 100. */
   readonly recoveryLimit?: number | undefined
+  /** How long a graceful close waits for the communication stop to flush. Defaults to 1 second. */
+  readonly stopTimeout?: Duration.Duration | undefined
 }
 
 /**
@@ -85,7 +87,7 @@ export interface DeviceConfig {
  * @category models
  * @since 0.0.0
  */
-export interface DeviceConnection {
+export interface DeviceConnectionShape {
   readonly deviceId: DeviceId
   /** Current state, observable as a stream of changes. */
   readonly state: SubscriptionRef.SubscriptionRef<ConnectionState>
@@ -155,6 +157,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const keepAliveInterval = config.keepAliveInterval ?? Duration.seconds(10)
   const responseTimeout = config.responseTimeout ?? Duration.seconds(5)
   const reconnect = config.reconnect ?? defaultReconnect
+  const stopTimeout = config.stopTimeout ?? Duration.seconds(1)
   const dedup = yield* makeDedup(config.dedupCapacity)
   const delivery = yield* O.match(O.fromNullishOr(config.onResult), {
     onNone: () => Effect.succeed(O.none<ResultDelivery>()),
@@ -344,7 +347,14 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     })
     const current: Session = { duplex, replies }
     yield* Ref.set(session, O.some(current))
-    yield* Effect.addFinalizer(() => Ref.set(session, O.none()))
+    yield* Effect.addFinalizer(() =>
+      pipe(
+        // Whatever ended the session, nobody is left waiting on a reply that
+        // can no longer arrive.
+        replies.interruptAll(new ConnectionLost({ reason: "the session ended" })),
+        Effect.andThen(Ref.set(session, O.none()))
+      )
+    )
 
     const reader = yield* Effect.forkChild(readLoop(current))
     // A socket that dies during the handshake, the subscription or recovery
@@ -437,16 +447,30 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   // Closing an already closed connection is a normal thing for an application
   // to do (a scope finalizer and an explicit close can both fire), so it is a
   // no-op rather than a defect.
+  /**
+   * Tells the controller we are leaving, so it can release the client slot
+   * instead of waiting for its own 15 second idle timeout. Best effort: the
+   * socket may already be gone, and shutdown must not block on it.
+   */
+  const sayGoodbye = pipe(
+    Ref.get(session),
+    Effect.flatMap((open) =>
+      O.match(open, {
+        onNone: () => Effect.void,
+        onSome: (current) =>
+          pipe(
+            sendRaw(current.duplex, new CommunicationStop()),
+            Effect.timeoutOption(stopTimeout),
+            Effect.asVoid
+          )
+      })
+    ),
+    Effect.ignore
+  )
+
   const closeOnce = pipe(
     emit(new CloseRequested()),
-    Effect.andThen(
-      withSession((current) =>
-        pipe(
-          sendRaw(current.duplex, new CommunicationStop()),
-          Effect.timeoutOption(Duration.seconds(1))
-        )
-      ).pipe(Effect.ignore)
-    ),
+    Effect.andThen(sayGoodbye),
     Effect.andThen(Fiber.interrupt(fiber)),
     Effect.andThen(emit(new Released()))
   )
@@ -480,8 +504,49 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       onNone: () => Effect.succeed(0),
       onSome: (pipeline) => pipeline.duplicates
     })
-  } satisfies DeviceConnection
+  } satisfies DeviceConnectionShape
 })
+
+/**
+ * One controller, as a service.
+ *
+ * A pool holds many connections, so `make` stays the way to build them: a
+ * service has one instance per context. This class is for the other case, an
+ * application that talks to a single controller and wants it wired like any
+ * other dependency.
+ *
+ * **Example** (A single controller as a dependency)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { DeviceConnection, DeviceId, Endpoint, TcpTransport } from "effect-open-protocol"
+ *
+ * const layer = DeviceConnection.layer({
+ *   id: DeviceId.make("line-1-tool-3"),
+ *   endpoint: new Endpoint({ host: "10.0.0.31", port: 4545 })
+ * })
+ *
+ * const program = Effect.gen(function* () {
+ *   const connection = yield* DeviceConnection
+ *   return yield* connection.state
+ * }).pipe(Effect.provide(layer), Effect.provide(TcpTransport.layer))
+ * ```
+ *
+ * @category services
+ * @since 0.0.0
+ */
+export class DeviceConnection extends Context.Service<DeviceConnection, DeviceConnectionShape>()(
+  "effect-open-protocol/DeviceConnection"
+) {
+  /**
+   * Provides one supervised connection for the lifetime of the layer, closing
+   * it gracefully when the layer goes away.
+   *
+   * @since 0.0.0
+   */
+  static readonly layer = (config: DeviceConfig): Layer.Layer<DeviceConnection, never, Transport> =>
+    Layer.effect(DeviceConnection)(make(config))
+}
 
 const reasonOf = (error: unknown): string =>
   error instanceof ConnectionLost
