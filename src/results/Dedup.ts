@@ -37,6 +37,13 @@ export interface Dedup {
    * application was listening are history, not data it lost.
    */
   readonly markBaseline: (id: TighteningId) => Effect.Effect<void>
+  /**
+   * Records that the controller holds no results at all, so the next one it
+   * produces is the first we could ever have seen and becomes the baseline.
+   */
+  readonly markNoHistory: Effect.Effect<void>
+  /** Whether the controller has told us, at some point, that it held nothing. */
+  readonly sawEmptyHistory: Effect.Effect<boolean>
 }
 
 interface State {
@@ -49,6 +56,8 @@ interface State {
   readonly watermark: O.Option<TighteningId>
   /** Delivered identifiers sitting above the watermark, waiting for the gap to close. */
   readonly ahead: ReadonlyArray<TighteningId>
+  /** Set when the controller told us it has nothing stored. */
+  readonly emptyHistory: boolean
 }
 
 /**
@@ -80,7 +89,7 @@ export const defaultCapacity = 1000
  * @since 0.0.0
  */
 export const make = Effect.fnUntraced(function* (capacity: number = defaultCapacity) {
-  const state = yield* Ref.make<State>({ ids: [], watermark: O.none(), ahead: [] })
+  const state = yield* Ref.make<State>({ ids: [], watermark: O.none(), ahead: [], emptyHistory: false })
 
   /** Advances the watermark across every identifier already delivered. */
   const advance = (from: TighteningId, ahead: ReadonlyArray<TighteningId>): {
@@ -102,13 +111,18 @@ export const make = Effect.fnUntraced(function* (capacity: number = defaultCapac
       const ids = A.length(kept) > capacity ? A.drop(kept, A.length(kept) - capacity) : kept
       const ahead = A.contains(current.ahead, id) ? current.ahead : A.append(current.ahead, id)
       return O.match(current.watermark, {
-        // Controllers do not start counting at one. The first result we
-        // deliver is the baseline, whatever number it carries.
-        onNone: () => ({ ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }),
+        // Without a baseline the identifier is held aside: treating whatever
+        // arrives first as the baseline would write off everything older that
+        // we never received. The exception is a controller that told us it has
+        // nothing stored, where the first result really is the first there is.
+        onNone: () =>
+          current.emptyHistory
+            ? { ...current, ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }
+            : { ...current, ids, ahead },
         onSome: (mark) =>
           id === mark + 1
-            ? { ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }
-            : { ids, watermark: current.watermark, ahead }
+            ? { ...current, ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }
+            : { ...current, ids, ahead }
       })
     })
 
@@ -116,10 +130,18 @@ export const make = Effect.fnUntraced(function* (capacity: number = defaultCapac
     Ref.update(state, (current) =>
       O.isSome(current.watermark) ? current : { ...current, ...advance(id, current.ahead) })
 
+  const markNoHistory: Effect.Effect<void> = Ref.update(state, (current) =>
+    O.isSome(current.watermark) || A.length(current.ahead) === 0
+      ? { ...current, emptyHistory: true }
+      // A result already arrived while we were asking: it is the baseline.
+      : { ...current, emptyHistory: true, ...advance(A.headNonEmpty(current.ahead as A.NonEmptyArray<TighteningId>), current.ahead) })
+
   return {
     seen,
     remember,
     markBaseline,
+    markNoHistory,
+    sawEmptyHistory: Effect.map(Ref.get(state), (current) => current.emptyHistory),
     lastDelivered: Effect.map(Ref.get(state), (current) => current.watermark)
   } satisfies Dedup
 })

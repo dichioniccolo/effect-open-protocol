@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { assertSome } from "@effect/vitest/utils"
+import { assertNone, assertSome } from "@effect/vitest/utils"
 import { Duration, Effect, Fiber, pipe, Ref, Schedule } from "effect"
 import { TestClock } from "effect/testing"
 import * as A from "effect/Array"
@@ -159,6 +159,7 @@ describe("ResultDelivery", () => {
   it.effect("keeps the dedup window bounded", () =>
     Effect.scoped(Effect.gen(function* () {
       const dedup = yield* makeDedup(2)
+      yield* dedup.markNoHistory
 
       yield* dedup.remember(TighteningId.make(1))
       yield* dedup.remember(TighteningId.make(2))
@@ -167,5 +168,36 @@ describe("ResultDelivery", () => {
       expect(yield* dedup.seen(TighteningId.make(1))).toBe(false)
       expect(yield* dedup.seen(TighteningId.make(3))).toBe(true)
       assertSome(yield* dedup.lastDelivered, TighteningId.make(3))
+    })))
+
+  it.effect("waits for a baseline before trusting an identifier", () =>
+    Effect.scoped(Effect.gen(function* () {
+      const dedup = yield* makeDedup(16)
+
+      // A controller that has results we have not seen: until it tells us
+      // where it is, a delivered result says nothing about what came before.
+      yield* dedup.remember(TighteningId.make(4712004))
+
+      assertNone(yield* dedup.lastDelivered)
+    })))
+
+  it.effect("takes the baseline from the controller, wherever it counts from", () =>
+    Effect.scoped(Effect.gen(function* () {
+      const dedup = yield* makeDedup(16)
+
+      yield* dedup.markBaseline(TighteningId.make(4712003))
+      yield* dedup.remember(TighteningId.make(4712004))
+
+      assertSome(yield* dedup.lastDelivered, TighteningId.make(4712004))
+    })))
+
+  it.effect("treats an empty controller as counting from its first result", () =>
+    Effect.scoped(Effect.gen(function* () {
+      const dedup = yield* makeDedup(16)
+
+      yield* dedup.markNoHistory
+      yield* dedup.remember(TighteningId.make(7))
+
+      assertSome(yield* dedup.lastDelivered, TighteningId.make(7))
     })))
 })

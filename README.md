@@ -221,11 +221,18 @@ result is never acknowledged. The controller resends it three times and then
 drops the session.
 
 **A result the controller gives up on is gone**, which is why gap recovery
-exists: after reconnecting, and whenever an incoming identifier jumps ahead of
-what we have delivered, the library asks for the missing results by identifier
-(MID 0064) and delivers them through the same path. Recovery is bounded by
-`recoveryLimit` so a device that was offline for a week cannot stall its own
-reconnect.
+exists. The library asks for missing results by identifier (MID 0064) and
+delivers them through the same path, at three moments: after reconnecting,
+whenever an arriving identifier jumps ahead of what has been delivered, and on
+a timer while any identifier is still outstanding. That last one matters more
+than it sounds: a request that times out is not proof the result is gone, and a
+quiet line would otherwise keep the gap forever. Recovery is bounded by
+`recoveryLimit` so a device offline for a week cannot stall its own reconnect.
+
+Identifiers do not start at zero. The baseline comes from asking the controller
+for its latest result on the first connection, and if that request fails no
+baseline is recorded at all: the first result that reaches the handler sets it,
+whatever number it carries.
 
 Duplicate detection keeps the last 1,000 identifiers per device in memory. It
 does not survive a restart of your process. **In production your handler should
