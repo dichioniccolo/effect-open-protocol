@@ -145,7 +145,6 @@ plain `effect/Schema` and `Context.Service` (no helper packages).
 | Domain models / schemas | schema-first-development skill |
 | Effect service / Layer | effect-first-development skill |
 | JSDoc on exports | `.patterns/jsdoc-documentation.md` |
-| Effect Atom frontend state | atom-reactivity-specialist skill |
 | Fuzzy idea / new initiative | explore skill |
 
 ### Effect reference source
