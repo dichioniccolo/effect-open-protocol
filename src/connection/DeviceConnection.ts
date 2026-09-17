@@ -85,7 +85,10 @@ export interface DeviceConfig {
   readonly recoveryRetryDelay?: Duration.Duration | undefined
   /** How long a single recovery request waits for its reply. Defaults to 1 second. */
   readonly recoveryTimeout?: Duration.Duration | undefined
-  /** How often a still-incomplete recovery is retried while the session is up. Defaults to 5 seconds. */
+  /**
+   * How often the connection reconciles with the controller's latest result
+   * while the session is up. One MID 0064 per interval. Defaults to 5 seconds.
+   */
   readonly recoveryInterval?: Duration.Duration | undefined
 }
 
@@ -212,8 +215,6 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     )
 
   const recovering = yield* Ref.make(false)
-  /** True while the controller still holds results we have not managed to fetch. */
-  const gapPending = yield* Ref.make(false)
 
   /**
    * Fetches whatever sits between the last contiguously delivered result and
@@ -247,7 +248,6 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
               })
             )
         ),
-        Effect.tap((recovery) => Ref.set(gapPending, A.length(recovery.pending) > 0)),
         Effect.flatMap((recovery) =>
           // A pending identifier is one the controller may still have: the
           // request timed out or the link wobbled. Giving up on it here is how
@@ -430,20 +430,15 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     )
 
     const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent))
-    // Results only trigger recovery when they arrive. A line that goes quiet
-    // with a gap outstanding would keep it forever, so an unfinished recovery
-    // is retried on its own schedule.
+    // Recovery otherwise depends on something arriving: a session starting, or
+    // a result whose identifier reveals a gap. Neither happens on a line that
+    // goes quiet holding results we never received, so the connection asks the
+    // controller where it stands on a timer. One MID 0064 per interval.
     const reconcile = yield* Effect.forkChild(
       O.match(delivery, {
         onNone: () => Effect.never,
         onSome: (pipeline) =>
-          Effect.forever(
-            pipe(
-              Effect.sleep(recoveryInterval),
-              Effect.andThen(Ref.get(gapPending)),
-              Effect.flatMap((outstanding) => outstanding ? recoverGap(current, pipeline) : Effect.void)
-            )
-          )
+          Effect.forever(Effect.andThen(Effect.sleep(recoveryInterval), recoverGap(current, pipeline)))
       })
     )
     return yield* pipe(

@@ -224,9 +224,11 @@ drops the session.
 exists. The library asks for missing results by identifier (MID 0064) and
 delivers them through the same path, at three moments: after reconnecting,
 whenever an arriving identifier jumps ahead of what has been delivered, and on
-a timer while any identifier is still outstanding. That last one matters more
-than it sounds: a request that times out is not proof the result is gone, and a
-quiet line would otherwise keep the gap forever. Recovery is bounded by
+a timer. The timer matters more than it sounds. The other two triggers both
+depend on something arriving, and a line that goes quiet while the controller
+holds results we never received would otherwise keep that gap forever, so the
+connection asks the controller where it stands every few seconds: one MID 0064
+per interval per device. Recovery is bounded by
 `recoveryLimit` so a device offline for a week cannot stall its own reconnect.
 
 Identifiers do not start at zero. The baseline comes from asking the controller
