@@ -40,8 +40,8 @@ Closed. The work shipped as PR #1; the closeout reflection is in
 
 ## Latest Evidence
 
-PR: https://github.com/dichioniccolo/effect-open-protocol/pull/1 (CLEAN,
-mergeable). Clean clone verified 2026-09-17: `bun install`, `bun run check`,
+PR: https://github.com/dichioniccolo/effect-open-protocol/pull/1, merged
+2026-09-17 as `bb8134f`. Clean clone verified 2026-09-17: `bun install`, `bun run check`,
 `bun run test` (60 passed), `bun run build`, `bun run demo` (116 generated,
 116 delivered, zero lost). Chaos invariant holds on every seed tried.
 
