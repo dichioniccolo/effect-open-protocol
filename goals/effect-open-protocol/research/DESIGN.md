@@ -5,6 +5,13 @@ changed the design: unacknowledged results are **lost** on disconnect, so gap
 recovery via MID 0064/0065 is in scope, and the handler gets a configurable
 local retry.
 
+Reconciled with the implementation on 2026-09-17, after a code quality pass
+moved several things: §3.1 (one attempt event, no `lastError`), §3.2 (recovery
+runs before the subscription), §3.4/§3.5 (no `ConnectionClosed`), §4.2/§4.3
+(contiguous watermark, timed reconcile), §5 and §6 (the pool's real surface),
+§7 (every declared fault is injected) and §8 (module layout). The answers in
+§10 are the record of what was asked and are unchanged.
+
 Spec facts below are described in our own words from the Atlas Copco Open
 Protocol Specification R2.8.0
 (<https://s3.amazonaws.com/co.tulip.cdn/OpenProtocolSpecification_R280.pdf>;
@@ -128,13 +135,13 @@ function returning `Result<ConnectionState, InvalidTransition>`, unit-tested
 without I/O.
 
 ```text
-Disconnected ──Connect──► Connecting
+Disconnected ──AttemptStarted──► Connecting(1)
+WaitingToReconnect ──AttemptStarted──► Connecting(n + 1)
 Connecting ──Opened──► Handshaking          ──Failed──► WaitingToReconnect
 Handshaking ──Accepted──► Subscribing       ──Failed──► WaitingToReconnect
-Subscribing ──Subscribed──► Recovering     ──Failed──► WaitingToReconnect
+Subscribing ──Subscribed──► Recovering      ──Failed──► WaitingToReconnect
 Recovering ──Recovered──► Ready             ──Failed──► WaitingToReconnect
-Ready ──Lost(reason)──► WaitingToReconnect
-WaitingToReconnect ──RetryDue──► Connecting
+Ready ──Failed(reason)──► WaitingToReconnect
 any non-final ──CloseRequested──► Closing ──Released──► Closed (final)
 ```
 
@@ -142,8 +149,17 @@ any non-final ──CloseRequested──► Closing ──Released──► Clos
   non-final state (not `WaitingToReconnect → Closed` directly). One shutdown
   path; `Closing` sends MID 0003 only when a socket is open, best effort with a
   short timeout.
-- State payloads: `attempt` (count since last Ready), `lastError`
-  (`Option<ConnectionError>`), `retryAt` in `WaitingToReconnect`.
+- One event starts an attempt. Whether it is the first one or a retry is the
+  state's business, not the caller's: `Disconnected` starts at attempt 1 and
+  `WaitingToReconnect` continues its count.
+- State payloads: `attempt` on `Connecting`, `Handshaking`, `Subscribing`,
+  `Recovering` and `WaitingToReconnect`; `controllerName` from `Subscribing`
+  onwards; `reason` on `WaitingToReconnect`. `Closed` carries nothing: the
+  reason a session died is already in `WaitingToReconnect` and in the logs.
+- A refused transition is a defect (`Effect.die`), with one exception: events
+  that only report something that already happened to the socket (`Failed`)
+  are dropped when the machine refuses them, because a session can fail while
+  the application is already closing.
 - Exposed as `SubscriptionRef<ConnectionState>` (`get`, `changes` stream).
 - Structured logs annotated with `deviceId`, `state`, `mid`.
 
@@ -157,8 +173,15 @@ supervisor fiber (per device):
 ```
 
 - `openSession` runs in a fresh `Scope`: connect, start reader fiber, write
-  MID 0001, await 0002 (or 0004 → `HandshakeRejected { code }`), subscribe
-  0060 when a result handler exists, await 0005, then run gap recovery (§4.3).
+  MID 0001, await 0002 (or 0004 → `HandshakeRejected { code }`), run gap
+  recovery (§4.3), then subscribe 0060 when a result handler exists and await
+  0005.
+- Recovery runs **before** the subscription, not after it: a result produced
+  between the two would otherwise be mistaken for history by the first
+  baseline and never delivered.
+- The handshake, recovery and subscription race the reader fiber, so a socket
+  that dies during any of them fails the attempt at once instead of waiting
+  out a timeout.
 - `reconnectSchedule` default:
   `Schedule.exponential("500 millis")` capped at 30 s via `Schedule.modifyDelay`,
   `Schedule.jittered`, unbounded. Configurable per device.
@@ -193,14 +216,18 @@ supervisor fiber (per device):
 - On session loss, the in-flight deferred and every waiter fail with
   `ConnectionLost` (the deferred is completed from the session finalizer).
 - MID 0062 needs no reply, so it bypasses the semaphore.
-- Requests while not `Ready` fail fast with `NotReady { state }`; after
-  `Closed` with `ConnectionClosed`.
+- Requests while not `Ready` fail fast with `NotReady { state }`, `Closed`
+  included: one error for "this connection cannot carry your message", with
+  the state that refused it.
 
 ### 3.5 Errors
 
 `ConnectionFailed`, `ConnectionLost { reason }`, `HandshakeRejected { code }`,
-`RequestTimeout { mid }`, `CommandRejected { mid, code }`, `NotReady`,
-`ConnectionClosed`, `InvalidTransition` (defect: signals a bug, `Effect.die`).
+`RequestTimeout { mid }`, `CommandRejected { mid, code }`, `NotReady { state }`,
+`InvalidTransition` (defect: signals a bug, `Effect.die`).
+
+`request` carries `NotReady | RequestTimeout | CommandRejected | ConnectionLost`
+in its signature: every failure a caller can act on is a tag it can catch.
 
 ## 4. Result delivery
 
@@ -234,21 +261,44 @@ after reconnect. Recovery is therefore part of the reliability story, not
 future work.
 
 ```text
-Recovering (after 0060 accepted):
+a recovery pass:
   request 0064 with tightening id 0   → 0065 carries the controller's latest id
-  missing = (lastDeliveredId + 1) .. latestId       (empty on first connect)
+  missing = (watermark + 1) .. latestId             (empty on first connect)
   for each missing id, ascending:
     request 0064 id                   → 0065 result  → deliver through §4.1
-                                      → 0004 (id not found) → log, skip, continue
-  → Ready
+                                      → 0004 (id not found) → missing, skip
+                                      → timeout / session died → pending, retry
+  repeat while anything is pending, up to `recoveryAttempts`
 ```
 
-- `lastDeliveredId` is the highest id handed to the handler for that device,
-  kept next to the dedup set.
+- A pass runs at three moments: once before the subscription on every session
+  (§3.2), whenever a pushed id is higher than `watermark + 1`, and on a timer
+  (`recoveryInterval`, default 5 s) while the session is up. The timer is what
+  covers a line that goes quiet while the controller still holds results we
+  never received: nothing arrives to reveal the gap.
+- One pass at a time per device: a second trigger while a pass runs is
+  dropped, so a busy line costs the controller the same single MID 0064 as a
+  quiet one.
+- "The controller does not have it" (0004) and "we did not get an answer"
+  (timeout, dead session) are kept apart. The first is final and the id is
+  reported as `missing`; the second is `pending` and retried, because giving
+  up there is exactly how a result gets lost. Per-pass knobs:
+  `recoveryAttempts` (default 5), `recoveryRetryDelay` (default 500 ms) and
+  `recoveryTimeout` (default 1 s, well below the command timeout: a slow reply
+  costs a whole pass).
+- `watermark` is the highest id below which nothing is missing. It advances
+  only contiguously: delivering 30 while 25 is still missing must not convince
+  recovery that 25 was handled. Delivered ids above it wait in `ahead` until
+  the gap closes.
 - Recovery is bounded by `recoveryLimit` (default 100 ids) so a device that was
-  offline for a week cannot stall the reconnect; the remainder is logged.
-- On first connect there is no baseline: the latest id is recorded as
-  `lastDeliveredId` without fetching history.
+  offline for a week cannot stall the reconnect; the remainder is reported as
+  `skipped`.
+- On first connect there is no baseline: the controller's latest id becomes the
+  watermark without fetching history. A controller that answers "I hold
+  nothing" is the other case, and it is not the same: everything it produces
+  from then on was produced while we were listening, so the first result it
+  reports becomes the baseline and the range is collected rather than written
+  off as history.
 - Results pushed while recovery runs are queued normally; dedup makes the
   overlap harmless. Ordering towards the handler is by arrival, not by id.
 
@@ -258,9 +308,10 @@ Recovering (after 0060 accepted):
   application's cooperation: the handler must be idempotent on
   `(deviceId, tighteningId)` (e.g. a unique constraint). README states this as
   an integration requirement.
-- Dedup: per device, bounded insertion-ordered set of the last
-  `dedupCapacity` ids (default 1 000, oldest evicted). In memory only: it does
-  not survive a process restart.
+- Dedup: per device, the last `dedupCapacity` ids (default 1 000) in a hash
+  set for membership plus their arrival order for eviction, alongside the
+  contiguous `watermark` of §4.3. In memory only: it does not survive a process
+  restart.
 - Backpressure: `resultBuffer` default 16. When full, the reader waits. If the
   handler stays slow long enough, keep-alive can time out, the connection
   resets and the controller resends; dedup keeps this safe. Documented as the
@@ -272,71 +323,104 @@ Recovering (after 0060 accepted):
 - `DevicePool` service backed by `FiberMap<DeviceId>`: one supervisor fiber
   per device (`FiberMap.run`), started on `add`, interrupted on `remove`.
 - A device failing never fails the pool: supervisor failures are retried
-  forever; defects are logged and the device is marked `Closed` with
-  `lastError`.
-- Aggregate state: `states: Stream<ReadonlyMap<DeviceId, ConnectionState>>`
-  built from each device's `SubscriptionRef`.
+  forever; a defect is logged, the device leaves the pool, and the others are
+  untouched.
+- `add` claims the device's slot and notices a duplicate in one atomic step, so
+  two concurrent calls for one `DeviceId` cannot both win; the loser gets
+  `DeviceAlreadyAdded`.
+- Surface: `add`, `remove`, `get(deviceId)` and `status`, a snapshot of every
+  device as `{ deviceId, state, delivered, duplicates }`. Streaming state is
+  per device, through its own `SubscriptionRef`.
 - Pool `Scope` close → every device goes through `Closing` → `Closed`.
 - No `DeviceOwnership` abstraction: one instance owns the devices it is given.
 
-## 6. Public API (proposed)
+## 6. Public API
 
 ```ts
-import { Effect, Layer, Stream } from "effect"
 import { NodeRuntime } from "@effect/platform-node"
-import { DevicePool, TcpTransport, TighteningResult } from "effect-open-protocol"
+import { Effect } from "effect"
+import { DeviceId, DevicePool, Endpoint, TcpTransport, type TighteningResult } from "effect-open-protocol"
 
 const onResult = (result: TighteningResult) =>
-  Effect.log("tightening", result.tighteningId, result.status)
+  Effect.log(`tightening ${result.tighteningId} ${result.status}`)
 
 const program = Effect.gen(function* () {
   const pool = yield* DevicePool
-  yield* pool.add({ id: "line-1-tool-3", host: "10.0.0.31", port: 4545 })
-  yield* pool.add({ id: "line-1-tool-4", host: "10.0.0.32", port: 4545 })
-  yield* pool.states.pipe(
-    Stream.runForEach((states) => Effect.log("devices", states))
-  )
+  yield* pool.add({
+    id: DeviceId.make("line-1-tool-3"),
+    endpoint: new Endpoint({ host: "10.0.0.31", port: 4545 }),
+    onResult
+  })
+  yield* pool.add({
+    id: DeviceId.make("line-1-tool-4"),
+    endpoint: new Endpoint({ host: "10.0.0.32", port: 4545 }),
+    onResult
+  })
+  return yield* pool.status
 })
 
 program.pipe(
-  Effect.provide(
-    DevicePool.layer({ onResult }).pipe(Layer.provide(TcpTransport.layer))
-  ),
+  Effect.provide(DevicePool.layer),
+  Effect.provide(TcpTransport.layer),
   NodeRuntime.runMain
 )
 ```
 
-Per-device overrides (optional): `reconnect`, `keepAliveInterval`,
-`responseTimeout`, `dedupCapacity`, `resultBuffer`. Single-device use:
-`DeviceConnection.make(config)` (scoped) exposes `state` and `close`.
+The handler is per device, not per pool: two tools can report to two different
+places. Per-device overrides (all optional): `reconnect`, `keepAliveInterval`,
+`responseTimeout`, `handlerRetry`, `resultBuffer`, `dedupCapacity`,
+`stopTimeout`, and the recovery knobs of §4.3. `resolveSettings` fills in every
+default in one place.
+
+Single-device use: `makeDeviceConnection(config)` (scoped) exposes `state`,
+`request`, `send`, `close` and the delivery counters, or
+`DeviceConnection.layer(config)` to wire one controller as a dependency.
 
 ## 7. Simulator and demo (shape only)
 
-- `ControllerSimulator.make({ endpoint, seed, resultInterval, faults })`
-  listens on `SocketServer` (TCP) or `InMemoryNetwork`. It answers 0001, 9999,
-  0060/0063, pushes 0061 with increasing ids, resends unacknowledged results
-  per confirmed behavior (Q1/Q2), and closes after 15 s without traffic.
-- Faults use `Random.withSeed`: abrupt close, silent socket, delayed replies,
-  split chunks, coalesced frames, command rejection (0004), temporarily
-  refusing connections.
+- `ControllerSimulator.make({ endpoint, resultInterval, faults, ... })` binds
+  an `InMemoryNetwork` endpoint, `makeTcp` the same behaviour on a real socket.
+  It answers 0001, 9999, 0060/0063, serves 0064 from its store, pushes 0061
+  with increasing ids one at a time, resends an unacknowledged result per
+  confirmed behavior (Q1/Q2) and abandons it after `ackAttempts`.
+- Faults use `Random.withSeed` (the seed is applied around the run, not passed
+  to the simulator): abrupt close, silent socket, delayed replies, split
+  chunks, coalesced frames, command rejection (0004), temporarily refusing
+  connections. Every kind the generator can decide is one the simulator
+  performs — the match over faults is exhaustive, so a kind cannot be declared
+  and then silently ignored. Refusal windows are owned by the simulator itself,
+  not by the session that triggered them, so a session dying mid-outage cannot
+  leave an endpoint refusing connections forever.
 - Demo: `effect/unstable/cli` command `demo` with `--seed --duration --devices
-  --fault-rate --verbose`; prints the summary; exit code non-zero if lost > 0
-  or duplicates reached the handler.
+  --fault-rate --settle`; prints the summary; exit code non-zero if lost > 0
+  or duplicates reached the handler. `scripts/soak.ts` walks the same scenario
+  across many seeds.
 
 ## 8. Module layout
 
 ```text
 src/
-  protocol/   Header.ts Framer.ts Messages.ts TighteningResult.ts ProtocolError.ts
+  protocol/   Ascii.ts Header.ts Framer.ts Messages.ts TighteningResult.ts ProtocolError.ts
   transport/  Transport.ts TcpTransport.ts InMemoryTransport.ts
-  connection/ ConnectionState.ts DeviceConnection.ts RequestReply.ts KeepAlive.ts ConnectionError.ts
+  connection/ ConnectionState.ts DeviceSettings.ts DeviceConnection.ts Session.ts
+              GapRecovery.ts RequestReply.ts ConnectionError.ts
   results/    ResultDelivery.ts Dedup.ts ResultRecovery.ts
   pool/       DevicePool.ts
   index.ts
 simulator/    ControllerSimulator.ts Faults.ts
 demo/         chaos.ts
+scripts/      soak.ts
 test/         protocol/ connection/ results/ pool/ simulator/ integration/
 ```
+
+- `Ascii.ts` holds the one way the protocol writes a number and a text field,
+  so the header, the generic acknowledgements and the result parameters share
+  a parser instead of each carrying their own.
+- `DeviceConnection.ts` owns the lifecycle and nothing else. What are policies
+  in their own right live beside it: the defaults in `DeviceSettings.ts`, the
+  live session and its read and keep-alive loops in `Session.ts`, and the gap
+  policy of §4.3 in `GapRecovery.ts`. There is no `KeepAlive.ts`: the loop is
+  three lines of the session and reads better next to the reader it races.
 
 ## 9. Test plan (per phase)
 
