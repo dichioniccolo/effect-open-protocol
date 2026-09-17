@@ -42,6 +42,8 @@ export interface SimulatorOptions {
   readonly controllerName?: string | undefined
   /** Rejects the handshake with this Open Protocol error code when set. */
   readonly rejectStartWith?: number | undefined
+  /** Stops answering once the session is established: the socket stays open but goes quiet. */
+  readonly silent?: boolean | undefined
 }
 
 /**
@@ -79,7 +81,10 @@ const replyTo = (
           onSome: (code): Message => new CommandError({ mid: 1, code })
         })
       )),
-    Match.tag("KeepAlive", (): O.Option<Message> => O.some(new KeepAlive())),
+    Match.tag(
+      "KeepAlive",
+      (): O.Option<Message> => options.silent === true ? O.none() : O.some(new KeepAlive())
+    ),
     Match.tag("SubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 60 }))),
     Match.tag("UnsubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 63 }))),
     Match.tag("CommunicationStop", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 3 }))),

@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: `in-progress` — P0 and P1 complete; next is P2 Connection
+Status: `in-progress` — P0 to P2 complete; next is P3 Delivery
 
 ## Phases
 
@@ -14,7 +14,7 @@ lands with its tests; `bunx tsc --noEmit` + `bun run test` green before the next
 | --- | --- | --- | --- |
 | P0 Design | complete | Tooling (package rename, tsdown build, `engines`, `@effect/platform-node`, scripts) + `research/DESIGN.md`: MID subset + types, state machine, correlation, delivery + dedup, public API example, numbered questions on controller behavior. | Build/test/check green on placeholder entry; **user confirms design** (stop). |
 | P1 Protocol | complete | Header, framer, encoder, MID Schemas, protocol errors; `Transport` service + in-memory transport; minimal simulator (handshake, keep-alive). | Roundtrip + chunking property tests pass. |
-| P2 Connection | pending | Pure state machine; handshake, keep-alive + silent death, single in-flight request/reply, reconnect Schedule, per-attempt Scope, observable state. | Plan `08` connection matrix passes under `TestClock`. |
+| P2 Connection | complete | Pure state machine; handshake, keep-alive + silent death, single in-flight request/reply, reconnect Schedule, per-attempt Scope, observable state. | Plan `08` connection matrix passes under `TestClock`. |
 | P3 Delivery | pending | Subscribe + restore, handler-then-ACK, bounded dedup, backpressure; simulator resends un-ACKed per confirmed behavior. | Plan `08` delivery matrix passes. |
 | P4 Pool + TCP | pending | `DevicePool`, `TcpTransport`, simulator TCP server, localhost smoke test. | Isolation, add/remove, shutdown tests pass. |
 | P5 Chaos | pending | Seeded faults; chaos demo CLI with summary; e2e invariant test. | Demo lost = 0; e2e zero lost / zero duplicate. |
