@@ -14,7 +14,7 @@ User dump (verbatim):
 > non importare questi asset ma leggili solo. Questo è quello che voglio fare.
 > Utiliza tsdown e non tsup per la build, tutto il resto va bene cosi com'è.
 
-External development plan — **read, not imported** (per user instruction the
+External development plan, **read, not imported** (per user instruction the
 files are not copied into `assets/`). Source directory at capture time:
 `/mnt/d/Users/nicky/Downloads/openprotocol-effect-plan/openprotocol-effect-plan/`
 
@@ -37,7 +37,7 @@ Reading notes (so a cold session does not depend on the external path):
 - Goal: TypeScript library, **Effect only**, talking Open Protocol over TCP to
   tightening controllers; robust to network failure; simulator to prove it.
   Working name `effect-open-protocol`. Tech assessment graded on quality,
-  presentation, motivation, technical choices, "stupiscici" — not size.
+  presentation, motivation, technical choices, "stupiscici", not size.
 - Motivation: author already runs a NestJS (non-Effect) equivalent in
   production. Clean rewrite, no code ported from it. Tightening results are
   traceability data: never lost, never double-counted.
@@ -99,5 +99,5 @@ Reading notes (so a cold session does not depend on the external path):
   4 results · 5 pool + TCP · 6 faults + demo · 7 hardening · 8 docs.
   DoD ends with clean `install / test / build / demo` run.
 - Stack as written: Node.js, `effect`, `@effect/platform(-node)`,
-  `@effect/cli`, `@effect/vitest`, Vitest, **tsup or equivalent** — overridden
+  `@effect/cli`, `@effect/vitest`, Vitest, **tsup or equivalent**, overridden
   by the user: **tsdown**.

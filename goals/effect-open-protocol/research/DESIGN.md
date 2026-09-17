@@ -67,8 +67,8 @@ both. The decoder validates each parameter id at its fixed offset and extracts:
 | `timestamp` | 20, `YYYY-MM-DD:HH:MM:SS` | `ControllerTimestamp` (brand, pattern-checked string; controller local time, no zone) |
 
 (Parameter ids above are the MID 0061 rev 1 ones; MID 0065 rev 1 uses its own
-ids — 01 tightening id, 02 VIN, 03 pset, 05 status, 06/07 torque and angle
-status, 08 torque, 09 angle, 10 timestamp — and carries no VIN-less fields we
+ids, 01 tightening id, 02 VIN, 03 pset, 05 status, 06/07 torque and angle
+status, 08 torque, 09 angle, 10 timestamp, and carries no VIN-less fields we
 need.)
 
 Remaining parameters are validated for shape and ignored; the encoder (used by
@@ -277,8 +277,7 @@ Recovering (after 0060 accepted):
 - Aggregate state: `states: Stream<ReadonlyMap<DeviceId, ConnectionState>>`
   built from each device's `SubscriptionRef`.
 - Pool `Scope` close → every device goes through `Closing` → `Closed`.
-- No `DeviceOwnership` abstraction now; the scale-out ADR explains where it
-  would go.
+- No `DeviceOwnership` abstraction: one instance owns the devices it is given.
 
 ## 6. Public API (proposed)
 
@@ -368,28 +367,28 @@ Answers below are binding; the sections above already reflect them.
 3. **Command timeout.** Spec suggests resending a command up to 3 times before
    declaring the connection lost. Use that, or fail the request once and
    reconnect? What response timeout do you use in production?
-   **Answer: 5 s, no resend** — timeout → `RequestTimeout`, session reset.
+   **Answer: 5 s, no resend**, timeout → `RequestTimeout`, session reset.
 4. **Handler failure.** OK that the library never retries the handler itself
    and relies on controller resend?
    **Answer: retry locally.** Configurable `handlerRetry`, default 3 attempts
    with jittered exponential backoff from 200 ms (§4.1).
 5. **Tightening ID.** Can ids reset (controller replaced/reset) or repeat?
    Is a bounded last-1 000 set per device fine for dedup?
-   **Answer: default kept** — bounded last-1 000 set per device, plus
+   **Answer: default kept**, bounded last-1 000 set per device, plus
    `lastDeliveredId` for gap detection.
 6. **Revisions.** Is MID 0061 rev 1 (and 0002 rev 1) enough, or do your
    controllers need a higher revision?
-   **Answer: default kept** — rev 1 only (0002, 0061, 0065).
+   **Answer: default kept**, rev 1 only (0002, 0061, 0065).
 7. **Recovery via MID 0064** (upload old result by id after an outage).
    Relevant for the demo, or future work?
    **Answer: in scope**, see §4.3.
 8. **Client already connected** (0004 code 96 on 0001). Retry with backoff like
    any handshake failure?
-   **Answer: default kept** — retried with backoff, logged as
+   **Answer: default kept**, retried with backoff, logged as
    `HandshakeRejected { code: 96 }`.
 9. **Link-level sequence numbers (9997/9998)** and generic subscriptions
    (0008/0009): used in your production service?
-   **Answer: default kept** — not supported; typed `UnsupportedFeature`.
+   **Answer: default kept**, not supported; typed `UnsupportedFeature`.
 10. **Timestamp.** Keep the controller's zone-less local timestamp as a
     validated string, or convert with a configured zone?
-    **Answer: default kept** — validated zone-less string.
+    **Answer: default kept**, validated zone-less string.

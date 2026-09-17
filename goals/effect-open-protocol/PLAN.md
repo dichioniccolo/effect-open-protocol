@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: `in-progress` — P0 to P6 complete; next is P7 Docs
+Status: `in-progress`, P0 to P6 complete; next is P7 Docs
 
 ## Phases
 
@@ -19,7 +19,7 @@ lands with its tests; `bunx tsc --noEmit` + `bun run test` green before the next
 | P4 Pool + TCP | complete | `DevicePool`, `TcpTransport`, simulator TCP server, localhost smoke test. | Isolation, add/remove, shutdown tests pass. |
 | P5 Chaos | complete | Seeded faults; chaos demo CLI with summary; e2e invariant test. | Demo lost = 0; e2e zero lost / zero duplicate. |
 | P6 Hardening | complete | Review errors vs defects, races (disconnect during request/ACK), interruption, logging, API ergonomics, test quality (`quality-review-fix-loop`). | Zero required findings. |
-| P7 Docs | pending | README per plan `09`, 7 ADRs, scale-out ADR, NestJS vs Effect drafted with questions and completed with user, AI usage, learnings; clean-clone DoD run. | SPEC acceptance satisfied. |
+| P7 Docs | pending | README per plan `09`, ADRs, NestJS vs Effect drafted with questions and completed with user, AI usage, learnings; clean-clone DoD run. | SPEC acceptance satisfied. |
 | P8 PR to mergeable | pending | Open PR, drive to mergeable. | `mergeStateStatus` `CLEAN`; zero unresolved threads. |
 | P9 Close | pending | Closeout reflection, flip packet state. | Reflection exists; status updated. |
 
@@ -39,7 +39,7 @@ Before marking the packet closed (`status` → `completed-retained`):
 - Preserve unrelated worktree changes.
 - Keep `SPEC.md` normative; append execution decisions to its decision log.
 - Verify Effect APIs in `.repos/effect` (run `bash scripts/setup-effect-ref.sh` if missing).
-- Cut order if appetite runs out: replay-from-id, `DeviceOwnership`, rarer
+- Cut order if appetite runs out: replay-from-id, rarer
   faults, verbose logging mode.
 
 ## Verification Commands

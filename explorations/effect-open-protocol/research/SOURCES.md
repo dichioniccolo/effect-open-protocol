@@ -1,7 +1,7 @@
 # Effect Open Protocol — Sources & Provenance
 
 - **Cluster / origin:** user-authored development plan (11 Italian markdown
-  files, read not imported — see `CAPTURE.md` 2026-09-17) + research sweep
+  files, read not imported; see `CAPTURE.md` 2026-09-17) + research sweep
   2026-09-17.
 - **Provenance:** [`../RESEARCH.md`](../RESEARCH.md),
   [`../DECISIONS.md`](../DECISIONS.md).
@@ -23,16 +23,16 @@
 |------|---------|-----------------|--------------|
 | Effect-TS/effect (`.repos/effect`) | MIT (`.repos/effect/LICENSE`) | dependency; port-with-attribution if copying snippets | runtime primitives |
 | Atlas Copco Open Protocol spec | proprietary (Atlas Copco) | reference-only; own-words description, cite | message layout facts |
-| Author's NestJS service | private | not used — plan forbids porting | domain knowledge via user only |
+| Author's NestJS service | private | not used; the plan forbids porting | domain knowledge via user only |
 | rolldown/tsdown | not verified | dependency only | build |
 
 ## 3. External research sources
 
-- tsdown — https://tsdown.dev/ , https://tsdown.dev/guide/ , https://tsdown.dev/guide/getting-started , https://github.com/rolldown/tsdown
-- Open Protocol Specification R2.8.0 — https://s3.amazonaws.com/co.tulip.cdn/OpenProtocolSpecification_R280.pdf
-- Open Protocol Specification (ServAid) — https://servaid.atlascopco.com/AssertWeb/en-US/AtlasCopco/Document/10268853/GetFile
-- Python Open Protocol client article — https://www.pensare.io/articles/building-a-python-client-for-atlas-copco-open-protocol-torque-tools/
-- Open Protocol on Allen-Bradley — https://industrialmonitordirect.com/blogs/knowledgebase/implementing-atlas-copco-open-protocol-on-allen-bradley
+- tsdown: https://tsdown.dev/ , https://tsdown.dev/guide/ , https://tsdown.dev/guide/getting-started , https://github.com/rolldown/tsdown
+- Open Protocol Specification R2.8.0: https://s3.amazonaws.com/co.tulip.cdn/OpenProtocolSpecification_R280.pdf
+- Open Protocol Specification (ServAid): https://servaid.atlascopco.com/AssertWeb/en-US/AtlasCopco/Document/10268853/GetFile
+- Python Open Protocol client article: https://www.pensare.io/articles/building-a-python-client-for-atlas-copco-open-protocol-torque-tools/
+- Open Protocol on Allen-Bradley: https://industrialmonitordirect.com/blogs/knowledgebase/implementing-atlas-copco-open-protocol-on-allen-bradley
 
 ## 4. In-repo capability references
 

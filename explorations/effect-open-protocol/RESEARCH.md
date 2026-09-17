@@ -11,7 +11,7 @@ rebuilding them). Date sections; research goes stale.
 ### Build: tsdown (user-mandated, replaces tsup)
 
 - tsdown is a library bundler built on Rolldown, with declaration generation
-  powered by Oxc — [tsdown.dev](https://tsdown.dev/),
+  powered by Oxc. See [tsdown.dev](https://tsdown.dev/),
   [guide](https://tsdown.dev/guide/), repo
   [rolldown/tsdown](https://github.com/rolldown/tsdown).
 - Requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`
@@ -32,7 +32,7 @@ rebuilding them). Date sections; research goes stale.
   ([pensare.io client article](https://www.pensare.io/articles/building-a-python-client-for-atlas-copco-open-protocol-torque-tools/),
   [Industrial Monitor Direct PLC note](https://industrialmonitordirect.com/blogs/knowledgebase/implementing-atlas-copco-open-protocol-on-allen-bradley)).
   Keep-alive guidance seen: controller idle timeout 15 s, send ~every 7 s.
-  **Unverified against the spec PDF** — Phase 1 design must confirm field
+  **Unverified against the spec PDF**. Phase 1 design must confirm field
   widths (plan says Revision 3 chars), MID numbers (0003 stop, 0004 command
   error, 0005 command accepted, 0063 unsubscribe) and ACK/resend behavior
   with the user.
@@ -62,7 +62,7 @@ Plan primitive → Effect v4 location (verified in `.repos/effect`):
 | Test time | `TestClock` | `packages/effect/src/testing/TestClock.ts` |
 | Property tests | `it.prop` in `@effect/vitest`; schema arbitraries | `packages/vitest/src/index.ts:265`, `packages/effect/src/internal/arbitrary/` |
 | Cluster (ADR option 3) | `effect/unstable/cluster` | `packages/effect/src/unstable/cluster/` |
-| Open Protocol codec, simulator, pool, delivery | NOT FOUND — NET-NEW | — |
+| Open Protocol codec, simulator, pool, delivery | NOT FOUND: NET-NEW | n/a |
 
 ## Constraints Discovered
 
@@ -70,7 +70,7 @@ Plan primitive → Effect v4 location (verified in `.repos/effect`):
    `@effect/cli`, `Context.Tag`, `Data.TaggedError` naming in the plan map to
    `effect/unstable/socket`, `effect/unstable/cli`, `Context.Service`,
    `Schema.TaggedError` in v4. Plan itself says "verify APIs on current docs,
-   adapt and flag" — so this is adaptation, not a scope change. Socket/CLI
+   adapt and flag", so this is adaptation, not a scope change. Socket/CLI
    live under `unstable/` (API may move between RCs).
 2. **Runtime/tooling conflict.** Plan: Node.js + `npm install/test/build/demo`.
    Repo `CLAUDE.md`: Bun (`bun run test`, `bunx`). tsdown needs Node ≥22.18

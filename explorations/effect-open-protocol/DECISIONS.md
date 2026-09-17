@@ -91,6 +91,6 @@ become `PLAN.md` phases; the Phase 1 design confirmation is a stop condition
 inside the goal.
 
 **Rationale:** User instruction ("Fai meno goal possibile"). Rejected: 7 goals
-with gates (recommended earlier for SPEC isolation from design changes) — the
+with gates (recommended earlier for SPEC isolation from design changes), the
 design stop still protects later phases, and one packet avoids re-entering
 decompose.

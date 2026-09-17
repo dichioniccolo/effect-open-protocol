@@ -35,7 +35,7 @@ follow the instructions in goals/effect-open-protocol/GOAL.md
 
 ## Current Phase
 
-P4 Pool + TCP — next action: `DevicePool` over `FiberMap` (per-device
+P4 Pool + TCP, next action: `DevicePool` over `FiberMap` (per-device
 supervision, runtime add/remove, failure isolation, aggregate state), the
 `TcpTransport` on `@effect/platform-node`, and a localhost smoke test.
 

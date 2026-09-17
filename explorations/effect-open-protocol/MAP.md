@@ -24,7 +24,7 @@ code composed from Effect v4 bricks (repo has no `src/`); cites are relative to
 Inside the goal, strict plan order, each phase closing with green
 `bunx tsc --noEmit` + `bun run test`:
 
-1. Design + tooling (plan Phase 1) — tsdown build, package rename, design doc;
+1. Design and tooling (plan Phase 1): tsdown build, package rename, design doc;
    **stop for user confirmation**.
 2. Protocol codec + in-memory transport + minimal simulator (Phase 2).
 3. Device connection (Phase 3).
@@ -51,7 +51,7 @@ example, numbered controller-behavior questions; user confirmed or amended it.
 
 First code slice after the gate: encode a communication-start message, push its
 bytes through the in-memory transport split into random chunks, decode it back
-equal — proven by `it.prop`.
+equal, proven by `it.prop`.
 
 ## Open Risks Inherited From The Brief
 

@@ -1,6 +1,6 @@
 # GOAL: Build effect-open-protocol per the confirmed plan
 
-Repo root: the current working directory — the checkout you are running in. Do not assume an absolute path. All paths below are repo-relative.
+Repo root is the current working directory, the checkout you are running in. Do not assume an absolute path. All paths below are repo-relative.
 
 Outcome: an Effect v4 Open Protocol library with resilient connections, ACK-after-handler at-least-once delivery, device pool, seeded fault-injecting simulator and chaos demo (lost = 0), tsdown build and README, shipped as a mergeable PR.
 
@@ -17,7 +17,7 @@ Read those first, then `CLAUDE.md`, the effect-first-development and schema-firs
 Scope:
 
 - In: root tooling (`package.json`, tsconfig, vitest, tsdown config, lockfile), `src/`, `simulator/`, `demo/`, `test/`, `README.md`, this packet.
-- Out: SPEC non-goals — scale-out implementation, full protocol, persistence, brokers, other DI frameworks, dashboards/Docker/cloud, NestJS code, tsup, Effect v3 packages.
+- Out: SPEC non-goals, multi-instance coordination, full protocol, persistence, brokers, other DI frameworks, dashboards/Docker/cloud, NestJS code, tsup, Effect v3 packages.
 
 Workflow:
 

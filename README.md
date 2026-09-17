@@ -3,7 +3,7 @@
 An Open Protocol client for industrial tightening controllers, written only
 with [Effect](https://effect.website). It keeps a connection to each controller
 alive through network failures and delivers every tightening result to your
-application exactly once, or tells you plainly when it cannot.
+application exactly once, or tells you when it cannot.
 
 ```sh
 bun install
@@ -13,7 +13,7 @@ bun run demo
 
 ## The problem
 
-Assembly lines are full of tightening tools — the controllers that drive them
+Assembly lines are full of tightening tools. The controllers that drive them
 speak [Open Protocol](https://www.atlascopco.com/) over plain TCP. Each
 completed tightening produces a result: torque, angle, verdict, timestamp,
 and a unique identifier. That result is traceability data. If a car leaves the
@@ -35,9 +35,9 @@ acknowledgement never arrived, and how to prove any of it works.
 
 I already built this service once, in production, with NestJS and without
 Effect. This is a rewrite from scratch of its core, with Effect only, to learn
-Effect against a problem I know well — and to see whether it makes the hard
-parts (unstable connections, time, resource lifetime, reliable delivery) more
-explicit and more testable than they were the first time. No code was carried
+Effect against a problem I know well, and to see whether it makes the hard
+parts more explicit and more testable than they were the first time: unstable
+connections, time, resource lifetime, reliable delivery. No code was carried
 over from the original; see [NestJS vs Effect](#nestjs-vs-effect).
 
 ## What it does
@@ -45,7 +45,7 @@ over from the original; see [NestJS vs Effect](#nestjs-vs-effect).
 - Connects to any number of controllers, one supervised fiber each.
 - Runs the communication start handshake and restores subscriptions after
   every reconnect.
-- Sends keep-alives and detects a **silent** connection — a socket that is
+- Sends keep-alives and detects a silent connection, meaning a socket that is
   open but whose peer is gone.
 - Reconnects forever with jittered exponential backoff, resetting after a
   successful session.
@@ -59,19 +59,18 @@ over from the original; see [NestJS vs Effect](#nestjs-vs-effect).
 
 ## What it does not do
 
-- It does not cover all of Open Protocol — only the subset listed below.
+- It does not cover all of Open Protocol, only the subset listed below.
 - It does not persist anything. Duplicate detection lives in memory and is lost
   on restart, so **your handler must be idempotent** (see
   [Delivery semantics](#delivery-semantics)).
-- It does not coordinate several instances of your service. Running two
-  instances against one controller is a problem this library does not solve;
-  see [ADR 7](#adr-7-horizontal-scaling-is-analysed-not-implemented).
+- It does not coordinate several instances of your service. A controller
+  accepts a limited number of clients, so run one instance per set of devices.
 - No dashboard, no auth, no Docker, no cloud anything.
 
 ## Quick start
 
 ```ts
-import { Effect, Layer, Stream } from "effect"
+import { Effect } from "effect"
 import { NodeRuntime } from "@effect/platform-node"
 import { DeviceId, DevicePool, Endpoint, TcpTransport } from "effect-open-protocol"
 
@@ -122,8 +121,8 @@ Results lost:             0   OK
 Delivered twice:          0   OK
 ```
 
-The success criterion is checkable rather than asserted: **generated equals
-delivered, and nothing reached the handler twice**. Every random decision comes
+You can check the success criterion yourself: **generated equals delivered, and
+nothing reached the handler twice**. Every random decision comes
 from the seed, so a run that fails can be replayed exactly.
 
 ## Architecture
@@ -152,7 +151,7 @@ from the seed, so a run that fails can be replayed exactly.
   │   Transport (service)  │   TCP  |  in-memory
   └────────────────────────┘
 
-        ControllerSimulator — a controller with seeded fault injection,
+        ControllerSimulator: a controller with seeded fault injection,
         used by the tests and by the demo
 ```
 
@@ -174,7 +173,8 @@ connection code.
 ## The protocol subset
 
 Described in my own words from the Atlas Copco Open Protocol specification
-(R2.8.0); the specification itself is Atlas Copco's and is not reproduced here.
+(R2.8.0). The specification belongs to Atlas Copco, so I cite it instead of
+copying it.
 
 A message is ASCII: a 20-byte header, an optional data field, and a NUL
 terminator. The header carries the length (header plus data, terminator
@@ -194,11 +194,11 @@ identifiers, and fields for link-level sequencing and message linking.
 
 Anything else decodes into an `UnknownMessage`, which is logged and dropped: an
 unexpected MID never breaks a connection. A malformed frame is a different
-matter — it fails the session and the reconnect gives us a clean stream, because
-TCP offers no boundary to resynchronise on.
+matter. It fails the session, and the reconnect gives us a clean stream,
+because TCP offers no boundary to resynchronise on.
 
 Link-level sequence numbering (MID 9997/9998), message linking and binary
-payloads are deliberately unsupported and rejected with a typed error rather
+payloads are unsupported on purpose, and rejected with a typed error rather
 than misparsed.
 
 ## Delivery semantics
@@ -214,7 +214,7 @@ practice for everything it can control. The order is what matters:
 
 If the connection dies between step 4's record and its acknowledgement, the
 controller resends and step 2 catches it. If your handler keeps failing, the
-result is never acknowledged — the controller resends it three times and then
+result is never acknowledged. The controller resends it three times and then
 drops the session.
 
 **A result the controller gives up on is gone**, which is why gap recovery
@@ -226,7 +226,7 @@ reconnect.
 
 Duplicate detection keeps the last 1,000 identifiers per device in memory. It
 does not survive a restart of your process. **In production your handler should
-be idempotent on `(deviceId, tighteningId)`** — a unique constraint in your
+be idempotent on `(deviceId, tighteningId)`**. A unique constraint in your
 database is the usual answer. This is an integration requirement, not a detail.
 
 Backpressure: results wait in a bounded queue (16 by default). A slow handler
@@ -244,7 +244,7 @@ Each primitive is here because it solves a concrete problem in this domain.
 | `Layer` / `Context.Service` | `Transport` is a service, so the same connection code runs over TCP or in memory. |
 | `Schema` | Every MID payload is decoded and validated at the boundary; identifiers are branded so a device id cannot be passed as a tightening id. |
 | `Schema.TaggedError` | Expected failures (`ConnectionLost`, `HandshakeRejected`, `RequestTimeout`, `CommandRejected`) live in the error channel instead of being thrown. |
-| `Schedule` | Reconnect backoff — exponential, capped, jittered — and handler retries, both configurable rather than hand-rolled loops. |
+| `Schedule` | Reconnect backoff (exponential, capped, jittered) and handler retries, both configurable rather than hand-rolled loops. |
 | `Deferred` + `Semaphore` | Request/reply correlation for a protocol with no correlation id and only one outstanding message allowed. |
 | `Queue` (bounded) | Backpressure between the reader and a slow handler. |
 | `SubscriptionRef` | The connection state is observable as a stream of changes. |
@@ -272,7 +272,7 @@ bun run test
 - **Connection**: handshake, subscription, keep-alive timing, silent-link
   detection, backoff after a rejected handshake, retry until a controller
   appears, requests refused before ready and after close, closing from several
-  states — all under `TestClock`.
+  states, all under `TestClock`.
 - **Delivery**: acknowledgement only after the handler succeeds, no
   acknowledgement when it fails, retry of a flaky handler, duplicate
   recognition, backpressure with a slow handler, bounded dedup window.
@@ -282,9 +282,10 @@ bun run test
   while the link was down, a real localhost TCP smoke test, shutdown and
   resource release, and the chaos invariant on two seeds.
 
-The chaos test is the one that matters most: under seeded faults, generated
-equals delivered and nothing reaches the handler twice. It found three real
-defects that the unit tests could not — see [What I learned](#what-i-learned).
+The chaos test carries the most weight. Under seeded faults, generated equals
+delivered and nothing reaches the handler twice. It found three real
+defects that the unit tests could not reach. See [What I
+learned](#what-i-learned).
 
 ## Technical decisions
 
@@ -316,8 +317,8 @@ in-memory implementations both satisfy it.
 timing tests slow and flaky.
 
 **Trade-off.** One indirection between the connection and the socket, and the
-risk that the in-memory transport is too kind — which is exactly what happened:
-a resource leak only appeared over real TCP, which is why a smoke test exists.
+risk that the in-memory transport is too kind. That is exactly what happened.
+A resource leak only appeared over real TCP, which is why a smoke test exists.
 
 ### ADR 3: One request in flight at a time
 
@@ -332,8 +333,8 @@ unsolicited traffic.
 **Alternatives.** Matching purely on MID with several requests in flight; the
 protocol does not give enough information to do this safely.
 
-**Trade-off.** Requests serialise per device. For this traffic pattern — a
-handful of commands per session — that costs nothing.
+**Trade-off.** Requests serialise per device. For this traffic pattern, a
+handful of commands per session, that costs nothing.
 
 ### ADR 4: At-least-once with duplicate detection, not exactly-once
 
@@ -379,28 +380,6 @@ manual restart.
 **Trade-off.** A misconfigured device retries forever, so every attempt is
 logged and the state is observable.
 
-### ADR 7: Horizontal scaling is analysed, not implemented
-
-**Context.** A controller accepts a limited number of clients, so **each device
-must have exactly one owner**. Several instances of a service must agree on who
-owns what.
-
-**Decision.** Not implemented. The pool owns every device in its configuration.
-
-**The options, if it were needed.**
-
-| Option | How it works | For | Against |
-| --- | --- | --- | --- |
-| Static partitioning | Each instance knows its index and the instance count, and takes its share | Simple, deterministic, no extra infrastructure | No automatic failover; rebalancing is a deploy |
-| Leases on a shared store | Instances acquire and renew a lease per device | Automatic failover | Needs a shared store, fencing tokens, and care against split brain |
-| A coordination layer | Consensus or managed sharding | Robust | A large amount of machinery for a few dozen devices |
-
-The current design stays compatible with all three: ownership is decided by
-whoever calls `pool.add`, so an ownership service can be introduced without
-touching the connection logic. I did not add an interface for it now, because a
-single-implementation abstraction would be a guess about a problem I have not
-had to solve yet.
-
 ## Known limits
 
 - Duplicate detection and the recovery watermark are in memory: a restart
@@ -409,8 +388,8 @@ had to solve yet.
 - Gap recovery is bounded by `recoveryLimit` (100 by default); a longer outage
   needs a larger bound or a manual reconciliation.
 - The library assumes revision 1 of every MID it uses.
-- One instance per set of devices (ADR 7).
-- The protocol subset is deliberately small; adding a MID means adding a schema
+- One instance per set of devices: the pool owns every device it is given.
+- The protocol subset is small on purpose. Adding a MID means adding a schema
   and a branch, not redesigning anything.
 
 ## NestJS vs Effect
@@ -456,21 +435,25 @@ Questions I would like your answers to, to finish this section honestly:
 
 ## Use of AI
 
-This project was built with Claude (Anthropic) in an agentic setup, and it is
-fair to say what that means concretely.
+I built this project with Claude (Anthropic) driving most of the keyboard, so
+here is what that actually means.
 
-- **Mine:** the choice of project, the domain knowledge, the delivery semantics,
-  the scope boundaries, and the decisions in every ADR above. The answers that
-  shaped the design — that an unacknowledged result is lost, that the controller
-  queues results until acknowledgement, the timeouts — came from my experience
-  with real controllers.
-- **AI-generated or AI-assisted:** most of the code and tests, from a design
-  document I reviewed and confirmed before implementation began.
-- **Verified by the tooling, not by assertion:** the protocol details were
-  checked against the published specification rather than recalled; the Effect
-  APIs were checked against the installed source rather than assumed. The chaos
-  test then found three defects that review had not.
-- **Not claimed:** none of this was written by hand and then presented as such.
+The project, the domain knowledge and the decisions are mine. So is every ADR
+above. The answers that shaped the design came from having run the NestJS
+version in production: that an unacknowledged result is lost for good, that the
+controller queues results until it gets an acknowledgement, and the timeouts
+the controllers really use.
+
+Most of the code and the tests are AI-written, from a design document I read
+and confirmed before any implementation started. I did not write this by hand
+and then present it as such.
+
+Two things were checked rather than recalled. The protocol details come from
+the published specification, not from memory, which is how the header layout,
+the 15 second idle timeout and the resend behaviour ended up correct. The
+Effect APIs come from the installed source, which mattered because the socket
+and CLI modules moved in v4. The chaos test then found three defects that
+neither of us had spotted by reading.
 
 ## What I learned
 
@@ -491,6 +474,6 @@ Every one of those is a data-loss bug in a traceability system, and none would
 have been found by reading the code.
 
 What I would explore next: persisting delivered identifiers before
-acknowledging, so a restart cannot replay; device ownership across instances
-(ADR 7); a wider MID subset driven by what integrations actually ask for; and
-metrics and tracing, since the spans are already in place.
+acknowledging, so a restart cannot replay; a wider MID subset driven by what
+integrations actually ask for; and metrics and tracing, since the spans are
+already in place.

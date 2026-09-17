@@ -17,7 +17,7 @@ a fault-injecting simulator and chaos demo. Tech-assessment project.
 
 ## Next Open Question
 
-None — graduated into [`goals/effect-open-protocol`](../../goals/effect-open-protocol/README.md).
+None, graduated into [`goals/effect-open-protocol`](../../goals/effect-open-protocol/README.md).
 Reopen at `decompose` only if the P0 design stop reshapes scope beyond one goal.
 
 ## Read This First
@@ -31,7 +31,7 @@ Reopen at `decompose` only if the P0 design stop reshapes scope beyond one goal.
 
 ## Trail
 
-- 2026-09-17: shape — BRIEF confirmed by user. Decompose — MAP collapsed to a single goal on user request. Graduated `goals/effect-open-protocol` (SPEC/PLAN/GOAL, SOURCES carried); status → graduated.
+- 2026-09-17: shape, BRIEF confirmed by user. Decompose, MAP collapsed to a single goal on user request. Graduated `goals/effect-open-protocol` (SPEC/PLAN/GOAL, SOURCES carried); status → graduated.
 - 2026-09-17: packet opened from user's 11-file plan (read, not imported);
   capture digest written; research (tsdown, Open Protocol refs, Effect v4
   brick map); align resolved plan-is-scope, tsdown, Effect v4, Node lib/Bun

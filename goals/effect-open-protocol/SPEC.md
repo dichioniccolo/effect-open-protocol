@@ -24,8 +24,8 @@ is reachable, read it before each phase.
 
 From `BRIEF.md` No-Gos:
 
-- Multi-instance horizontal scale-out, leader election, leases, consensus
-  (written ADR analysis only).
+- Multi-instance coordination, leader election, leases, consensus. One
+  instance owns its devices.
 - Full Open Protocol coverage; only the plan's MID subset.
 - Durable result persistence; external brokers (Kafka, RabbitMQ, Redis).
 - NestJS or any DI framework other than Effect `Context`/`Layer`.
@@ -129,7 +129,7 @@ Plan Definition of Done (`10`), adapted to decisions:
       lost, zero duplicated to handler.
 - [ ] Tests deterministic, no real waits (one localhost TCP smoke test allowed).
 - [ ] README complete: NestJS vs Effect (co-written with user), 7 ADRs, limits,
-      scale-out analysis, AI usage, learnings.
+      AI usage, learnings.
 - [ ] Clean run from fresh clone: `bun install && bun run test && bun run build
       && bun run demo`; tsdown output imports under plain Node ≥22.18.
 - [ ] Shipped as PR driven to mergeable.
