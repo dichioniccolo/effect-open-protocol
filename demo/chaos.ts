@@ -17,9 +17,9 @@ import { Duration, Effect, pipe, Random, Ref, Schedule } from "effect"
 import * as A from "effect/Array"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
-import { make as makePool } from "../src/pool/DevicePool.ts"
+import { DevicePool } from "../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
-import { layer as layerInMemory, layerNetwork } from "../src/transport/InMemoryTransport.ts"
+import { InMemoryNetwork, layer as layerInMemory } from "../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
 
 interface Tally {
@@ -73,7 +73,7 @@ const runChaos = Effect.fnUntraced(function* (options: {
       delivered: A.append(current.delivered, `${result.deviceId}:${result.tighteningId}`)
     }))
 
-  const pool = yield* makePool()
+  const pool = yield* DevicePool
   const simulators = yield* Effect.forEach(A.range(1, options.devices), (index) =>
     Effect.gen(function* () {
       const endpoint = new Endpoint({ host: "chaos", port: 4500 + index })
@@ -188,8 +188,9 @@ const command = Command.make("chaos", { seed, duration, devices, faultRate, sett
     Random.withSeed(config.seed),
     Effect.flatMap((passed) => passed ? Effect.void : Effect.die("the chaos run lost or duplicated a result")),
     Effect.scoped,
+    Effect.provide(DevicePool.layer),
     Effect.provide(layerInMemory),
-    Effect.provide(layerNetwork)
+    Effect.provide(InMemoryNetwork.layer)
   )).pipe(
     Command.withDescription("Run N simulated controllers under random faults and check the invariant")
   )

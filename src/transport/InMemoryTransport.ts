@@ -34,21 +34,6 @@ export interface ServerSide extends Duplex {
   readonly close: (reason: string) => Effect.Effect<void>
 }
 
-/**
- * An in-process stand-in for the network.
- *
- * @category services
- * @since 0.0.0
- */
-export class InMemoryNetwork extends Context.Service<InMemoryNetwork, {
-  /** Accepts connections on an endpoint until the caller's scope closes. */
-  readonly bind: (endpoint: Endpoint) => Effect.Effect<Queue.Dequeue<ServerSide>, never, Scope.Scope>
-  /** Opens a connection, failing when nothing is bound to the endpoint. */
-  readonly connect: (endpoint: Endpoint) => Effect.Effect<Duplex, ConnectionFailed, Scope.Scope>
-  /** Stops accepting new connections without touching the established ones. */
-  readonly refuse: (endpoint: Endpoint, refused: boolean) => Effect.Effect<void>
-}>()("effect-open-protocol/InMemoryNetwork") {}
-
 interface Listener {
   readonly accepted: Queue.Queue<ServerSide>
   readonly refused: boolean
@@ -102,12 +87,26 @@ const make = Effect.gen(function* () {
 })
 
 /**
- * Provides an isolated in-process network.
+ * An in-process stand-in for the network.
  *
- * @category layers
+ * @category services
  * @since 0.0.0
  */
-export const layerNetwork: Layer.Layer<InMemoryNetwork> = Layer.effect(InMemoryNetwork)(make)
+export class InMemoryNetwork extends Context.Service<InMemoryNetwork, {
+  /** Accepts connections on an endpoint until the caller's scope closes. */
+  readonly bind: (endpoint: Endpoint) => Effect.Effect<Queue.Dequeue<ServerSide>, never, Scope.Scope>
+  /** Opens a connection, failing when nothing is bound to the endpoint. */
+  readonly connect: (endpoint: Endpoint) => Effect.Effect<Duplex, ConnectionFailed, Scope.Scope>
+  /** Stops accepting new connections without touching the established ones. */
+  readonly refuse: (endpoint: Endpoint, refused: boolean) => Effect.Effect<void>
+}>()("effect-open-protocol/InMemoryNetwork") {
+  /**
+   * Provides an isolated in-process network for the lifetime of the layer.
+   *
+   * @since 0.0.0
+   */
+  static readonly layer: Layer.Layer<InMemoryNetwork> = Layer.effect(InMemoryNetwork)(make)
+}
 
 /**
  * Provides a `Transport` backed by an `InMemoryNetwork`.
@@ -119,7 +118,7 @@ export const layerNetwork: Layer.Layer<InMemoryNetwork> = Layer.effect(InMemoryN
  * import { InMemoryTransport } from "effect-open-protocol"
  *
  * const testTransport = InMemoryTransport.layer.pipe(
- *   Layer.provideMerge(InMemoryTransport.layerNetwork)
+ *   Layer.provideMerge(InMemoryTransport.InMemoryNetwork.layer)
  * )
  * ```
  *

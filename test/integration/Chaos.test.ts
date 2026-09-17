@@ -2,9 +2,9 @@ import { describe, expect, it } from "@effect/vitest"
 import { Duration, Effect, Random, Ref, Schedule } from "effect"
 import * as A from "effect/Array"
 import { make as makeSimulator, type Simulator } from "../../simulator/ControllerSimulator.ts"
-import { make as makePool } from "../../src/pool/DevicePool.ts"
+import { DevicePool } from "../../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { layer as layerInMemory, layerNetwork } from "../../src/transport/InMemoryTransport.ts"
+import { InMemoryNetwork, layer as layerInMemory } from "../../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 
 /**
@@ -21,7 +21,7 @@ const runChaos = (options: {
     const onResult = (result: TighteningResult) =>
       Ref.update(delivered, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
 
-    const pool = yield* makePool()
+    const pool = yield* DevicePool
     const simulators = yield* Effect.forEach(A.range(1, options.devices), (index) =>
       Effect.gen(function* () {
         const endpoint = new Endpoint({ host: `chaos-${options.seed}`, port: 4600 + index })
@@ -65,8 +65,9 @@ const runChaos = (options: {
   }).pipe(
     Random.withSeed(options.seed),
     Effect.scoped,
+    Effect.provide(DevicePool.layer),
     Effect.provide(layerInMemory),
-    Effect.provide(layerNetwork)
+    Effect.provide(InMemoryNetwork.layer)
   )
 
 describe("chaos invariant", () => {

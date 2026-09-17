@@ -8,9 +8,10 @@
  *
  * @since 0.0.0
  */
-import { Deferred, Effect, FiberMap, MutableHashMap, SubscriptionRef } from "effect"
+import { Deferred, Effect, FiberMap, Layer, MutableHashMap, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
+import * as Context from "effect/Context"
 import * as S from "effect/Schema"
 import type { ConnectionState } from "../connection/ConnectionState.ts"
 import { type DeviceConfig, type DeviceConnection, make as makeConnection } from "../connection/DeviceConnection.ts"
@@ -41,12 +42,12 @@ export interface DeviceStatus {
 }
 
 /**
- * A running pool of device connections.
+ * What a running pool offers its callers.
  *
  * @category models
  * @since 0.0.0
  */
-export interface DevicePool {
+export interface DevicePoolShape {
   /** Starts a connection for a device and returns once it is supervised. */
   readonly add: (config: DeviceConfig) => Effect.Effect<DeviceConnection, DeviceAlreadyAdded>
   /** Stops a device and releases its resources. Unknown devices are ignored. */
@@ -57,29 +58,7 @@ export interface DevicePool {
   readonly status: Effect.Effect<ReadonlyArray<DeviceStatus>>
 }
 
-/**
- * Starts an empty pool bound to the calling scope.
- *
- * **Example** (Running two tools at once)
- *
- * ```ts
- * import { Effect } from "effect"
- * import { DeviceId, Endpoint, DevicePool } from "effect-open-protocol"
- *
- * const program = Effect.gen(function* () {
- *   const pool = yield* DevicePool.make()
- *   yield* pool.add({
- *     id: DeviceId.make("line-1-tool-3"),
- *     endpoint: new Endpoint({ host: "10.0.0.31", port: 4545 })
- *   })
- *   return yield* pool.status
- * })
- * ```
- *
- * @category constructors
- * @since 0.0.0
- */
-export const make = Effect.fnUntraced(function* () {
+const make = Effect.fnUntraced(function* () {
   const transport = yield* Transport
   const fibers = yield* FiberMap.make<DeviceId>()
   const connections = MutableHashMap.empty<DeviceId, DeviceConnection>()
@@ -132,5 +111,47 @@ export const make = Effect.fnUntraced(function* () {
     )
   )
 
-  return { add, remove, get, status } satisfies DevicePool
+  return { add, remove, get, status } satisfies DevicePoolShape
 })
+
+/**
+ * Many controllers supervised together.
+ *
+ * The pool is a service: provide `DevicePool.layer` over a `Transport` and the
+ * layer owns every device fiber, so closing the application closes the
+ * connections with it.
+ *
+ * **Example** (Running two tools at once)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { DeviceId, DevicePool, Endpoint, TcpTransport } from "effect-open-protocol"
+ *
+ * const program = Effect.gen(function* () {
+ *   const pool = yield* DevicePool
+ *   yield* pool.add({
+ *     id: DeviceId.make("line-1-tool-3"),
+ *     endpoint: new Endpoint({ host: "10.0.0.31", port: 4545 })
+ *   })
+ *   return yield* pool.status
+ * })
+ *
+ * const runnable = program.pipe(
+ *   Effect.provide(DevicePool.layer),
+ *   Effect.provide(TcpTransport.layer)
+ * )
+ * ```
+ *
+ * @category services
+ * @since 0.0.0
+ */
+export class DevicePool extends Context.Service<DevicePool, DevicePoolShape>()(
+  "effect-open-protocol/DevicePool"
+) {
+  /**
+   * Provides a pool that supervises its devices for the lifetime of the layer.
+   *
+   * @since 0.0.0
+   */
+  static readonly layer: Layer.Layer<DevicePool, never, Transport> = Layer.effect(DevicePool)(make())
+}

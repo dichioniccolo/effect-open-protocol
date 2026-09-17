@@ -75,7 +75,7 @@ import { NodeRuntime } from "@effect/platform-node"
 import { DeviceId, DevicePool, Endpoint, TcpTransport } from "effect-open-protocol"
 
 const program = Effect.gen(function* () {
-  const pool = yield* DevicePool.make()
+  const pool = yield* DevicePool
 
   yield* pool.add({
     id: DeviceId.make("line-1-tool-3"),
@@ -88,7 +88,7 @@ const program = Effect.gen(function* () {
 })
 
 program.pipe(
-  Effect.scoped,
+  Effect.provide(DevicePool.layer),
   Effect.provide(TcpTransport.layer),
   NodeRuntime.runMain
 )

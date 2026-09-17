@@ -6,9 +6,9 @@ import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
 import type { DeviceConnection } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { layer as layerInMemory, layerNetwork } from "../../src/transport/InMemoryTransport.ts"
+import { InMemoryNetwork, layer as layerInMemory } from "../../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
-import { make } from "../../src/pool/DevicePool.ts"
+import { DevicePool } from "../../src/pool/DevicePool.ts"
 
 const toolOne = DeviceId.make("tool-1")
 const toolTwo = DeviceId.make("tool-2")
@@ -17,7 +17,11 @@ const endpointTwo = new Endpoint({ host: "sim", port: 4546 })
 const missing = new Endpoint({ host: "sim", port: 9999 })
 
 const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(layerInMemory), Effect.provide(layerNetwork))
+  Effect.scoped(effect).pipe(
+    Effect.provide(DevicePool.layer),
+    Effect.provide(layerInMemory),
+    Effect.provide(InMemoryNetwork.layer)
+  )
 
 const awaitReady = (connection: DeviceConnection): Effect.Effect<ConnectionState> =>
   pipe(
@@ -42,7 +46,7 @@ describe("DevicePool", () => {
     provided(Effect.gen(function* () {
       yield* makeSimulator({ endpoint: endpointOne, controllerName: "one" })
       yield* makeSimulator({ endpoint: endpointTwo, controllerName: "two" })
-      const pool = yield* make()
+      const pool = yield* DevicePool
 
       const first = yield* pool.add({ id: toolOne, endpoint: endpointOne })
       const second = yield* pool.add({ id: toolTwo, endpoint: endpointTwo })
@@ -57,7 +61,7 @@ describe("DevicePool", () => {
   it.effect("keeps a failing device from affecting the others", () =>
     provided(Effect.gen(function* () {
       yield* makeSimulator({ endpoint: endpointOne })
-      const pool = yield* make()
+      const pool = yield* DevicePool
 
       const healthy = yield* pool.add({ id: toolOne, endpoint: endpointOne })
       const broken = yield* pool.add({
@@ -78,7 +82,7 @@ describe("DevicePool", () => {
   it.effect("refuses to add the same device twice", () =>
     provided(Effect.gen(function* () {
       yield* makeSimulator({ endpoint: endpointOne })
-      const pool = yield* make()
+      const pool = yield* DevicePool
       yield* pool.add({ id: toolOne, endpoint: endpointOne })
 
       const again = yield* Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
@@ -89,14 +93,14 @@ describe("DevicePool", () => {
   it.effect("stops a device on remove and forgets it", () =>
     provided(Effect.gen(function* () {
       yield* makeSimulator({ endpoint: endpointOne })
-      const pool = yield* make()
+      const pool = yield* DevicePool
       const connection = yield* pool.add({ id: toolOne, endpoint: endpointOne })
       yield* awaitReady(connection)
 
       yield* pool.remove(toolOne)
-      yield* settle(pool.status, (status) => A.isArrayEmpty(status))
+      yield* settle(pool.status, (status) => A.length(status) === 0)
 
-      expect(yield* pool.status).toEqual([])
+      expect(A.fromIterable(yield* pool.status)).toEqual([])
       expect((yield* pool.get(toolOne))._tag).toBe("None")
     })))
 
@@ -107,7 +111,7 @@ describe("DevicePool", () => {
       const received = yield* Ref.make<ReadonlyArray<string>>([])
       const onResult = (result: TighteningResult) =>
         Ref.update(received, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
-      const pool = yield* make()
+      const pool = yield* DevicePool
 
       const one = yield* pool.add({ id: toolOne, endpoint: endpointOne, onResult })
       const two = yield* pool.add({ id: toolTwo, endpoint: endpointTwo, onResult })

@@ -4,7 +4,7 @@ import { TestClock } from "effect/testing"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import { KeepAlive } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { layer as layerInMemory, layerNetwork } from "../../src/transport/InMemoryTransport.ts"
+import { InMemoryNetwork, layer as layerInMemory } from "../../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
 import { make } from "../../src/connection/DeviceConnection.ts"
@@ -13,7 +13,7 @@ const deviceId = DeviceId.make("tool-1")
 const endpoint = new Endpoint({ host: "simulator", port: 4545 })
 
 const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(layerInMemory), Effect.provide(layerNetwork))
+  Effect.scoped(effect).pipe(Effect.provide(layerInMemory), Effect.provide(InMemoryNetwork.layer))
 
 const awaitState = (
   state: SubscriptionRef.SubscriptionRef<ConnectionState>,

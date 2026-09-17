@@ -71,7 +71,7 @@ export * as ResultRecovery from "./results/ResultRecovery.ts"
 /**
  * @since 0.0.0
  */
-export * as DevicePool from "./pool/DevicePool.ts"
+export * from "./pool/DevicePool.ts"
 
 /**
  * @since 0.0.0
