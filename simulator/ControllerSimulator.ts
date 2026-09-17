@@ -35,6 +35,7 @@ import {
 } from "../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork, type ServerSide } from "../src/transport/InMemoryTransport.ts"
 import { ConnectionLost, type Endpoint } from "../src/transport/Transport.ts"
+import * as Faults from "./Faults.ts"
 
 const simulatorDevice = DeviceId.make("simulator")
 
@@ -60,6 +61,8 @@ export interface SimulatorOptions {
   readonly ackTimeout?: Duration.Duration | undefined
   /** Attempts before the controller gives up on a result and drops the session. */
   readonly ackAttempts?: number | undefined
+  /** Seeded misbehaviour injected while the session runs. */
+  readonly faults?: Faults.FaultConfig | undefined
 }
 
 /**
@@ -81,6 +84,10 @@ export interface Simulator {
   readonly produce: Effect.Effect<TighteningResult>
   /** Drops the current connection the way a controller does when it gives up. */
   readonly drop: Effect.Effect<void>
+  /** Stops producing results and injecting faults, so a run can settle before it is judged. */
+  readonly quiesce: Effect.Effect<void>
+  /** Results still waiting to be pushed or acknowledged. */
+  readonly backlog: Effect.Effect<number>
 }
 
 interface SessionState {
@@ -91,9 +98,50 @@ interface SessionState {
   readonly abandoned: ReadonlyArray<TighteningId>
   readonly connection: O.Option<ServerSide>
   readonly pendingAck: O.Option<Deferred.Deferred<void>>
+  readonly quiet: boolean
+  /** Whether a client has subscribed at least once: nothing is produced before that. */
+  readonly everSubscribed: boolean
 }
 
 const encoder = new TextEncoder()
+
+/**
+ * Sends a frame the way a misbehaving controller would: delayed, fragmented,
+ * or not at all because the link just died.
+ */
+const sendWithFaults = (
+  connection: ServerSide,
+  message: Message,
+  options: SimulatorOptions,
+  state: Ref.Ref<SessionState>
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const bytes = encoder.encode(encodeMessage(message))
+    const quiet = yield* Effect.map(Ref.get(state), (current) => current.quiet)
+    const fault = yield* O.match(quiet ? O.none() : O.fromNullishOr(options.faults), {
+      onNone: () => Effect.succeed<Faults.Fault>({ _tag: "None" }),
+      onSome: (config) => Faults.next(config)
+    })
+    return yield* Match.value(fault).pipe(
+      Match.tag("DropConnection", () =>
+        pipe(
+          Ref.update(state, (current) => forget(current, connection)),
+          Effect.andThen(connection.close("the controller dropped the connection"))
+        )),
+      Match.tag("GoSilent", (silent) => Effect.sleep(silent.duration)),
+      Match.tag(
+        "DelayReply",
+        (delayed) => Effect.andThen(Effect.sleep(delayed.duration), Effect.ignore(connection.send(bytes)))
+      ),
+      Match.tag("SplitFrame", (split) =>
+        Effect.forEach(
+          Faults.split(bytes, split.pieces),
+          (piece) => Effect.ignore(connection.send(piece)),
+          { discard: true }
+        )),
+      Match.orElse(() => Effect.ignore(connection.send(bytes)))
+    )
+  })
 
 const timestamp = ControllerTimestamp.make("2026-09-17:10:14:16")
 
@@ -151,7 +199,7 @@ const replyTo = (
 
 const observe = (message: Message, current: SessionState): SessionState =>
   Match.value(message).pipe(
-    Match.tag("SubscribeResults", () => ({ ...current, subscribed: true })),
+    Match.tag("SubscribeResults", () => ({ ...current, subscribed: true, everSubscribed: true })),
     Match.tag("UnsubscribeResults", () => ({ ...current, subscribed: false })),
     Match.tag("KeepAlive", () => ({ ...current, keepAlives: current.keepAlives + 1 })),
     Match.orElse(() => current)
@@ -183,7 +231,7 @@ const serve = (
                     })
                     : O.match(replyTo(message, options, store, latestOf(current)), {
                       onNone: () => Effect.void,
-                      onSome: (reply) => connection.send(encoder.encode(encodeMessage(reply)))
+                      onSome: (reply) => sendWithFaults(connection, reply, options, state)
                     })
                 )
               )
@@ -194,8 +242,18 @@ const serve = (
         Effect.catchCause((cause) => Effect.logDebug("simulator session ended", cause))
       )
     ),
-    Effect.andThen(Ref.update(state, (current) => ({ ...current, connection: O.none() })))
+    Effect.andThen(Ref.update(state, (current) => forget(current, connection)))
   )
+
+/**
+ * Forgets a connection only when it is still the current one: an old session
+ * cleaning up must never unhook the session that replaced it.
+ */
+const forget = (current: SessionState, connection: ServerSide): SessionState =>
+  O.match(current.connection, {
+    onNone: () => current,
+    onSome: (open) => open === connection ? { ...current, subscribed: false, connection: O.none() } : current
+  })
 
 const latestOf = (current: SessionState): O.Option<number> =>
   current.nextId <= 1 ? O.none() : O.some(current.nextId - 1)
@@ -232,7 +290,9 @@ export const makeWith = Effect.fnUntraced(function* (
     generated: 0,
     abandoned: [],
     connection: O.none(),
-    pendingAck: O.none()
+    pendingAck: O.none(),
+    quiet: false,
+    everSubscribed: false
   })
   const ackTimeout = options.ackTimeout ?? Duration.seconds(5)
   const ackAttempts = options.ackAttempts ?? 3
@@ -257,7 +317,7 @@ export const makeWith = Effect.fnUntraced(function* (
               const acknowledged = yield* Deferred.make<void>()
               yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.some(acknowledged) }))
               const attempt = pipe(
-                connection.send(encoder.encode(encodeMessage(new LastResult({ result })))),
+                sendWithFaults(connection, new LastResult({ result }), options, state),
                 Effect.andThen(Deferred.await(acknowledged)),
                 Effect.timeoutOption(ackTimeout),
                 Effect.catchCause(() => Effect.succeed(O.none<void>()))
@@ -293,6 +353,12 @@ export const makeWith = Effect.fnUntraced(function* (
       })
     })
 
+  const outbox = yield* Queue.unbounded<TighteningResult>()
+
+  // The controller sends one result at a time and waits for its acknowledgement
+  // (confirmed behaviour), so pushes are serialised through this queue.
+  yield* Effect.forkChild(Effect.forever(Effect.flatMap(Queue.take(outbox), push)))
+
   const produce = Effect.gen(function* () {
     const id = yield* Ref.modify(state, (current) => [current.nextId, {
       ...current,
@@ -301,7 +367,7 @@ export const makeWith = Effect.fnUntraced(function* (
     }])
     const result = resultFor(id)
     MutableHashMap.set(store, id, result)
-    yield* Effect.forkChild(push(result))
+    yield* Queue.offer(outbox, result)
     return result
   })
 
@@ -310,7 +376,15 @@ export const makeWith = Effect.fnUntraced(function* (
     onSome: (interval) =>
       Effect.asVoid(
         Effect.forkChild(
-          Effect.forever(Effect.andThen(Effect.sleep(interval), produce))
+          Effect.forever(
+            pipe(
+              Effect.sleep(interval),
+              Effect.andThen(Ref.get(state)),
+              Effect.flatMap((current) =>
+                current.quiet || !current.everSubscribed ? Effect.void : Effect.asVoid(produce)
+              )
+            )
+          )
         )
       )
   })
@@ -328,6 +402,8 @@ export const makeWith = Effect.fnUntraced(function* (
   )
 
   return {
+    quiesce: Ref.update(state, (current) => ({ ...current, quiet: true })),
+    backlog: Queue.size(outbox),
     isSubscribed: Effect.map(Ref.get(state), (current) => current.subscribed),
     keepAlives: Effect.map(Ref.get(state), (current) => current.keepAlives),
     generated: Effect.map(Ref.get(state), (current) => current.generated),

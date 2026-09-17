@@ -31,6 +31,12 @@ export interface Dedup {
   readonly remember: (id: TighteningId) => Effect.Effect<void>
   /** Highest identifier delivered so far, used to detect gaps after an outage. */
   readonly lastDelivered: Effect.Effect<O.Option<TighteningId>>
+  /**
+   * Records where recovery should start without claiming the identifier was
+   * delivered. Used once, on the first connection: results produced before the
+   * application was listening are history, not data it lost.
+   */
+  readonly markBaseline: (id: TighteningId) => Effect.Effect<void>
 }
 
 interface State {
@@ -84,9 +90,13 @@ export const make = Effect.fnUntraced(function* (capacity: number = defaultCapac
       }
     })
 
+  const markBaseline = (id: TighteningId): Effect.Effect<void> =>
+    Ref.update(state, (current) => O.isSome(current.last) ? current : { ...current, last: O.some(id) })
+
   return {
     seen,
     remember,
+    markBaseline,
     lastDelivered: Effect.map(Ref.get(state), (current) => current.last)
   } satisfies Dedup
 })

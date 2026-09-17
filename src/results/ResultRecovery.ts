@@ -63,21 +63,34 @@ export const run = Effect.fnUntraced(function* (options: {
   const fetch = (id: TighteningId): Effect.Effect<O.Option<TighteningResult>, unknown> =>
     Effect.map(options.request(new RequestOldResult({ tighteningId: id }), 64), resultOf)
 
-  const latest = yield* Effect.map(fetch(TighteningId.make(0)), O.map((result) => result.tighteningId))
+  // A controller with nothing stored answers MID 0064 with an error; that is a
+  // legitimate "no history", not a recovery failure.
+  const latest = yield* pipe(
+    fetch(TighteningId.make(0)),
+    Effect.map(O.map((result) => result.tighteningId)),
+    Effect.catchCause(() => Effect.succeed(O.none<TighteningId>()))
+  )
   const since = yield* options.dedup.lastDelivered
 
-  return yield* O.match(O.all([latest, since]), {
+  return yield* O.match(since, {
+    // First connection: everything the controller already holds is history, so
+    // only the starting point is recorded. Later reconnects always have a
+    // baseline and therefore fetch the gap.
     onNone: () =>
       pipe(
-        O.match(latest, {
-          onNone: () => Effect.void,
-          onSome: (id) => options.dedup.remember(id)
-        }),
+        options.dedup.markBaseline(O.getOrElse(latest, () => TighteningId.make(0))),
         Effect.as<Recovery>({ recovered: [], missing: [], skipped: 0 })
       ),
-    onSome: ([newest, delivered]) =>
+    onSome: (delivered) =>
       Effect.gen(function* () {
-        const gap = A.range(delivered + 1, newest)
+        const newest = yield* Effect.map(
+          O.match(latest, {
+            onNone: () => Effect.succeed(O.none<TighteningId>()),
+            onSome: (id) => Effect.succeed(O.some(id))
+          }),
+          O.getOrElse(() => TighteningId.make(delivered))
+        )
+        const gap = newest <= delivered ? [] : A.range(delivered + 1, newest)
         const wanted = A.take(gap, limit)
         const fetched = yield* Effect.forEach(
           wanted,

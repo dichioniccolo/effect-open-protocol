@@ -283,61 +283,73 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     yield* Effect.addFinalizer(() => Ref.set(session, O.none()))
 
     const reader = yield* Effect.forkChild(readLoop(current))
-
-    const accepted = yield* current.replies.request(
-      new CommunicationStart(),
-      1,
-      expectReply(1, "CommunicationStartAccepted")
-    ).pipe(
-      Effect.catchTag("CommandRejected", (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))),
-      Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })))
+    // A socket that dies during the handshake, the subscription or recovery
+    // must fail the attempt immediately instead of waiting for a timeout.
+    const readerFailed = Effect.flatMap(
+      Fiber.join(reader),
+      () => Effect.fail(new ConnectionLost({ reason: "the controller closed the connection" }))
     )
-    const controllerName = accepted._tag === "CommunicationStartAccepted" ? accepted.controllerName : ""
-    yield* emit(new Accepted({ controllerName }))
 
-    yield* O.match(O.fromNullishOr(config.onResult), {
-      onNone: () => Effect.void,
-      onSome: () =>
-        pipe(
-          current.replies.request(new SubscribeResults(), 60, expectReply(60)),
-          Effect.asVoid,
-          Effect.catchTag("CommandRejected", (rejected) =>
-            Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` }))),
-          Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })))
-        )
-    })
-    yield* emit(new Subscribed())
+    yield* Effect.raceFirst(
+      Effect.gen(function* () {
+      const accepted = yield* current.replies.request(
+        new CommunicationStart(),
+        1,
+        expectReply(1, "CommunicationStartAccepted")
+      ).pipe(
+        Effect.catchTag("CommandRejected", (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))),
+        Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })))
+      )
+      const controllerName = accepted._tag === "CommunicationStartAccepted" ? accepted.controllerName : ""
+      yield* emit(new Accepted({ controllerName }))
 
-    yield* O.match(delivery, {
-      onNone: () => Effect.void,
-      onSome: (pipeline) =>
-        pipe(
-          runRecovery({
-            dedup,
-            request: (message, mid) => current.replies.request(message, mid, expectReply(mid, "OldResult")),
-            submit: pipeline.submit,
-            limit: config.recoveryLimit
-          }),
-          Effect.tap((recovery) =>
-            Effect.logInfo("recovered results missed during the outage").pipe(
-              Effect.annotateLogs({
-                deviceId: config.id,
-                recovered: recovery.recovered.length,
-                missing: recovery.missing.length,
-                skipped: recovery.skipped
-              })
-            )
-          ),
-          Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
-          Effect.asVoid
-        )
-    })
-    yield* emit(new Recovered())
+      // Recovery runs before the subscription: a result produced between the
+      // two would otherwise be treated as history by the first baseline.
+      yield* O.match(delivery, {
+        onNone: () => Effect.void,
+        onSome: (pipeline) =>
+          pipe(
+            runRecovery({
+              dedup,
+              request: (message, mid) => current.replies.request(message, mid, expectReply(mid, "OldResult")),
+              submit: pipeline.submit,
+              limit: config.recoveryLimit
+            }),
+            Effect.tap((recovery) =>
+              Effect.logInfo("recovered results missed during the outage").pipe(
+                Effect.annotateLogs({
+                  deviceId: config.id,
+                  recovered: recovery.recovered.length,
+                  missing: recovery.missing.length,
+                  skipped: recovery.skipped
+                })
+              )
+            ),
+            Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
+            Effect.asVoid
+          )
+      })
+      yield* O.match(O.fromNullishOr(config.onResult), {
+        onNone: () => Effect.void,
+        onSome: () =>
+          pipe(
+            current.replies.request(new SubscribeResults(), 60, expectReply(60)),
+            Effect.asVoid,
+            Effect.catchTag("CommandRejected", (rejected) =>
+              Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` }))),
+            Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })))
+          )
+      })
+      yield* emit(new Subscribed())
+
+      yield* emit(new Recovered())
+      }),
+      readerFailed
+    )
 
     const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent))
     return yield* pipe(
-      Fiber.join(reader),
-      Effect.andThen(Effect.fail(new ConnectionLost({ reason: "reader stopped" }))),
+      readerFailed,
       Effect.raceFirst(Fiber.join(keepAlive)),
       Effect.onExit(() => Effect.andThen(Fiber.interrupt(keepAlive), Fiber.interrupt(reader)))
     )

@@ -21,7 +21,8 @@
   "scripts": {
     "test": "bunx --bun vitest run",
     "check": "tsc --noEmit",
-    "build": "tsdown"
+    "build": "tsdown",
+    "demo": "bun run demo/chaos.ts"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-rc.115",
