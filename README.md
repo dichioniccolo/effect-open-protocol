@@ -490,20 +490,31 @@ neither of us had spotted by reading.
 ## What I learned
 
 The interesting part was not the protocol, it was what each layer of testing
-caught that the previous one could not:
+caught that the previous one could not.
 
-- Unit tests with `TestClock` found the ordinary bugs.
-- The **real socket smoke test** found a leak the in-memory transport could not:
-  Node keeps a listening server alive until its accepted sockets are gone.
-- The **chaos test** found three defects the unit tests could not reach: the
-  reader was only watched after a session was established, so a socket that
-  died mid-handshake was noticed only when a request timed out; the recovery
-  watermark jumped over gaps instead of advancing contiguously; and gaps were
-  only looked for when a session started, so a result abandoned on a healthy
-  link was never fetched.
+Unit tests with `TestClock` found the ordinary bugs. The real socket smoke test
+found one they structurally could not: Node keeps a listening server alive
+until its accepted sockets are gone, which the in-memory transport has no
+reason to imitate. The chaos test, running the whole system under seeded
+faults, found three more: a socket that died during the handshake was noticed
+only when a request timed out, the recovery watermark stepped over gaps instead
+of advancing contiguously, and a result the controller abandoned on a healthy
+link was never fetched.
 
-Every one of those is a data-loss bug in a traceability system, and none would
-have been found by reading the code.
+Then I ran the same scenario across sixty seeds instead of two, and it found
+five more. Every one of them was a lost tightening result. A recovery request
+that timed out was filed as "the controller does not have it" and never
+retried. A controller that was empty when we first asked wrote off the first
+result it ever produced. Recovery only ever ran when something arrived, so a
+line that went quiet kept its gap forever. Two of those five were in code I had
+written in response to the earlier findings.
+
+That is the lesson worth keeping. Every one of these bugs was silent: no
+exception, no failed test, no log line, just a smaller number at the end of a
+run. This class of defect does not yield to reading the code more carefully,
+because the code looks correct and is correct for the path you are imagining.
+It yields to running the thing a few hundred times with different randomness
+and checking an invariant that cannot be argued with.
 
 What I would explore next: persisting delivered identifiers before
 acknowledging, so a restart cannot replay; a wider MID subset driven by what
