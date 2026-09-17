@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "initiative-manifest/v2",
+  "initiative": {
+    "id": "effect-open-protocol",
+    "title": "Effect Open Protocol",
+    "status": "active",
+    "created": "2026-09-17",
+    "updated": "2026-09-17",
+    "packetAnchorDocument": "SPEC.md"
+  },
+  "packetPath": "goals/effect-open-protocol",
+  "lifecycle": "active",
+  "mission": "Effect v4 Open Protocol library with resilient connections, at-least-once ACK-after-handler delivery, device pool, seeded chaos simulator/demo, tsdown build and README.",
+  "executionCapable": true,
+  "reflectionRequired": true,
+  "provenance": {
+    "exploration": "explorations/effect-open-protocol",
+    "graduated": "2026-09-17",
+    "explorationDecisions": "explorations/effect-open-protocol/DECISIONS.md"
+  },
+  "completionGate": {
+    "requiresPullRequest": true,
+    "requiresMergeable": true,
+    "statement": "Not achieved until this goal's work ships as a PR driven to mergeable: required checks green and every review thread answered."
+  },
+  "currentSourceOfTruth": [
+    "CLAUDE.md",
+    "goals/effect-open-protocol/README.md",
+    "goals/effect-open-protocol/SPEC.md",
+    "goals/effect-open-protocol/PLAN.md",
+    "goals/effect-open-protocol/GOAL.md",
+    "goals/effect-open-protocol/research/SOURCES.md"
+  ],
+  "researchReports": [
+    "research/SOURCES.md"
+  ],
+  "agentLaunchers": [
+    {
+      "kind": "goal-launcher",
+      "path": "GOAL.md",
+      "targetChars": 3500,
+      "maxChars": 4000,
+      "command": "follow the instructions in goals/effect-open-protocol/GOAL.md"
+    }
+  ],
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Design",
+      "status": "complete"
+    },
+    {
+      "id": "P1",
+      "name": "Protocol",
+      "status": "complete"
+    },
+    {
+      "id": "P2",
+      "name": "Connection",
+      "status": "pending"
+    },
+    {
+      "id": "P3",
+      "name": "Delivery",
+      "status": "pending"
+    },
+    {
+      "id": "P4",
+      "name": "Pool + TCP",
+      "status": "pending"
+    },
+    {
+      "id": "P5",
+      "name": "Chaos",
+      "status": "pending"
+    },
+    {
+      "id": "P6",
+      "name": "Hardening",
+      "status": "pending"
+    },
+    {
+      "id": "P7",
+      "name": "Docs",
+      "status": "pending"
+    },
+    {
+      "id": "P8",
+      "name": "PR to mergeable",
+      "status": "pending"
+    },
+    {
+      "id": "P9",
+      "name": "Close",
+      "status": "pending"
+    }
+  ],
+  "verificationCommands": [
+    "bunx tsc --noEmit",
+    "bun run test",
+    "bun run build",
+    "test \"$(wc -m < goals/effect-open-protocol/GOAL.md)\" -le 4000",
+    "jq . goals/effect-open-protocol/ops/manifest.json",
+    "rg -n \"effect-open-protocol|GOAL.md|agentLaunchers|packetAnchorDocument\" goals/effect-open-protocol",
+    "git diff --check -- goals/effect-open-protocol"
+  ],
+  "stopConditions": [
+    "P0 design doc not yet confirmed by the user: no protocol code.",
+    "Real controller behavior unclear: ask the user, never invent.",
+    "Required source files are missing or materially contradictory.",
+    "The implementation would exceed named scope.",
+    "Verification requires unnamed credentials, cost, destructive side effects, or policy approval.",
+    "The same blocker repeats after reasonable investigation."
+  ]
+}

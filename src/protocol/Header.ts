@@ -1,0 +1,190 @@
+/**
+ * The 20-byte Open Protocol message header: its schema, decoder and encoder.
+ *
+ * Field layout (Open Protocol specification §2.2.2): length 4, MID 4,
+ * revision 3, no-ack flag 1, station id 2, spindle id 2, sequence number 2,
+ * number of message parts 1, message part number 1. Numeric fields are ASCII
+ * digits padded on the left with `0`; blank fields fall back to their default.
+ *
+ * @since 0.0.0
+ */
+import { pipe, Result } from "effect"
+import * as A from "effect/Array"
+import * as S from "effect/Schema"
+import * as Str from "effect/String"
+import { MalformedHeader, UnsupportedFeature } from "./ProtocolError.ts"
+
+/**
+ * Length in bytes of every Open Protocol header.
+ *
+ * @category constants
+ * @since 0.0.0
+ */
+export const headerLength = 20
+
+/**
+ * The NUL byte terminating an Open Protocol message.
+ *
+ * @category constants
+ * @since 0.0.0
+ */
+export const terminator = "\u0000"
+
+const digitsOnly = S.String.check(
+  S.makeFilter((value) => Str.length(value) > 0 && A.every([...value], (char) => char >= "0" && char <= "9"), {
+    identifier: "AsciiDigits",
+    title: "ASCII digits",
+    description: "a non-empty string of ASCII characters between 0 and 9"
+  })
+)
+
+const isDigits = S.is(digitsOnly)
+
+const asciiNumber = S.decodeResult(S.NumberFromString)
+
+const field = (raw: string, name: string): Result.Result<number, MalformedHeader> =>
+  pipe(
+    Str.trim(raw),
+    Result.liftPredicate(isDigits, () => new MalformedHeader({ field: name, value: raw })),
+    Result.flatMap((digits) =>
+      pipe(
+        asciiNumber(digits),
+        Result.mapError(() => new MalformedHeader({ field: name, value: raw }))
+      )
+    )
+  )
+
+const fieldOrDefault = (
+  raw: string,
+  name: string,
+  fallback: number
+): Result.Result<number, MalformedHeader> =>
+  Str.isEmpty(Str.trim(raw)) ? Result.succeed(fallback) : field(raw, name)
+
+const reserved = (
+  raw: string,
+  feature: string
+): Result.Result<void, MalformedHeader | UnsupportedFeature> =>
+  pipe(
+    fieldOrDefault(raw, feature, 0),
+    Result.flatMap((value) =>
+      value === 0
+        ? Result.succeed(undefined)
+        : Result.fail(new UnsupportedFeature({ feature, value: raw }))
+    )
+  )
+
+const pad = (value: number, width: number): string => pipe(`${value}`, Str.padStart(width, "0"))
+
+/**
+ * A decoded Open Protocol header.
+ *
+ * Unsupported header features (link-level sequence numbers, message linking)
+ * never reach this type: the decoder rejects them with `UnsupportedFeature`.
+ *
+ * **Example** (Building a communication start header)
+ *
+ * ```ts
+ * import { Header } from "effect-open-protocol"
+ *
+ * const header = new Header({
+ *   length: 20,
+ *   mid: 1,
+ *   revision: 1,
+ *   noAck: false,
+ *   stationId: 1,
+ *   spindleId: 1
+ * })
+ * ```
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export class Header extends S.Class<Header>("Header")({
+  length: S.Number.check(S.isInt(), S.isBetween({ minimum: headerLength, maximum: 9999 })),
+  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
+  revision: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
+  noAck: S.Boolean,
+  stationId: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 99 })),
+  spindleId: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 99 }))
+}, { description: "The 20 byte header carried by every Open Protocol message" }) {}
+
+/**
+ * Decodes the 20 leading characters of a message into a `Header`.
+ *
+ * A blank revision, station id or spindle id means 1; a blank no-ack flag
+ * means "acknowledge" (reliable mode). Sequence numbering and message linking
+ * fail with `UnsupportedFeature`.
+ *
+ * **Example** (Decoding a keep-alive header)
+ *
+ * ```ts
+ * import { Result } from "effect"
+ * import { decodeHeader } from "effect-open-protocol"
+ *
+ * const decoded = decodeHeader("00209999            ")
+ *
+ * console.log(Result.isSuccess(decoded))
+ * ```
+ *
+ * @category decoding
+ * @since 0.0.0
+ */
+export const decodeHeader = (
+  text: string
+): Result.Result<Header, MalformedHeader | UnsupportedFeature> =>
+  Str.length(text) < headerLength
+    ? Result.fail(new MalformedHeader({ field: "header", value: text }))
+    : Result.gen(function* () {
+      const length = yield* field(Str.substring(0, 4)(text), "length")
+      const mid = yield* field(Str.substring(4, 8)(text), "mid")
+      const revision = yield* fieldOrDefault(Str.substring(8, 11)(text), "revision", 1)
+      const noAck = yield* fieldOrDefault(Str.substring(11, 12)(text), "noAck", 0)
+      const stationId = yield* fieldOrDefault(Str.substring(12, 14)(text), "stationId", 1)
+      const spindleId = yield* fieldOrDefault(Str.substring(14, 16)(text), "spindleId", 1)
+      yield* reserved(Str.substring(16, 18)(text), "sequenceNumber")
+      yield* reserved(Str.substring(18, 19)(text), "messageParts")
+      yield* reserved(Str.substring(19, 20)(text), "messagePartNumber")
+      return new Header({
+        length,
+        mid,
+        revision: revision === 0 ? 1 : revision,
+        noAck: noAck === 1,
+        stationId: stationId === 0 ? 1 : stationId,
+        spindleId: spindleId === 0 ? 1 : spindleId
+      })
+    })
+
+/**
+ * Renders a header as the 20 ASCII characters that open a message.
+ *
+ * **Example** (Encoding a keep-alive header)
+ *
+ * ```ts
+ * import { encodeHeader, Header } from "effect-open-protocol"
+ *
+ * const text = encodeHeader(
+ *   new Header({
+ *     length: 20,
+ *     mid: 9999,
+ *     revision: 1,
+ *     noAck: false,
+ *     stationId: 1,
+ *     spindleId: 1
+ *   })
+ * )
+ * ```
+ *
+ * @category encoding
+ * @since 0.0.0
+ */
+export const encodeHeader = (header: Header): string =>
+  pad(header.length, 4) +
+  pad(header.mid, 4) +
+  pad(header.revision, 3) +
+  (header.noAck ? "1" : "0") +
+  pad(header.stationId, 2) +
+  pad(header.spindleId, 2) +
+  "00" +
+  "0" +
+  "0"

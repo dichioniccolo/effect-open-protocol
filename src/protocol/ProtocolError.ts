@@ -1,0 +1,82 @@
+/**
+ * Typed errors raised by the Open Protocol codec.
+ *
+ * @since 0.0.0
+ */
+import * as S from "effect/Schema"
+
+/**
+ * A header field did not hold the ASCII digits (or padding) the protocol
+ * requires.
+ *
+ * **Example** (Reporting a bad length field)
+ *
+ * ```ts
+ * import { MalformedHeader } from "effect-open-protocol"
+ *
+ * const error = new MalformedHeader({ field: "length", value: "00x0" })
+ * ```
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class MalformedHeader extends S.TaggedError<MalformedHeader>()("MalformedHeader", {
+  field: S.String,
+  value: S.String
+}) {}
+
+/**
+ * The header length field is outside the range a frame can occupy.
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class InvalidLength extends S.TaggedError<InvalidLength>()("InvalidLength", {
+  length: S.Number
+}) {}
+
+/**
+ * The byte following the announced message length was not the NUL terminator.
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class MissingTerminator extends S.TaggedError<MissingTerminator>()("MissingTerminator", {
+  length: S.Number
+}) {}
+
+/**
+ * The peer used a protocol feature this library deliberately does not support,
+ * such as link-level sequence numbering or message linking.
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class UnsupportedFeature extends S.TaggedError<UnsupportedFeature>()("UnsupportedFeature", {
+  feature: S.String,
+  value: S.String
+}) {}
+
+/**
+ * The data field of a supported MID did not match its documented layout.
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class PayloadDecodeError extends S.TaggedError<PayloadDecodeError>()("PayloadDecodeError", {
+  mid: S.Number,
+  reason: S.String
+}) {}
+
+/**
+ * Every failure the codec can produce.
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export type ProtocolError =
+  | MalformedHeader
+  | InvalidLength
+  | MissingTerminator
+  | UnsupportedFeature
+  | PayloadDecodeError

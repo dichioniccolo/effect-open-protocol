@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "exploration-manifest/v1",
+  "exploration": {
+    "slug": "effect-open-protocol",
+    "title": "Effect Open Protocol",
+    "status": "graduated",
+    "stage": "graduate",
+    "openQuestions": [],
+    "sources": [
+      "research/SOURCES.md"
+    ],
+    "links": {
+      "goals": [
+        "goals/effect-open-protocol"
+      ],
+      "docs": [],
+      "supersededBy": null
+    },
+    "created": "2026-09-17",
+    "updated": "2026-09-17"
+  }
+}
