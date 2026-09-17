@@ -2,13 +2,12 @@ import { describe, expect, it } from "@effect/vitest"
 import { assertFailure, assertSuccess } from "@effect/vitest/utils"
 import { pipe, Result } from "effect"
 import * as A from "effect/Array"
-import * as O from "effect/Option"
 import {
   Accepted,
+  AttemptStarted,
   Closed,
   CloseRequested,
   Closing,
-  Connect,
   Connecting,
   type ConnectionEvent,
   type ConnectionState,
@@ -24,7 +23,6 @@ import {
   Recovered,
   Recovering,
   Released,
-  RetryDue,
   Subscribed,
   Subscribing,
   transition,
@@ -42,7 +40,7 @@ const run = (
   )
 
 const toReady: ReadonlyArray<ConnectionEvent> = [
-  new Connect(),
+  new AttemptStarted(),
   new Opened(),
   new Accepted({ controllerName: "Airbag1" }),
   new Subscribed(),
@@ -55,7 +53,7 @@ describe("ConnectionState", () => {
   })
 
   it("names each intermediate state", () => {
-    assertSuccess(transition(initial, new Connect()), new Connecting({ attempt: 1 }))
+    assertSuccess(transition(initial, new AttemptStarted()), new Connecting({ attempt: 1 }))
     assertSuccess(transition(new Connecting({ attempt: 1 }), new Opened()), new Handshaking({ attempt: 1 }))
     assertSuccess(
       transition(new Handshaking({ attempt: 2 }), new Accepted({ controllerName: "c" })),
@@ -68,13 +66,13 @@ describe("ConnectionState", () => {
   })
 
   it("counts attempts across reconnects and resets them after a live session", () => {
-    const afterFirstFailure = run(initial, [new Connect(), new Failed({ reason: "refused" })])
+    const afterFirstFailure = run(initial, [new AttemptStarted(), new Failed({ reason: "refused" })])
     assertSuccess(afterFirstFailure, new WaitingToReconnect({ attempt: 1, reason: "refused" }))
 
     const secondAttempt = run(initial, [
-      new Connect(),
+      new AttemptStarted(),
       new Failed({ reason: "refused" }),
-      new RetryDue(),
+      new AttemptStarted(),
       new Failed({ reason: "refused again" })
     ])
     assertSuccess(secondAttempt, new WaitingToReconnect({ attempt: 2, reason: "refused again" }))
@@ -115,14 +113,14 @@ describe("ConnectionState", () => {
         assertSuccess(transition(state, new CloseRequested()), new Closing())
       }
     )
-    assertSuccess(transition(new Closing(), new Released()), new Closed({ lastError: O.none() }))
+    assertSuccess(transition(new Closing(), new Released()), new Closed())
   })
 
   it("treats Closed as final", () => {
-    const closed = new Closed({ lastError: O.none() })
+    const closed = new Closed()
     expect(isFinal(closed)).toBe(true)
     A.forEach(
-      [new Connect(), new RetryDue(), new CloseRequested(), new Released()] as ReadonlyArray<ConnectionEvent>,
+      [new AttemptStarted(), new CloseRequested(), new Released()] as ReadonlyArray<ConnectionEvent>,
       (event) => {
         assertFailure(
           transition(closed, event),
@@ -142,16 +140,16 @@ describe("ConnectionState", () => {
       new InvalidTransition({ state: "Connecting", event: "Subscribed" })
     )
     assertFailure(
-      transition(new Ready({ controllerName: "c" }), new Connect()),
-      new InvalidTransition({ state: "Ready", event: "Connect" })
+      transition(new Ready({ controllerName: "c" }), new AttemptStarted()),
+      new InvalidTransition({ state: "Ready", event: "AttemptStarted" })
     )
     assertFailure(
       transition(new WaitingToReconnect({ attempt: 1, reason: "boom" }), new Opened()),
       new InvalidTransition({ state: "WaitingToReconnect", event: "Opened" })
     )
     assertFailure(
-      transition(new Closing(), new Connect()),
-      new InvalidTransition({ state: "Closing", event: "Connect" })
+      transition(new Closing(), new AttemptStarted()),
+      new InvalidTransition({ state: "Closing", event: "AttemptStarted" })
     )
   })
 

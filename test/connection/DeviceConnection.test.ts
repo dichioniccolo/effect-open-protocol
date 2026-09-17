@@ -4,16 +4,16 @@ import { TestClock } from "effect/testing"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import { KeepAlive } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { InMemoryNetwork, layer as layerInMemory } from "../../src/transport/InMemoryTransport.ts"
+import { layerComplete } from "../../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
-import { make } from "../../src/connection/DeviceConnection.ts"
+import { makeDeviceConnection } from "../../src/connection/DeviceConnection.ts"
 
 const deviceId = DeviceId.make("tool-1")
 const endpoint = new Endpoint({ host: "simulator", port: 4545 })
 
 const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(layerInMemory), Effect.provide(InMemoryNetwork.layer))
+  Effect.scoped(effect).pipe(Effect.provide(layerComplete))
 
 const awaitState = (
   state: SubscriptionRef.SubscriptionRef<ConnectionState>,
@@ -38,7 +38,7 @@ describe("DeviceConnection", () => {
   it.effect("reaches Ready through the handshake", () =>
     provided(Effect.gen(function* () {
       yield* makeSimulator({ endpoint, controllerName: "Airbag1" })
-      const connection = yield* make({ id: deviceId, endpoint })
+      const connection = yield* makeDeviceConnection({ id: deviceId, endpoint })
 
       const ready = yield* awaitState(connection.state, "Ready")
 
@@ -49,7 +49,7 @@ describe("DeviceConnection", () => {
     provided(Effect.gen(function* () {
       const simulator = yield* makeSimulator({ endpoint })
       const sink = yield* resultSink
-      const connection = yield* make({ id: deviceId, endpoint, onResult: sink.onResult })
+      const connection = yield* makeDeviceConnection({ id: deviceId, endpoint, onResult: sink.onResult })
 
       yield* awaitState(connection.state, "Ready")
 
@@ -59,7 +59,7 @@ describe("DeviceConnection", () => {
   it.effect("sends a keep-alive once the link goes idle", () =>
     provided(Effect.gen(function* () {
       const simulator = yield* makeSimulator({ endpoint })
-      const connection = yield* make({ id: deviceId, endpoint, keepAliveInterval: Duration.seconds(10) })
+      const connection = yield* makeDeviceConnection({ id: deviceId, endpoint, keepAliveInterval: Duration.seconds(10) })
       yield* awaitState(connection.state, "Ready")
       const before = yield* simulator.keepAlives
 
@@ -72,7 +72,7 @@ describe("DeviceConnection", () => {
   it.effect("declares the session dead when keep-alives stop being answered", () =>
     provided(Effect.gen(function* () {
       yield* makeSimulator({ endpoint, silent: true })
-      const connection = yield* make({
+      const connection = yield* makeDeviceConnection({
         id: deviceId,
         endpoint,
         keepAliveInterval: Duration.seconds(10),
@@ -93,7 +93,7 @@ describe("DeviceConnection", () => {
   it.effect("backs off after a rejected handshake", () =>
     provided(Effect.gen(function* () {
       yield* makeSimulator({ endpoint, rejectStartWith: 96 })
-      const connection = yield* make({
+      const connection = yield* makeDeviceConnection({
         id: deviceId,
         endpoint,
         reconnect: Schedule.spaced(Duration.seconds(1))
@@ -106,7 +106,7 @@ describe("DeviceConnection", () => {
 
   it.effect("keeps retrying until a controller appears", () =>
     provided(Effect.gen(function* () {
-      const connection = yield* make({
+      const connection = yield* makeDeviceConnection({
         id: deviceId,
         endpoint,
         reconnect: Schedule.spaced(Duration.seconds(1))
@@ -122,7 +122,7 @@ describe("DeviceConnection", () => {
 
   it.effect("fails a request made before the connection is ready", () =>
     provided(Effect.gen(function* () {
-      const connection = yield* make({ id: deviceId, endpoint })
+      const connection = yield* makeDeviceConnection({ id: deviceId, endpoint })
 
       const outcome = yield* Effect.result(connection.send(new KeepAlive()))
 
@@ -132,7 +132,7 @@ describe("DeviceConnection", () => {
   it.effect("closes cleanly and reaches the terminal state", () =>
     provided(Effect.gen(function* () {
       yield* makeSimulator({ endpoint })
-      const connection = yield* make({ id: deviceId, endpoint })
+      const connection = yield* makeDeviceConnection({ id: deviceId, endpoint })
       yield* awaitState(connection.state, "Ready")
 
       yield* connection.close
@@ -144,7 +144,7 @@ describe("DeviceConnection", () => {
 
   it.effect("closes while waiting to reconnect", () =>
     provided(Effect.gen(function* () {
-      const connection = yield* make({
+      const connection = yield* makeDeviceConnection({
         id: deviceId,
         endpoint,
         reconnect: Schedule.spaced(Duration.seconds(1))

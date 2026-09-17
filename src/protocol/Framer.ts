@@ -10,28 +10,12 @@
  */
 import { Effect, pipe, Result, Stream } from "effect"
 import * as A from "effect/Array"
-import * as S from "effect/Schema"
 import * as Str from "effect/String"
+import { parseDigits } from "./Ascii.ts"
 import { headerLength, terminator } from "./Header.ts"
 import { InvalidLength, MalformedHeader, MissingTerminator, type ProtocolError } from "./ProtocolError.ts"
 
-/**
- * The largest frame the protocol can express: a 4 digit length plus the NUL
- * terminator.
- *
- * @category constants
- * @since 0.0.0
- */
-export const maxFrameLength = 9999
-
 const decoder = new TextDecoder("latin1")
-
-type Emitted = Result.Result<ReadonlyArray<string>, ProtocolError>
-
-const asciiNumber = S.decodeResult(S.NumberFromString)
-
-const isDigits = (value: string): boolean =>
-  Str.isNonEmpty(value) && A.every([...value], (char) => char >= "0" && char <= "9")
 
 const takeFrames = (
   buffer: string,
@@ -40,12 +24,9 @@ const takeFrames = (
   const lengthField = Str.substring(0, 4)(buffer)
   return Str.length(buffer) < 4
     ? Result.succeed({ buffer, frames })
-    : !isDigits(lengthField)
-    ? Result.fail(new MalformedHeader({ field: "length", value: lengthField }))
     : pipe(
-      asciiNumber(lengthField),
-      Result.getOrElse(() => 0),
-      (length) =>
+      parseDigits(lengthField, () => new MalformedHeader({ field: "length", value: lengthField })),
+      Result.flatMap((length) =>
         length < headerLength
           ? Result.fail(new InvalidLength({ length }))
           : Str.length(buffer) < length + 1
@@ -56,6 +37,7 @@ const takeFrames = (
             Str.substring(length + 1, Str.length(buffer))(buffer),
             A.append(frames, Str.substring(0, length)(buffer))
           )
+      )
     )
 }
 
@@ -98,15 +80,9 @@ export const frames = <E, R>(
 ): Stream.Stream<string, E | ProtocolError, R> =>
   pipe(
     bytes,
-    Stream.mapAccum(() => "", (buffer: string, chunk: Uint8Array): readonly [string, ReadonlyArray<Emitted>] =>
-      Result.match(step(buffer, chunk), {
-        onSuccess: (next) => [next.buffer, [Result.succeed(next.frames)]],
-        onFailure: (error) => [buffer, [Result.fail(error)]]
-      })),
-    Stream.mapEffect((emitted: Emitted) =>
-      Result.match(emitted, {
-        onSuccess: (values) => Effect.succeed(values),
-        onFailure: (error) => Effect.fail(error)
-      })),
-    Stream.flattenIterable
+    Stream.mapAccumEffect(() => "", (buffer: string, chunk: Uint8Array) =>
+      Effect.map(
+        Effect.fromResult(step(buffer, chunk)),
+        (next) => [next.buffer, next.frames] as const
+      ))
   )

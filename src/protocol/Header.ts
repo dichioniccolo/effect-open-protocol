@@ -9,9 +9,9 @@
  * @since 0.0.0
  */
 import { pipe, Result } from "effect"
-import * as A from "effect/Array"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
+import { padNumber, parseDigits } from "./Ascii.ts"
 import { MalformedHeader, UnsupportedFeature } from "./ProtocolError.ts"
 
 /**
@@ -30,29 +30,8 @@ export const headerLength = 20
  */
 export const terminator = "\u0000"
 
-const digitsOnly = S.String.check(
-  S.makeFilter((value) => Str.length(value) > 0 && A.every([...value], (char) => char >= "0" && char <= "9"), {
-    identifier: "AsciiDigits",
-    title: "ASCII digits",
-    description: "a non-empty string of ASCII characters between 0 and 9"
-  })
-)
-
-const isDigits = S.is(digitsOnly)
-
-const asciiNumber = S.decodeResult(S.NumberFromString)
-
 const field = (raw: string, name: string): Result.Result<number, MalformedHeader> =>
-  pipe(
-    Str.trim(raw),
-    Result.liftPredicate(isDigits, () => new MalformedHeader({ field: name, value: raw })),
-    Result.flatMap((digits) =>
-      pipe(
-        asciiNumber(digits),
-        Result.mapError(() => new MalformedHeader({ field: name, value: raw }))
-      )
-    )
-  )
+  parseDigits(Str.trim(raw), () => new MalformedHeader({ field: name, value: raw }))
 
 const fieldOrDefault = (
   raw: string,
@@ -73,8 +52,6 @@ const reserved = (
         : Result.fail(new UnsupportedFeature({ feature, value: raw }))
     )
   )
-
-const pad = (value: number, width: number): string => pipe(`${value}`, Str.padStart(width, "0"))
 
 /**
  * A decoded Open Protocol header.
@@ -179,12 +156,12 @@ export const decodeHeader = (
  * @since 0.0.0
  */
 export const encodeHeader = (header: Header): string =>
-  pad(header.length, 4) +
-  pad(header.mid, 4) +
-  pad(header.revision, 3) +
+  padNumber(header.length, 4) +
+  padNumber(header.mid, 4) +
+  padNumber(header.revision, 3) +
   (header.noAck ? "1" : "0") +
-  pad(header.stationId, 2) +
-  pad(header.spindleId, 2) +
+  padNumber(header.stationId, 2) +
+  padNumber(header.spindleId, 2) +
   "00" +
   "0" +
   "0"

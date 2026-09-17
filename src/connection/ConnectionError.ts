@@ -46,11 +46,3 @@ export class RequestTimeout extends S.TaggedError<RequestTimeout>()("RequestTime
 export class NotReady extends S.TaggedError<NotReady>()("NotReady", {
   state: S.String
 }) {}
-
-/**
- * The connection was closed by the application and cannot be used again.
- *
- * @category errors
- * @since 0.0.0
- */
-export class ConnectionClosed extends S.TaggedError<ConnectionClosed>()("ConnectionClosed", {}) {}

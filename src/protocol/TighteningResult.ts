@@ -12,6 +12,7 @@ import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
+import { padNumber, padText, parseDigits } from "./Ascii.ts"
 import { PayloadDecodeError } from "./ProtocolError.ts"
 
 /**
@@ -171,10 +172,6 @@ const slot = (id: string, width: number): Slot => ({ id, width })
 
 const emptyScan: Result.Result<Scan, PayloadDecodeError> = Result.succeed({ offset: 0, values: [] })
 
-const isDigit = (char: string): boolean => char >= "0" && char <= "9"
-
-const asciiNumber = S.decodeResult(S.NumberFromString)
-
 const readSlots = (
   mid: number,
   data: string,
@@ -213,12 +210,7 @@ const digitsValue = (
   parameter: string,
   raw: string
 ): Result.Result<number, PayloadDecodeError> =>
-  A.every([...raw], isDigit) && Str.isNonEmpty(raw)
-    ? pipe(
-      asciiNumber(raw),
-      Result.mapError(() => new PayloadDecodeError({ mid, reason: `parameter ${parameter} is not numeric` }))
-    )
-    : Result.fail(new PayloadDecodeError({ mid, reason: `parameter ${parameter} is not numeric` }))
+  parseDigits(raw, () => new PayloadDecodeError({ mid, reason: `parameter ${parameter} is not numeric` }))
 
 const enumValue = <A>(
   mid: number,
@@ -357,11 +349,6 @@ export const decodeOldResult = decodeWith(65, oldResultSlots, {
   angle: 8,
   timestamp: 9
 })
-
-const padNumber = (value: number, width: number): string => pipe(`${Math.round(value)}`, Str.padStart(width, "0"))
-
-const padText = (value: string, width: number): string =>
-  pipe(Str.substring(0, width)(value), (text) => text + Str.repeat(width - Str.length(text))(" "))
 
 const statusIndex = <A extends string>(values: ReadonlyArray<A>, value: A): number =>
   pipe(A.findFirstIndex(values, (candidate) => candidate === value), O.getOrElse(() => 0))

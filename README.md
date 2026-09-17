@@ -112,6 +112,11 @@ This starts simulated controllers, connects a pool to them, injects seeded
 faults for the given duration, then stops the faults, lets the run settle, and
 prints:
 
+Every fault the simulator can decide is one it actually performs: dropped
+connections, silent links, delayed replies, frames split across reads, frames
+coalesced into one read, refused commands, and a controller that stops
+accepting connections while it reboots.
+
 ```text
 Devices:                  3
 Seed:                     7

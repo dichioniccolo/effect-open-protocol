@@ -11,8 +11,10 @@
 import { Effect, pipe } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
+import type { CommandRejected, RequestTimeout } from "../connection/ConnectionError.ts"
 import { type Message, RequestOldResult } from "../protocol/Messages.ts"
 import { TighteningId, type TighteningResult } from "../protocol/TighteningResult.ts"
+import type { ConnectionLost } from "../transport/Transport.ts"
 import type { Dedup } from "./Dedup.ts"
 
 /**
@@ -68,8 +70,14 @@ type Attempt =
 const resultOf = (message: Message): O.Option<TighteningResult> =>
   message._tag === "OldResult" ? O.some(message.result) : O.none()
 
-const isRejection = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "_tag" in error && error._tag === "CommandRejected"
+/**
+ * Everything a recovery request can fail with. The distinction that matters is
+ * `CommandRejected`, the controller's own "I do not have it".
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export type RecoveryFailure = CommandRejected | RequestTimeout | ConnectionLost
 
 /**
  * Asks the controller for everything produced since the last delivered result.
@@ -83,9 +91,9 @@ const isRejection = (error: unknown): boolean =>
  * @category constructors
  * @since 0.0.0
  */
-export const run = Effect.fnUntraced(function* (options: {
+export const runRecovery = Effect.fnUntraced(function* (options: {
   readonly dedup: Dedup
-  readonly request: (message: Message, mid: number) => Effect.Effect<Message, unknown>
+  readonly request: (message: Message, mid: number) => Effect.Effect<Message, RecoveryFailure>
   readonly submit: (result: TighteningResult) => Effect.Effect<void>
   readonly limit?: number | undefined
 }) {
@@ -95,11 +103,11 @@ export const run = Effect.fnUntraced(function* (options: {
    * Asks for one stored result. A controller answering "I do not have it" is
    * an answer (`None`); anything else is silence, and silence is retried.
    */
-  const fetch = (id: TighteningId): Effect.Effect<O.Option<TighteningResult>, unknown> =>
+  const fetch = (id: TighteningId): Effect.Effect<O.Option<TighteningResult>, RequestTimeout | ConnectionLost> =>
     pipe(
       options.request(new RequestOldResult({ tighteningId: id }), 64),
       Effect.map(resultOf),
-      Effect.catchIf(isRejection, () => Effect.succeed(O.none<TighteningResult>()))
+      Effect.catchTag("CommandRejected", () => Effect.succeed(O.none<TighteningResult>()))
     )
 
   const fetchRange = (from: number, to: number): Effect.Effect<Recovery> =>

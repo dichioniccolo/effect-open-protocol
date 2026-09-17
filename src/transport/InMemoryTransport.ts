@@ -128,3 +128,26 @@ export class InMemoryNetwork extends Context.Service<InMemoryNetwork, {
 export const layer: Layer.Layer<Transport, never, InMemoryNetwork> = Layer.effect(Transport)(
   Effect.map(InMemoryNetwork, (network) => ({ connect: network.connect }))
 )
+
+/**
+ * The in-memory transport together with the network it runs on.
+ *
+ * The transport is useless without a network underneath it, and every test and
+ * demo was stacking the two by hand, so the pairing ships here once.
+ *
+ * **Example** (One layer for a test)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { InMemoryTransport } from "effect-open-protocol"
+ *
+ * const program = Effect.void.pipe(Effect.provide(InMemoryTransport.layerComplete))
+ * ```
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layerComplete: Layer.Layer<Transport | InMemoryNetwork> = Layer.provideMerge(
+  layer,
+  InMemoryNetwork.layer
+)

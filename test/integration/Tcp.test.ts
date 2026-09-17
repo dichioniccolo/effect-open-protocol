@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Duration, Effect, pipe, Ref, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import { makeTcp } from "../../simulator/ControllerSimulator.ts"
-import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
+import { makeDeviceConnection } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layer as layerTcp } from "../../src/transport/TcpTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
@@ -29,7 +29,7 @@ describe("real TCP smoke test", () => {
     Effect.scoped(Effect.gen(function* () {
       const simulator = yield* makeTcp({ endpoint, controllerName: "TcpSim" })
       const received = yield* Ref.make<ReadonlyArray<number>>([])
-      const connection = yield* makeConnection({
+      const connection = yield* makeDeviceConnection({
         id: deviceId,
         endpoint,
         onResult: (result: TighteningResult) =>

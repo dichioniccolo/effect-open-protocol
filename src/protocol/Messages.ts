@@ -12,6 +12,7 @@
 import { Match, pipe, Result } from "effect"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
+import { padNumber, padText, parseDigits } from "./Ascii.ts"
 import { decodeHeader, encodeHeader, Header, headerLength, terminator } from "./Header.ts"
 import { PayloadDecodeError, type ProtocolError } from "./ProtocolError.ts"
 import {
@@ -202,8 +203,6 @@ export type Message =
   | KeepAlive
   | UnknownMessage
 
-const asciiNumber = S.decodeResult(S.NumberFromString)
-
 const numberAt = (
   mid: number,
   data: string,
@@ -216,10 +215,7 @@ const numberAt = (
     (raw) =>
       Str.length(raw) !== to - from
         ? Result.fail(new PayloadDecodeError({ mid, reason: `${parameter} is truncated` }))
-        : pipe(
-          asciiNumber(raw),
-          Result.mapError(() => new PayloadDecodeError({ mid, reason: `${parameter} is not numeric` }))
-        )
+        : parseDigits(raw, () => new PayloadDecodeError({ mid, reason: `${parameter} is not numeric` }))
   )
 
 const succeedMessage = (message: Message): Result.Result<Message, ProtocolError> => Result.succeed(message)
@@ -329,11 +325,6 @@ const midOf = (message: Message): number =>
     Match.tag("UnknownMessage", (unknown) => unknown.mid),
     Match.exhaustive
   )
-
-const padNumber = (value: number, width: number): string => pipe(`${value}`, Str.padStart(width, "0"))
-
-const padText = (value: string, width: number): string =>
-  pipe(Str.substring(0, width)(value), (text) => text + Str.repeat(width - Str.length(text))(" "))
 
 const dataOf = (message: Message): string =>
   Match.value(message).pipe(

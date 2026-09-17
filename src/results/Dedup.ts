@@ -15,6 +15,7 @@
  */
 import { Effect, Ref } from "effect"
 import * as A from "effect/Array"
+import * as HashSet from "effect/HashSet"
 import * as O from "effect/Option"
 import { TighteningId } from "../protocol/TighteningResult.ts"
 
@@ -47,7 +48,10 @@ export interface Dedup {
 }
 
 interface State {
-  readonly ids: ReadonlyArray<TighteningId>
+  /** Membership of the last `capacity` identifiers, for constant time lookups. */
+  readonly ids: HashSet.HashSet<TighteningId>
+  /** The same identifiers in arrival order, which is the order they are evicted in. */
+  readonly order: ReadonlyArray<TighteningId>
   /**
    * Highest identifier below which nothing is missing. It advances only
    * contiguously: delivering 30 while 25 is still missing must not convince
@@ -55,7 +59,7 @@ interface State {
    */
   readonly watermark: O.Option<TighteningId>
   /** Delivered identifiers sitting above the watermark, waiting for the gap to close. */
-  readonly ahead: ReadonlyArray<TighteningId>
+  readonly ahead: HashSet.HashSet<TighteningId>
   /** Set when the controller told us it has nothing stored. */
   readonly emptyHistory: boolean
 }
@@ -75,10 +79,10 @@ export const defaultCapacity = 1000
  *
  * ```ts
  * import { Effect } from "effect"
- * import { Dedup, TighteningId } from "effect-open-protocol"
+ * import { makeDedup, TighteningId } from "effect-open-protocol"
  *
  * const program = Effect.gen(function* () {
- *   const dedup = yield* Dedup.make(16)
+ *   const dedup = yield* makeDedup(16)
  *   const id = TighteningId.make(7)
  *   yield* dedup.remember(id)
  *   return yield* dedup.seen(id)
@@ -88,28 +92,50 @@ export const defaultCapacity = 1000
  * @category constructors
  * @since 0.0.0
  */
-export const make = Effect.fnUntraced(function* (capacity: number = defaultCapacity) {
-  const state = yield* Ref.make<State>({ ids: [], watermark: O.none(), ahead: [], emptyHistory: false })
+export const makeDedup = Effect.fnUntraced(function* (capacity: number = defaultCapacity) {
+  const state = yield* Ref.make<State>({
+    ids: HashSet.empty<TighteningId>(),
+    order: [],
+    watermark: O.none(),
+    ahead: HashSet.empty<TighteningId>(),
+    emptyHistory: false
+  })
 
   /** Advances the watermark across every identifier already delivered. */
-  const advance = (from: TighteningId, ahead: ReadonlyArray<TighteningId>): {
+  const advance = (from: TighteningId, ahead: HashSet.HashSet<TighteningId>): {
     readonly watermark: O.Option<TighteningId>
-    readonly ahead: ReadonlyArray<TighteningId>
+    readonly ahead: HashSet.HashSet<TighteningId>
   } => {
     const next = TighteningId.make(from + 1)
-    return A.contains(ahead, next)
-      ? advance(next, A.filter(ahead, (id) => id !== next))
+    return HashSet.has(ahead, next)
+      ? advance(next, HashSet.remove(ahead, next))
       : { watermark: O.some(from), ahead }
   }
 
+  /** Records the identifier, evicting the oldest once the window is full. */
+  const record = (current: State, id: TighteningId): Pick<State, "ids" | "order"> => {
+    if (HashSet.has(current.ids, id)) {
+      return { ids: current.ids, order: current.order }
+    }
+    const order = A.append(current.order, id)
+    return A.length(order) <= capacity
+      ? { ids: HashSet.add(current.ids, id), order }
+      : O.match(A.head(order), {
+        onNone: () => ({ ids: HashSet.add(current.ids, id), order }),
+        onSome: (oldest) => ({
+          ids: HashSet.add(HashSet.remove(current.ids, oldest), id),
+          order: A.drop(order, 1)
+        })
+      })
+  }
+
   const seen = (id: TighteningId): Effect.Effect<boolean> =>
-    Effect.map(Ref.get(state), (current) => A.contains(current.ids, id))
+    Effect.map(Ref.get(state), (current) => HashSet.has(current.ids, id))
 
   const remember = (id: TighteningId): Effect.Effect<void> =>
     Ref.update(state, (current) => {
-      const kept = A.contains(current.ids, id) ? current.ids : A.append(current.ids, id)
-      const ids = A.length(kept) > capacity ? A.drop(kept, A.length(kept) - capacity) : kept
-      const ahead = A.contains(current.ahead, id) ? current.ahead : A.append(current.ahead, id)
+      const kept = record(current, id)
+      const ahead = HashSet.add(current.ahead, id)
       return O.match(current.watermark, {
         // Without a baseline the identifier is held aside: treating whatever
         // arrives first as the baseline would write off everything older that
@@ -117,12 +143,12 @@ export const make = Effect.fnUntraced(function* (capacity: number = defaultCapac
         // nothing stored, where the first result really is the first there is.
         onNone: () =>
           current.emptyHistory
-            ? { ...current, ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }
-            : { ...current, ids, ahead },
+            ? { ...current, ...kept, ...advance(id, HashSet.remove(ahead, id)) }
+            : { ...current, ...kept, ahead },
         onSome: (mark) =>
           id === mark + 1
-            ? { ...current, ids, ...advance(id, A.filter(ahead, (value) => value !== id)) }
-            : { ...current, ids, ahead }
+            ? { ...current, ...kept, ...advance(id, HashSet.remove(ahead, id)) }
+            : { ...current, ...kept, ahead }
       })
     })
 
@@ -130,11 +156,22 @@ export const make = Effect.fnUntraced(function* (capacity: number = defaultCapac
     Ref.update(state, (current) =>
       O.isSome(current.watermark) ? current : { ...current, ...advance(id, current.ahead) })
 
+  /** The oldest identifier held aside, which is where a baseline has to start. */
+  const lowestAhead = (ahead: HashSet.HashSet<TighteningId>): O.Option<TighteningId> =>
+    A.reduce(
+      A.fromIterable(ahead),
+      O.none<TighteningId>(),
+      (lowest, id) => O.match(lowest, { onNone: () => O.some(id), onSome: (value) => O.some(id < value ? id : value) })
+    )
+
   const markNoHistory: Effect.Effect<void> = Ref.update(state, (current) =>
-    O.isSome(current.watermark) || A.length(current.ahead) === 0
+    O.isSome(current.watermark)
       ? { ...current, emptyHistory: true }
       // A result already arrived while we were asking: it is the baseline.
-      : { ...current, emptyHistory: true, ...advance(A.headNonEmpty(current.ahead as A.NonEmptyArray<TighteningId>), current.ahead) })
+      : O.match(lowestAhead(current.ahead), {
+        onNone: () => ({ ...current, emptyHistory: true }),
+        onSome: (lowest) => ({ ...current, emptyHistory: true, ...advance(lowest, HashSet.remove(current.ahead, lowest)) })
+      }))
 
   return {
     seen,

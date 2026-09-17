@@ -19,7 +19,7 @@ import * as A from "effect/Array"
 import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
 import { DevicePool } from "../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
-import { InMemoryNetwork, layer as layerInMemory } from "../src/transport/InMemoryTransport.ts"
+import { layerComplete } from "../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
 
 interface Outcome {
@@ -113,8 +113,7 @@ const runOnce = (options: {
     Random.withSeed(options.seed),
     Effect.scoped,
     Effect.provide(DevicePool.layer),
-    Effect.provide(layerInMemory),
-    Effect.provide(InMemoryNetwork.layer)
+    Effect.provide(layerComplete)
   )
 
 const flag = (name: string, fallback: number): number => {

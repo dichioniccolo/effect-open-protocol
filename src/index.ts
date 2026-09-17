@@ -1,12 +1,18 @@
 /**
  * Open Protocol client for tightening controllers, built with Effect.
  *
- * The public surface grows one phase at a time. Today it covers the protocol
- * codec, the transport boundary, the supervised device connection and result
- * delivery; the device pool, TCP transport and chaos demo land next.
+ * Every module is re-exported flat, and each one names its constructor after
+ * what it builds (`makeDeviceConnection`, `makeDedup`, ...), so nothing is
+ * renamed on its way out. The two transports are the exception: both provide a
+ * `layer`, so they keep their namespace and read as `TcpTransport.layer`.
  *
  * @since 0.0.0
  */
+
+/**
+ * @since 0.0.0
+ */
+export * from "./protocol/Ascii.ts"
 
 /**
  * @since 0.0.0
@@ -46,32 +52,42 @@ export * from "./connection/ConnectionState.ts"
 /**
  * @since 0.0.0
  */
-export {
-  type DeviceConfig,
-  DeviceConnection,
-  type DeviceConnectionShape,
-  make as makeDeviceConnection
-} from "./connection/DeviceConnection.ts"
+export * from "./connection/DeviceConnection.ts"
 
 /**
  * @since 0.0.0
  */
-export * as RequestReply from "./connection/RequestReply.ts"
+export * from "./connection/DeviceSettings.ts"
 
 /**
  * @since 0.0.0
  */
-export * as Dedup from "./results/Dedup.ts"
+export * from "./connection/GapRecovery.ts"
 
 /**
  * @since 0.0.0
  */
-export * as ResultDelivery from "./results/ResultDelivery.ts"
+export * from "./connection/Session.ts"
 
 /**
  * @since 0.0.0
  */
-export * as ResultRecovery from "./results/ResultRecovery.ts"
+export * from "./connection/RequestReply.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * from "./results/Dedup.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * from "./results/ResultDelivery.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * from "./results/ResultRecovery.ts"
 
 /**
  * @since 0.0.0

@@ -8,32 +8,30 @@
  * attempt runs in its own `Scope`, so a lost connection releases its socket
  * and fibers before the next attempt begins.
  *
+ * The parts that are policies of their own live next door: the defaults in
+ * `DeviceSettings`, the live session and its loops in `Session`, and the
+ * result gap policy in `GapRecovery`.
+ *
  * @since 0.0.0
  */
-import { Context, Duration, Effect, Fiber, Layer, Match, pipe, Ref, Schedule, Stream, SubscriptionRef } from "effect"
-import * as A from "effect/Array"
+import { Context, Effect, Fiber, Layer, Match, pipe, Ref, SubscriptionRef } from "effect"
 import * as O from "effect/Option"
-import { frames } from "../protocol/Framer.ts"
 import {
   AcknowledgeResult,
   CommunicationStart,
   CommunicationStop,
-  decodeMessage,
-  encodeMessage,
-  KeepAlive,
   type Message,
   SubscribeResults
 } from "../protocol/Messages.ts"
-import type { DeviceId, TighteningResult } from "../protocol/TighteningResult.ts"
-import { make as makeDedup } from "../results/Dedup.ts"
-import { make as makeDelivery, type ResultDelivery, type ResultHandler } from "../results/ResultDelivery.ts"
-import { run as runRecovery } from "../results/ResultRecovery.ts"
-import { ConnectionLost, type Duplex, type Endpoint, Transport } from "../transport/Transport.ts"
-import { ConnectionClosed, HandshakeRejected, NotReady } from "./ConnectionError.ts"
+import type { DeviceId } from "../protocol/TighteningResult.ts"
+import { makeDedup } from "../results/Dedup.ts"
+import { makeResultDelivery, type ResultDelivery } from "../results/ResultDelivery.ts"
+import { ConnectionLost, Transport } from "../transport/Transport.ts"
+import { CommandRejected, HandshakeRejected, NotReady, RequestTimeout } from "./ConnectionError.ts"
 import {
   Accepted,
+  AttemptStarted,
   CloseRequested,
-  Connect,
   type ConnectionEvent,
   type ConnectionState,
   Failed,
@@ -42,55 +40,13 @@ import {
   Opened,
   Recovered,
   Released,
-  RetryDue,
   Subscribed,
   transition
 } from "./ConnectionState.ts"
-import { expectReply, make as makeRequestReply, type RequestReply } from "./RequestReply.ts"
-
-/**
- * How one device should be connected and kept alive.
- *
- * Defaults follow the Open Protocol specification: the controller drops a
- * connection after 15 seconds without traffic, so a keep-alive goes out after
- * 10 seconds of silence.
- *
- * @category models
- * @since 0.0.0
- */
-export interface DeviceConfig {
-  readonly id: DeviceId
-  readonly endpoint: Endpoint
-  /** Backoff between connection attempts. Defaults to jittered exponential, capped at 30 seconds. */
-  readonly reconnect?: Schedule.Schedule<unknown> | undefined
-  /** Idle time before a keep-alive is sent. Defaults to 10 seconds. */
-  readonly keepAliveInterval?: Duration.Duration | undefined
-  /** How long to wait for a reply before declaring the session dead. Defaults to 5 seconds. */
-  readonly responseTimeout?: Duration.Duration | undefined
-  /** Called for every result the controller pushes. Subscribing is skipped when absent. */
-  readonly onResult?: ResultHandler | undefined
-  /** Retries applied to a failing handler before the acknowledgement is skipped. */
-  readonly handlerRetry?: Schedule.Schedule<unknown> | undefined
-  /** How many results may wait for a slow handler. Defaults to 16. */
-  readonly resultBuffer?: number | undefined
-  /** How many identifiers the duplicate detector remembers. Defaults to 1000. */
-  readonly dedupCapacity?: number | undefined
-  /** Upper bound on results fetched after an outage. Defaults to 100. */
-  readonly recoveryLimit?: number | undefined
-  /** How long a graceful close waits for the communication stop to flush. Defaults to 1 second. */
-  readonly stopTimeout?: Duration.Duration | undefined
-  /** How many times a recovery pass retries the identifiers it could not fetch. Defaults to 5. */
-  readonly recoveryAttempts?: number | undefined
-  /** How long to wait between recovery passes. Defaults to 500 milliseconds. */
-  readonly recoveryRetryDelay?: Duration.Duration | undefined
-  /** How long a single recovery request waits for its reply. Defaults to 1 second. */
-  readonly recoveryTimeout?: Duration.Duration | undefined
-  /**
-   * How often the connection reconciles with the controller's latest result
-   * while the session is up. One MID 0064 per interval. Defaults to 5 seconds.
-   */
-  readonly recoveryInterval?: Duration.Duration | undefined
-}
+import { type DeviceConfig, resolveSettings } from "./DeviceSettings.ts"
+import { makeGapRecovery } from "./GapRecovery.ts"
+import { expectReply, makeRequestReply } from "./RequestReply.ts"
+import { keepAliveLoop, readLoop, sendRaw, type Session } from "./Session.ts"
 
 /**
  * A live connection as the rest of the library sees it.
@@ -107,7 +63,7 @@ export interface DeviceConnectionShape {
     message: Message,
     mid: number,
     direct?: Message["_tag"] | undefined
-  ) => Effect.Effect<Message, NotReady | ConnectionClosed | ConnectionLost | Error>
+  ) => Effect.Effect<Message, NotReady | RequestTimeout | CommandRejected | ConnectionLost>
   /** Sends a message without expecting a reply. */
   readonly send: (message: Message) => Effect.Effect<void, NotReady | ConnectionLost>
   /** Stops the connection and returns once every resource is released. */
@@ -118,24 +74,12 @@ export interface DeviceConnectionShape {
   readonly duplicates: Effect.Effect<number>
 }
 
-const defaultReconnect: Schedule.Schedule<Duration.Duration> = pipe(
-  Schedule.exponential("500 millis"),
-  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.seconds(30)))),
-  Schedule.jittered
-)
-
-const encoder = new TextEncoder()
-
-interface Session {
-  readonly duplex: Duplex
-  readonly replies: RequestReply
-}
-
-const protocolLost = (tag: string): Effect.Effect<never, ConnectionLost> =>
-  Effect.fail(new ConnectionLost({ reason: `protocol error: ${tag}` }))
-
-const sendRaw = (duplex: Duplex, message: Message): Effect.Effect<void, ConnectionLost> =>
-  duplex.send(encoder.encode(encodeMessage(message)))
+const reasonOf = (error: unknown): string =>
+  error instanceof ConnectionLost
+    ? error.reason
+    : error instanceof HandshakeRejected
+    ? `handshake rejected with code ${error.code}`
+    : "connection attempt failed"
 
 /**
  * Opens a supervised connection that reconnects until it is closed.
@@ -147,10 +91,10 @@ const sendRaw = (duplex: Duplex, message: Message): Effect.Effect<void, Connecti
  *
  * ```ts
  * import { Effect, Stream } from "effect"
- * import { DeviceId, Endpoint, make } from "effect-open-protocol"
+ * import { DeviceId, Endpoint, makeDeviceConnection } from "effect-open-protocol"
  *
  * const program = Effect.gen(function* () {
- *   const connection = yield* make({
+ *   const connection = yield* makeDeviceConnection({
  *     id: DeviceId.make("line-1-tool-3"),
  *     endpoint: new Endpoint({ host: "10.0.0.31", port: 4545 })
  *   })
@@ -161,25 +105,19 @@ const sendRaw = (duplex: Duplex, message: Message): Effect.Effect<void, Connecti
  * @category constructors
  * @since 0.0.0
  */
-export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
+export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceConfig) {
+  const settings = resolveSettings(config)
   const transport = yield* Transport
   const state = yield* SubscriptionRef.make(initial)
   const session = yield* Ref.make(O.none<Session>())
-  const keepAliveInterval = config.keepAliveInterval ?? Duration.seconds(10)
-  const responseTimeout = config.responseTimeout ?? Duration.seconds(5)
-  const reconnect = config.reconnect ?? defaultReconnect
-  const stopTimeout = config.stopTimeout ?? Duration.seconds(1)
-  const recoveryAttempts = config.recoveryAttempts ?? 5
-  const recoveryRetryDelay = config.recoveryRetryDelay ?? Duration.millis(500)
-  const recoveryTimeout = config.recoveryTimeout ?? Duration.seconds(1)
-  const recoveryInterval = config.recoveryInterval ?? Duration.seconds(5)
-  const dedup = yield* makeDedup(config.dedupCapacity)
-  const delivery = yield* O.match(O.fromNullishOr(config.onResult), {
+  const dedup = yield* makeDedup(settings.dedupCapacity)
+
+  const delivery = yield* O.match(O.fromNullishOr(settings.onResult), {
     onNone: () => Effect.succeed(O.none<ResultDelivery>()),
     onSome: (handler) =>
       Effect.map(
-        makeDelivery({
-          delivery: { handler, handlerRetry: config.handlerRetry, bufferSize: config.resultBuffer },
+        makeResultDelivery({
+          delivery: { handler, handlerRetry: settings.handlerRetry, bufferSize: settings.resultBuffer },
           dedup,
           acknowledge: (result) =>
             pipe(
@@ -192,7 +130,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
               ),
               Effect.tap(() =>
                 Effect.logDebug("acknowledged a result").pipe(
-                  Effect.annotateLogs({ deviceId: config.id, tighteningId: result.tighteningId })
+                  Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
                 )
               )
             )
@@ -201,7 +139,16 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       )
   })
 
-  const emit = (event: ConnectionEvent): Effect.Effect<void> =>
+  const recovery = yield* makeGapRecovery({ settings, dedup })
+
+  /**
+   * Applies an event to the state machine. A transition the machine refuses is
+   * a wiring bug and dies, except for the events that merely report something
+   * that already happened to the socket: a session can fail while the
+   * application is already closing, and the state machine is the one place
+   * that decides whether that is worth recording.
+   */
+  const emitWith = (onRefused: (error: unknown) => Effect.Effect<void>) => (event: ConnectionEvent) =>
     pipe(
       SubscriptionRef.get(state),
       Effect.flatMap((current) =>
@@ -209,87 +156,21 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
           transition(current, event),
           Effect.fromResult,
           Effect.flatMap((next) => SubscriptionRef.set(state, next)),
-          Effect.catchTag("InvalidTransition", (error) => Effect.die(error))
+          Effect.catchTag("InvalidTransition", onRefused)
         )
       )
     )
 
-  const recovering = yield* Ref.make(false)
+  const emit = emitWith((error) => Effect.die(error))
 
-  /**
-   * Fetches whatever sits between the last contiguously delivered result and
-   * the newest one the controller holds. Runs at session start and whenever a
-   * pushed result reveals a gap, which is how the specification suggests an
-   * integrator notices missing results.
-   */
-  const recoverGap = (current: Session, pipeline: ResultDelivery): Effect.Effect<void> => {
-    const pass = (attempts: number): Effect.Effect<void> =>
-      pipe(
-        runRecovery({
-          dedup,
-          request: (message, mid) =>
-            // Recovery is bulk work that retries, so it waits far less than a
-            // command does: a slow reply here costs a whole pass.
-            current.replies.request(message, mid, expectReply(mid, "OldResult"), recoveryTimeout),
-          submit: pipeline.submit,
-          limit: config.recoveryLimit
-        }),
-        Effect.tap((recovery) =>
-          A.length(recovery.recovered) === 0 && A.length(recovery.missing) === 0 &&
-            A.length(recovery.pending) === 0
-            ? Effect.void
-            : Effect.logInfo("recovered results missed during the outage").pipe(
-              Effect.annotateLogs({
-                deviceId: config.id,
-                recovered: A.length(recovery.recovered),
-                missing: A.length(recovery.missing),
-                pending: A.length(recovery.pending),
-                skipped: recovery.skipped
-              })
-            )
-        ),
-        Effect.flatMap((recovery) =>
-          // A pending identifier is one the controller may still have: the
-          // request timed out or the link wobbled. Giving up on it here is how
-          // a result gets lost, so the pass repeats while the session lives.
-          A.length(recovery.pending) === 0 || attempts <= 1
-            ? Effect.void
-            : Effect.andThen(Effect.sleep(recoveryRetryDelay), pass(attempts - 1))
-        ),
-        Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
-        Effect.asVoid
-      )
-
-    return Ref.getAndSet(recovering, true).pipe(
-      Effect.flatMap((busy) => busy ? Effect.void : Effect.ensuring(pass(recoveryAttempts), Ref.set(recovering, false)))
-    )
-  }
-
-  const submitResult = (
-    current: Session,
-    pipeline: ResultDelivery,
-    result: TighteningResult
-  ): Effect.Effect<void> =>
-    pipe(
-      dedup.lastDelivered,
-      Effect.flatMap((watermark) =>
-        O.match(watermark, {
-          onNone: () => Effect.void,
-          onSome: (mark) =>
-            result.tighteningId > mark + 1
-              ? Effect.asVoid(Effect.forkChild(recoverGap(current, pipeline)))
-              : Effect.void
-        })
-      ),
-      Effect.andThen(pipeline.submit(result))
-    )
+  const emitIfLegal = emitWith(() => Effect.void)
 
   const routeUnsolicited = (current: Session, message: Message): Effect.Effect<void> =>
     Match.value(message).pipe(
       Match.tag("LastResult", (carrier) =>
         O.match(delivery, {
           onNone: () => Effect.logDebug("dropping a result: no handler is configured"),
-          onSome: (pipeline) => submitResult(current, pipeline, carrier.result)
+          onSome: (pipeline) => recovery.submitResult(current, pipeline, carrier.result)
         })),
       Match.tag("OldResult", (carrier) =>
         O.match(delivery, {
@@ -298,68 +179,14 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
         })),
       Match.orElse((other) =>
         Effect.logWarning("unsolicited message dropped").pipe(
-          Effect.annotateLogs({ deviceId: config.id, message: other._tag })
+          Effect.annotateLogs({ deviceId: settings.id, message: other._tag })
         )
       )
     )
 
-  const readLoop = (current: Session): Effect.Effect<void, ConnectionLost> =>
-    pipe(
-      frames(current.duplex.incoming),
-      Stream.runForEach((frame) =>
-        pipe(
-          Effect.fromResult(decodeMessage(frame, config.id)),
-          Effect.flatMap((message) =>
-            pipe(
-              current.replies.offer(message),
-              Effect.flatMap((consumed) => consumed ? Effect.void : routeUnsolicited(current, message))
-            )
-          )
-        )
-      ),
-      Effect.catchTags({
-        MalformedHeader: (error) => protocolLost(error._tag),
-        InvalidLength: (error) => protocolLost(error._tag),
-        MissingTerminator: (error) => protocolLost(error._tag),
-        UnsupportedFeature: (error) => protocolLost(error._tag),
-        PayloadDecodeError: (error) => protocolLost(error._tag)
-      }),
-      Effect.andThen(Effect.fail(new ConnectionLost({ reason: "the controller closed the connection" })))
-    )
-
-  const keepAliveLoop = (current: Session, lastSent: Ref.Ref<number>): Effect.Effect<never, ConnectionLost> =>
-    pipe(
-      Effect.sleep(keepAliveInterval),
-      Effect.andThen(Effect.clockWith((clock) => clock.currentTimeMillis)),
-      Effect.flatMap((now) =>
-        pipe(
-          Ref.get(lastSent),
-          Effect.flatMap((sent) =>
-            Duration.toMillis(keepAliveInterval) > now - sent
-              ? Effect.void
-              : pipe(
-                current.replies.request(new KeepAlive(), 9999, expectReply(9999, "KeepAlive")),
-                Effect.andThen(Ref.set(lastSent, now)),
-                Effect.catchTag(
-                  "RequestTimeout",
-                  () => Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" }))
-                ),
-                Effect.catchTag(
-                  "CommandRejected",
-                  () => Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" }))
-                )
-              )
-          )
-        )
-      ),
-      Effect.forever
-    )
-
   const attempt = Effect.gen(function* () {
-    yield* SubscriptionRef.get(state).pipe(
-      Effect.flatMap((current) => current._tag === "Disconnected" ? emit(new Connect()) : emit(new RetryDue()))
-    )
-    const duplex = yield* transport.connect(config.endpoint).pipe(
+    yield* emit(new AttemptStarted())
+    const duplex = yield* transport.connect(settings.endpoint).pipe(
       Effect.tapError((error) => emit(new Failed({ reason: error.reason })))
     )
     yield* emit(new Opened())
@@ -368,9 +195,13 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       send: (message) =>
         pipe(
           sendRaw(duplex, message),
-          Effect.tap(() => Effect.clockWith((clock) => clock.currentTimeMillis).pipe(Effect.flatMap((now) => Ref.set(lastSent, now))))
+          Effect.tap(() =>
+            Effect.clockWith((clock) => clock.currentTimeMillis).pipe(
+              Effect.flatMap((now) => Ref.set(lastSent, now))
+            )
+          )
         ),
-      responseTimeout
+      responseTimeout: settings.responseTimeout
     })
     const current: Session = { duplex, replies }
     yield* Ref.set(session, O.some(current))
@@ -383,7 +214,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       )
     )
 
-    const reader = yield* Effect.forkChild(readLoop(current))
+    const reader = yield* Effect.forkChild(readLoop(current, settings.id, (message) => routeUnsolicited(current, message)))
     // A socket that dies during the handshake, the subscription or recovery
     // must fail the attempt immediately instead of waiting for a timeout.
     const readerFailed = Effect.flatMap(
@@ -393,43 +224,43 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
 
     yield* Effect.raceFirst(
       Effect.gen(function* () {
-      const accepted = yield* current.replies.request(
-        new CommunicationStart(),
-        1,
-        expectReply(1, "CommunicationStartAccepted")
-      ).pipe(
-        Effect.catchTag("CommandRejected", (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))),
-        Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })))
-      )
-      const controllerName = accepted._tag === "CommunicationStartAccepted" ? accepted.controllerName : ""
-      yield* emit(new Accepted({ controllerName }))
+        const accepted = yield* current.replies.request(
+          new CommunicationStart(),
+          1,
+          expectReply(1, "CommunicationStartAccepted")
+        ).pipe(
+          Effect.catchTag("CommandRejected", (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))),
+          Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })))
+        )
+        const controllerName = accepted._tag === "CommunicationStartAccepted" ? accepted.controllerName : ""
+        yield* emit(new Accepted({ controllerName }))
 
-      // Recovery runs before the subscription: a result produced between the
-      // two would otherwise be treated as history by the first baseline.
-      yield* O.match(delivery, {
-        onNone: () => Effect.void,
-        onSome: (pipeline) => recoverGap(current, pipeline)
-      })
+        // Recovery runs before the subscription: a result produced between the
+        // two would otherwise be treated as history by the first baseline.
+        yield* O.match(delivery, {
+          onNone: () => Effect.void,
+          onSome: (pipeline) => recovery.recoverGap(current, pipeline)
+        })
 
-      yield* O.match(O.fromNullishOr(config.onResult), {
-        onNone: () => Effect.void,
-        onSome: () =>
-          pipe(
-            current.replies.request(new SubscribeResults(), 60, expectReply(60)),
-            Effect.asVoid,
-            Effect.catchTag("CommandRejected", (rejected) =>
-              Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` }))),
-            Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })))
-          )
-      })
-      yield* emit(new Subscribed())
+        yield* O.match(delivery, {
+          onNone: () => Effect.void,
+          onSome: () =>
+            pipe(
+              current.replies.request(new SubscribeResults(), 60, expectReply(60)),
+              Effect.asVoid,
+              Effect.catchTag("CommandRejected", (rejected) =>
+                Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` }))),
+              Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })))
+            )
+        })
+        yield* emit(new Subscribed())
 
-      yield* emit(new Recovered())
+        yield* emit(new Recovered())
       }),
       readerFailed
     )
 
-    const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent))
+    const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent, settings.keepAliveInterval))
     // Recovery otherwise depends on something arriving: a session starting, or
     // a result whose identifier reveals a gap. Neither happens on a line that
     // goes quiet holding results we never received, so the connection asks the
@@ -438,7 +269,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       O.match(delivery, {
         onNone: () => Effect.never,
         onSome: (pipeline) =>
-          Effect.forever(Effect.andThen(Effect.sleep(recoveryInterval), recoverGap(current, pipeline)))
+          Effect.forever(Effect.andThen(Effect.sleep(settings.recoveryInterval), recovery.recoverGap(current, pipeline)))
       })
     )
     return yield* pipe(
@@ -456,18 +287,8 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
 
   const supervisor = pipe(
     attempt,
-    Effect.tapError((error) =>
-      pipe(
-        SubscriptionRef.get(state),
-        Effect.flatMap((current) =>
-          isReady(current) || current._tag === "Recovering" || current._tag === "Subscribing" ||
-            current._tag === "Handshaking"
-            ? emit(new Failed({ reason: reasonOf(error) }))
-            : Effect.void
-        )
-      )
-    ),
-    Effect.retry(reconnect),
+    Effect.tapError((error) => emitIfLegal(new Failed({ reason: reasonOf(error) }))),
+    Effect.retry(settings.reconnect),
     Effect.catchCause((cause) => Effect.logError("device connection stopped", cause)),
     Effect.forever
   )
@@ -488,9 +309,6 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       return yield* use(found)
     })
 
-  // Closing an already closed connection is a normal thing for an application
-  // to do (a scope finalizer and an explicit close can both fire), so it is a
-  // no-op rather than a defect.
   /**
    * Tells the controller we are leaving, so it can release the client slot
    * instead of waiting for its own 15 second idle timeout. Best effort: the
@@ -504,7 +322,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
         onSome: (current) =>
           pipe(
             sendRaw(current.duplex, new CommunicationStop()),
-            Effect.timeoutOption(stopTimeout),
+            Effect.timeoutOption(settings.stopTimeout),
             Effect.asVoid
           )
       })
@@ -519,6 +337,9 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     Effect.andThen(emit(new Released()))
   )
 
+  // Closing an already closed connection is a normal thing for an application
+  // to do (a scope finalizer and an explicit close can both fire), so it is a
+  // no-op rather than a defect.
   const close = pipe(
     SubscriptionRef.get(state),
     Effect.flatMap((current) =>
@@ -534,7 +355,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   )
 
   return {
-    deviceId: config.id,
+    deviceId: settings.id,
     state,
     request: (message, mid, direct) =>
       withSession((current) => current.replies.request(message, mid, expectReply(mid, direct))),
@@ -554,10 +375,10 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
 /**
  * One controller, as a service.
  *
- * A pool holds many connections, so `make` stays the way to build them: a
- * service has one instance per context. This class is for the other case, an
- * application that talks to a single controller and wants it wired like any
- * other dependency.
+ * A pool holds many connections, so `makeDeviceConnection` stays the way to
+ * build them: a service has one instance per context. This class is for the
+ * other case, an application that talks to a single controller and wants it
+ * wired like any other dependency.
  *
  * **Example** (A single controller as a dependency)
  *
@@ -589,12 +410,5 @@ export class DeviceConnection extends Context.Service<DeviceConnection, DeviceCo
    * @since 0.0.0
    */
   static readonly layer = (config: DeviceConfig): Layer.Layer<DeviceConnection, never, Transport> =>
-    Layer.effect(DeviceConnection)(make(config))
+    Layer.effect(DeviceConnection)(makeDeviceConnection(config))
 }
-
-const reasonOf = (error: unknown): string =>
-  error instanceof ConnectionLost
-    ? error.reason
-    : error instanceof HandshakeRejected
-    ? `handshake rejected with code ${error.code}`
-    : "connection attempt failed"

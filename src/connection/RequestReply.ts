@@ -97,7 +97,7 @@ export interface RequestReply {
  * @category constructors
  * @since 0.0.0
  */
-export const make = Effect.fnUntraced(function* (options: {
+export const makeRequestReply = Effect.fnUntraced(function* (options: {
   readonly send: (message: Message) => Effect.Effect<void, ConnectionLost>
   readonly responseTimeout: Duration.Duration
 }) {

@@ -9,8 +9,8 @@ import {
   TighteningId,
   TighteningResult
 } from "../../src/protocol/TighteningResult.ts"
-import { make as makeDedup } from "../../src/results/Dedup.ts"
-import { make as makeDelivery } from "../../src/results/ResultDelivery.ts"
+import { makeDedup } from "../../src/results/Dedup.ts"
+import { makeResultDelivery as makeDelivery } from "../../src/results/ResultDelivery.ts"
 
 const deviceId = DeviceId.make("tool-1")
 

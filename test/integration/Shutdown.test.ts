@@ -3,17 +3,17 @@ import { Context, Duration, Effect, Fiber, Layer, pipe, Ref, Scope, Stream, Subs
 import * as A from "effect/Array"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
-import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
+import { makeDeviceConnection } from "../../src/connection/DeviceConnection.ts"
 import { DevicePool } from "../../src/pool/DevicePool.ts"
 import { KeepAlive } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { InMemoryNetwork, layer as layerInMemory } from "../../src/transport/InMemoryTransport.ts"
+import { layerComplete } from "../../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 
 const endpoint = new Endpoint({ host: "shutdown", port: 4545 })
 
 const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.provide(Effect.provide(Effect.scoped(effect), layerInMemory), InMemoryNetwork.layer)
+  Effect.provide(Effect.scoped(effect), layerComplete)
 
 const awaitState = (
   state: SubscriptionRef.SubscriptionRef<ConnectionState>,
@@ -42,7 +42,7 @@ describe("shutdown", () => {
       const simulator = yield* makeSimulator({ endpoint })
       const scope = yield* Scope.make()
       const connection = yield* Scope.provide(
-        makeConnection({ id: DeviceId.make("tool-1"), endpoint, onResult: () => Effect.void }),
+        makeDeviceConnection({ id: DeviceId.make("tool-1"), endpoint, onResult: () => Effect.void }),
         scope
       )
       yield* awaitState(connection.state, "Ready")
@@ -87,7 +87,7 @@ describe("shutdown", () => {
   it.effect("says goodbye with a communication stop before closing", () =>
     provided(Effect.gen(function* () {
       const simulator = yield* makeSimulator({ endpoint })
-      const connection = yield* makeConnection({ id: DeviceId.make("tool-1"), endpoint })
+      const connection = yield* makeDeviceConnection({ id: DeviceId.make("tool-1"), endpoint })
       yield* awaitState(connection.state, "Ready")
       expect(yield* simulator.stops).toBe(0)
 
@@ -100,7 +100,7 @@ describe("shutdown", () => {
   it.effect("fails an in-flight request as soon as the session ends", () =>
     provided(Effect.gen(function* () {
       const simulator = yield* makeSimulator({ endpoint, silent: true })
-      const connection = yield* makeConnection({
+      const connection = yield* makeDeviceConnection({
         id: DeviceId.make("tool-1"),
         endpoint,
         responseTimeout: Duration.minutes(5)
@@ -120,7 +120,7 @@ describe("shutdown", () => {
   it.effect("is safe to close twice and refuses later work", () =>
     provided(Effect.gen(function* () {
       const simulator = yield* makeSimulator({ endpoint })
-      const connection = yield* makeConnection({ id: DeviceId.make("tool-1"), endpoint })
+      const connection = yield* makeDeviceConnection({ id: DeviceId.make("tool-1"), endpoint })
       yield* awaitState(connection.state, "Ready")
 
       yield* connection.close

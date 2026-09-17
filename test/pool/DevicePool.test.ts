@@ -6,7 +6,7 @@ import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
 import type { DeviceConnectionShape } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { InMemoryNetwork, layer as layerInMemory } from "../../src/transport/InMemoryTransport.ts"
+import { layerComplete } from "../../src/transport/InMemoryTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 import { DevicePool } from "../../src/pool/DevicePool.ts"
 
@@ -19,8 +19,7 @@ const missing = new Endpoint({ host: "sim", port: 9999 })
 const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(
     Effect.provide(DevicePool.layer),
-    Effect.provide(layerInMemory),
-    Effect.provide(InMemoryNetwork.layer)
+    Effect.provide(layerComplete)
   )
 
 const awaitReady = (connection: DeviceConnectionShape): Effect.Effect<ConnectionState> =>
@@ -88,6 +87,24 @@ describe("DevicePool", () => {
       const again = yield* Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
 
       expect(again._tag).toBe("Failure")
+    })))
+
+  it.effect("lets only one of two concurrent adds of the same device win", () =>
+    provided(Effect.gen(function* () {
+      yield* makeSimulator({ endpoint: endpointOne })
+      const pool = yield* DevicePool
+
+      const both = yield* Effect.all(
+        [
+          Effect.result(pool.add({ id: toolOne, endpoint: endpointOne })),
+          Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
+        ],
+        { concurrency: "unbounded" }
+      )
+
+      expect(A.length(A.filter(both, (outcome) => outcome._tag === "Success"))).toBe(1)
+      expect(A.length(A.filter(both, (outcome) => outcome._tag === "Failure"))).toBe(1)
+      expect(A.length(yield* pool.status)).toBe(1)
     })))
 
   it.effect("stops a device on remove and forgets it", () =>

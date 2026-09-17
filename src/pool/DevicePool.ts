@@ -8,17 +8,14 @@
  *
  * @since 0.0.0
  */
-import { Deferred, Effect, FiberMap, Layer, MutableHashMap, SubscriptionRef } from "effect"
+import { Deferred, Effect, FiberMap, HashMap, Layer, pipe, Ref, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
-import * as O from "effect/Option"
 import * as Context from "effect/Context"
+import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import type { ConnectionState } from "../connection/ConnectionState.ts"
-import {
-  type DeviceConfig,
-  type DeviceConnectionShape,
-  make as makeConnection
-} from "../connection/DeviceConnection.ts"
+import { type DeviceConnectionShape, makeDeviceConnection } from "../connection/DeviceConnection.ts"
+import type { DeviceConfig } from "../connection/DeviceSettings.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
 import { Transport } from "../transport/Transport.ts"
 
@@ -62,49 +59,72 @@ export interface DevicePoolShape {
   readonly status: Effect.Effect<ReadonlyArray<DeviceStatus>>
 }
 
+/**
+ * A device's place in the pool. The slot is taken before the fiber starts, so
+ * two concurrent `add` calls for one identifier cannot both win; `connection`
+ * fills in once the connection is supervised.
+ */
+interface Slot {
+  readonly started: Deferred.Deferred<DeviceConnectionShape>
+  readonly connection: O.Option<DeviceConnectionShape>
+}
+
 const make = Effect.fnUntraced(function* () {
   const transport = yield* Transport
   const fibers = yield* FiberMap.make<DeviceId>()
-  const connections = MutableHashMap.empty<DeviceId, DeviceConnectionShape>()
+  const slots = yield* Ref.make(HashMap.empty<DeviceId, Slot>())
 
   const add = (config: DeviceConfig): Effect.Effect<DeviceConnectionShape, DeviceAlreadyAdded> =>
-    O.isSome(MutableHashMap.get(connections, config.id))
-      ? Effect.fail(new DeviceAlreadyAdded({ deviceId: config.id }))
-      : Effect.gen(function* () {
-        const started = yield* Deferred.make<DeviceConnectionShape>()
-        yield* FiberMap.run(
-          fibers,
-          config.id,
-          Effect.scoped(
-            Effect.gen(function* () {
-              const connection = yield* Effect.provideService(makeConnection(config), Transport, transport)
-              MutableHashMap.set(connections, config.id, connection)
-              yield* Effect.addFinalizer(() =>
-                Effect.sync(() => MutableHashMap.remove(connections, config.id))
-              )
-              yield* Deferred.succeed(started, connection)
-              // Hold the scope open until the device is removed or the pool closes.
-              return yield* Effect.never
-            })
-          ).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logError("a device connection stopped", cause).pipe(
-                Effect.annotateLogs({ deviceId: config.id })
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<DeviceConnectionShape>()
+      // Claiming the slot and noticing a duplicate are one atomic step: doing
+      // them apart lets two adds for the same device both pass the check.
+      const claimed = yield* Ref.modify(slots, (current) =>
+        HashMap.has(current, config.id)
+          ? [false, current]
+          : [true, HashMap.set(current, config.id, { started, connection: O.none() })])
+
+      if (!claimed) {
+        return yield* Effect.fail(new DeviceAlreadyAdded({ deviceId: config.id }))
+      }
+
+      yield* FiberMap.run(
+        fibers,
+        config.id,
+        Effect.scoped(
+          Effect.gen(function* () {
+            const connection = yield* Effect.provideService(makeDeviceConnection(config), Transport, transport)
+            yield* Ref.update(slots, (current) =>
+              HashMap.set(current, config.id, { started, connection: O.some(connection) }))
+            yield* Effect.addFinalizer(() => Ref.update(slots, (current) => HashMap.remove(current, config.id)))
+            yield* Deferred.succeed(started, connection)
+            // Hold the scope open until the device is removed or the pool closes.
+            return yield* Effect.never
+          })
+        ).pipe(
+          Effect.catchCause((cause) =>
+            pipe(
+              Ref.update(slots, (current) => HashMap.remove(current, config.id)),
+              Effect.andThen(
+                Effect.logError("a device connection stopped", cause).pipe(
+                  Effect.annotateLogs({ deviceId: config.id })
+                )
               )
             )
           )
         )
-        return yield* Deferred.await(started)
-      })
+      )
+      return yield* Deferred.await(started)
+    })
 
   const remove = (deviceId: DeviceId): Effect.Effect<void> => FiberMap.remove(fibers, deviceId)
 
   const get = (deviceId: DeviceId): Effect.Effect<O.Option<DeviceConnectionShape>> =>
-    Effect.sync(() => MutableHashMap.get(connections, deviceId))
+    Effect.map(Ref.get(slots), (current) => O.flatMap(HashMap.get(current, deviceId), (slot) => slot.connection))
 
-  const status = Effect.suspend(() =>
+  const status = Effect.flatMap(Ref.get(slots), (current) =>
     Effect.forEach(
-      A.fromIterable(MutableHashMap.values(connections)),
+      A.getSomes(A.map(A.fromIterable(HashMap.values(current)), (slot) => slot.connection)),
       (connection) =>
         Effect.all({
           deviceId: Effect.succeed(connection.deviceId),
@@ -112,8 +132,7 @@ const make = Effect.fnUntraced(function* () {
           delivered: connection.delivered,
           duplicates: connection.duplicates
         })
-    )
-  )
+    ))
 
   return { add, remove, get, status } satisfies DevicePoolShape
 })

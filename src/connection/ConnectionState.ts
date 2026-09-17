@@ -6,20 +6,19 @@
  * is tested without sockets, timers or fibers.
  *
  * ```text
- * Disconnected ──Connect──► Connecting
+ * Disconnected ──AttemptStarted──► Connecting(1)
+ * WaitingToReconnect ──AttemptStarted──► Connecting(n + 1)
  * Connecting ──Opened──► Handshaking       ──Failed──► WaitingToReconnect
  * Handshaking ──Accepted──► Subscribing    ──Failed──► WaitingToReconnect
  * Subscribing ──Subscribed──► Recovering   ──Failed──► WaitingToReconnect
  * Recovering ──Recovered──► Ready          ──Failed──► WaitingToReconnect
- * Ready ──Lost──► WaitingToReconnect
- * WaitingToReconnect ──RetryDue──► Connecting
+ * Ready ──Failed──► WaitingToReconnect
  * any non-final ──CloseRequested──► Closing ──Released──► Closed
  * ```
  *
  * @since 0.0.0
  */
 import { Match, Result } from "effect"
-import * as O from "effect/Option"
 import * as S from "effect/Schema"
 
 /**
@@ -111,9 +110,7 @@ export class Closing extends S.TaggedClass<Closing>()("Closing", {}, {
  * @category models
  * @since 0.0.0
  */
-export class Closed extends S.TaggedClass<Closed>()("Closed", {
-  lastError: S.OptionFromNullishOr(S.String)
-}, { description: "Terminal state" }) {}
+export class Closed extends S.TaggedClass<Closed>()("Closed", {}, { description: "Terminal state" }) {}
 
 /**
  * Every state a device connection can be in.
@@ -139,24 +136,26 @@ export type ConnectionState =
  * @since 0.0.0
  */
 export type ConnectionEvent =
-  | Connect
+  | AttemptStarted
   | Opened
   | Accepted
   | Subscribed
   | Recovered
   | Failed
-  | RetryDue
   | CloseRequested
   | Released
 
 /**
- * The application (or the supervisor) asked for a connection.
+ * A connection attempt began: the first one, or the one that follows a backoff.
+ *
+ * The distinction lives in the state, not in the caller: `Disconnected` starts
+ * at attempt 1 and `WaitingToReconnect` continues its count.
  *
  * @category models
  * @since 0.0.0
  */
-export class Connect extends S.TaggedClass<Connect>()("Connect", {}, {
-  description: "Start a connection attempt"
+export class AttemptStarted extends S.TaggedClass<AttemptStarted>()("AttemptStarted", {}, {
+  description: "A connection attempt began"
 }) {}
 
 /**
@@ -208,16 +207,6 @@ export class Recovered extends S.TaggedClass<Recovered>()("Recovered", {}, {
 export class Failed extends S.TaggedClass<Failed>()("Failed", {
   reason: S.String
 }, { description: "The attempt or session failed" }) {}
-
-/**
- * The backoff delay elapsed.
- *
- * @category models
- * @since 0.0.0
- */
-export class RetryDue extends S.TaggedClass<RetryDue>()("RetryDue", {}, {
-  description: "The backoff delay elapsed"
-}) {}
 
 /**
  * The application asked to close the connection.
@@ -277,19 +266,12 @@ export const isFinal = (state: ConnectionState): boolean => state._tag === "Clos
  */
 export const isReady = (state: ConnectionState): boolean => state._tag === "Ready"
 
-const attemptOf = (state: ConnectionState): number =>
-  Match.value(state).pipe(
-    Match.tag("Connecting", "Handshaking", "Subscribing", "Recovering", "WaitingToReconnect", (open) => open.attempt),
-    Match.orElse(() => 0)
-  )
+/** The result of applying one event: the next state, or why it was refused. */
+type Transitioned = Result.Result<ConnectionState, InvalidTransition>
 
-const succeedState = (state: ConnectionState): Result.Result<ConnectionState, InvalidTransition> =>
-  Result.succeed(state)
+const moveTo = (state: ConnectionState): Transitioned => Result.succeed(state)
 
-const invalid = (
-  state: ConnectionState,
-  event: ConnectionEvent
-): Result.Result<ConnectionState, InvalidTransition> =>
+const invalid = (state: ConnectionState, event: ConnectionEvent): Transitioned =>
   Result.fail(new InvalidTransition({ state: state._tag, event: event._tag }))
 
 /**
@@ -301,78 +283,48 @@ const invalid = (
  * **Example** (Opening a connection)
  *
  * ```ts
- * import { Connect, initial, transition } from "effect-open-protocol"
+ * import { AttemptStarted, initial, transition } from "effect-open-protocol"
  *
- * const next = transition(initial, new Connect())
+ * const next = transition(initial, new AttemptStarted())
  * ```
  *
  * @category transitions
  * @since 0.0.0
  */
-export const transition = (
-  state: ConnectionState,
-  event: ConnectionEvent
-): Result.Result<ConnectionState, InvalidTransition> =>
+export const transition = (state: ConnectionState, event: ConnectionEvent): Transitioned =>
   isFinal(state)
     ? invalid(state, event)
     : Match.value(event).pipe(
-      Match.tag("CloseRequested", () => succeedState(new Closing())),
-      Match.tag("Released", () =>
-        state._tag === "Closing"
-          ? succeedState(new Closed({ lastError: O.none() }))
-          : invalid(state, event)),
-      Match.tag("Connect", () =>
-        state._tag === "Disconnected"
-          ? succeedState(new Connecting({ attempt: 1 }))
-          : invalid(state, event)),
-      Match.tag("RetryDue", () =>
-        state._tag === "WaitingToReconnect"
-          ? succeedState(
-            new Connecting({ attempt: attemptOf(state) + 1 })
-          )
-          : invalid(state, event)),
+      Match.tag("CloseRequested", () => moveTo(new Closing())),
+      Match.tag("Released", () => state._tag === "Closing" ? moveTo(new Closed()) : invalid(state, event)),
+      Match.tag("AttemptStarted", () =>
+        Match.value(state).pipe(
+          Match.tag("Disconnected", () => moveTo(new Connecting({ attempt: 1 }))),
+          Match.tag("WaitingToReconnect", (waiting) => moveTo(new Connecting({ attempt: waiting.attempt + 1 }))),
+          Match.orElse(() => invalid(state, event))
+        )),
       Match.tag("Opened", () =>
         state._tag === "Connecting"
-          ? succeedState(new Handshaking({ attempt: state.attempt }))
+          ? moveTo(new Handshaking({ attempt: state.attempt }))
           : invalid(state, event)),
       Match.tag("Accepted", (accepted) =>
         state._tag === "Handshaking"
-          ? succeedState(
-            new Subscribing({ attempt: state.attempt, controllerName: accepted.controllerName })
-          )
+          ? moveTo(new Subscribing({ attempt: state.attempt, controllerName: accepted.controllerName }))
           : invalid(state, event)),
       Match.tag("Subscribed", () =>
         state._tag === "Subscribing"
-          ? succeedState(new Recovering({ attempt: state.attempt, controllerName: state.controllerName }))
+          ? moveTo(new Recovering({ attempt: state.attempt, controllerName: state.controllerName }))
           : invalid(state, event)),
       Match.tag("Recovered", () =>
         state._tag === "Recovering"
-          ? succeedState(new Ready({ controllerName: state.controllerName }))
+          ? moveTo(new Ready({ controllerName: state.controllerName }))
           : invalid(state, event)),
       Match.tag("Failed", (failed) =>
         Match.value(state).pipe(
-          Match.tag(
-            "Connecting",
-            "Handshaking",
-            "Subscribing",
-            "Recovering",
-            (open): Result.Result<ConnectionState, InvalidTransition> =>
-              Result.succeed(new WaitingToReconnect({ attempt: open.attempt, reason: failed.reason }))
-          ),
-          Match.tag(
-            "Ready",
-            (): Result.Result<ConnectionState, InvalidTransition> =>
-              Result.succeed(new WaitingToReconnect({ attempt: 1, reason: failed.reason }))
-          ),
-          Match.orElse((): Result.Result<ConnectionState, InvalidTransition> => invalid(state, event))
+          Match.tag("Connecting", "Handshaking", "Subscribing", "Recovering", (open) =>
+            moveTo(new WaitingToReconnect({ attempt: open.attempt, reason: failed.reason }))),
+          Match.tag("Ready", () => moveTo(new WaitingToReconnect({ attempt: 1, reason: failed.reason }))),
+          Match.orElse(() => invalid(state, event))
         )),
       Match.exhaustive
     )
-
-/**
- * Marks a closed connection with the error that ended it.
- *
- * @category transitions
- * @since 0.0.0
- */
-export const closedWith = (reason: string): ConnectionState => new Closed({ lastError: O.some(reason) })

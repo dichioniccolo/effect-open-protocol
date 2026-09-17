@@ -96,7 +96,7 @@ interface Counters {
  * @category constructors
  * @since 0.0.0
  */
-export const make = Effect.fnUntraced(function* (options: {
+export const makeResultDelivery = Effect.fnUntraced(function* (options: {
   readonly delivery: DeliveryOptions
   readonly dedup: Dedup
   readonly acknowledge: (result: TighteningResult) => Effect.Effect<void, unknown>

@@ -12,7 +12,7 @@ import {
   SubscribeResults
 } from "../../src/protocol/Messages.ts"
 import { DeviceId } from "../../src/protocol/TighteningResult.ts"
-import { InMemoryNetwork } from "../../src/transport/InMemoryTransport.ts"
+import { InMemoryNetwork, layerComplete } from "../../src/transport/InMemoryTransport.ts"
 import { type Duplex, Endpoint } from "../../src/transport/Transport.ts"
 import { make } from "../../simulator/ControllerSimulator.ts"
 
@@ -56,7 +56,7 @@ describe("ControllerSimulator", () => {
       expect(replies[1]).toEqual(new KeepAlive())
       expect(yield* simulator.keepAlives).toBe(1)
       expect(yield* simulator.isSubscribed).toBe(true)
-    })).pipe(Effect.provide(InMemoryNetwork.layer)))
+    })).pipe(Effect.provide(layerComplete)))
 
   it.effect("rejects the handshake when configured to", () =>
     Effect.scoped(Effect.gen(function* () {
@@ -67,14 +67,14 @@ describe("ControllerSimulator", () => {
       const replies = yield* exchange(connection, [new CommunicationStart()])
 
       expect(replies).toEqual([new CommandError({ mid: 1, code: 96 })])
-    })).pipe(Effect.provide(InMemoryNetwork.layer)))
+    })).pipe(Effect.provide(layerComplete)))
 
   it.effect("fails to connect when nothing is bound", () =>
     Effect.scoped(Effect.gen(function* () {
       const network = yield* InMemoryNetwork
       const outcome = yield* Effect.result(network.connect(endpoint))
       expect(outcome._tag).toBe("Failure")
-    })).pipe(Effect.provide(InMemoryNetwork.layer)))
+    })).pipe(Effect.provide(layerComplete)))
 
   it.effect("refuses connections while the endpoint is closed off", () =>
     Effect.scoped(Effect.gen(function* () {
@@ -86,5 +86,5 @@ describe("ControllerSimulator", () => {
       yield* network.refuse(endpoint, false)
       const accepted = yield* Effect.result(network.connect(endpoint))
       expect(accepted._tag).toBe("Success")
-    })).pipe(Effect.provide(InMemoryNetwork.layer)))
+    })).pipe(Effect.provide(layerComplete)))
 })
