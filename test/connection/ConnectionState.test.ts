@@ -29,7 +29,7 @@ import {
   Subscribing,
   transition,
   WaitingToReconnect
-} from "./ConnectionState.ts"
+} from "../../src/connection/ConnectionState.ts"
 
 const run = (
   state: ConnectionState,

@@ -56,7 +56,8 @@ Higher sources outrank lower sources when they conflict.
   `test`/`check`/`build`/`demo`, `engines`), `tsconfig*.json`,
   `vitest.config.ts`, `tsdown.config.ts`, `bun.lock`.
 - `src/{protocol,connection,results,pool,transport}/`, `src/index.ts`.
-- `simulator/`, `demo/`, `test/` (or colocated `*.test.ts` per repo config).
+- `simulator/`, `demo/`, `test/` (every `*.test.ts` lives under `test/`,
+  mirroring the source folders).
 - `README.md` and ADRs.
 - This goal packet (design doc under `research/DESIGN.md`, evidence under
   `history/`).

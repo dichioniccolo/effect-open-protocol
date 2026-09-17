@@ -335,7 +335,7 @@ src/
   index.ts
 simulator/    ControllerSimulator.ts Faults.ts
 demo/         chaos.ts
-test/         colocated *.test.ts under src/ and simulator/ + test/integration/
+test/         protocol/ connection/ results/ pool/ simulator/ integration/
 ```
 
 ## 9. Test plan (per phase)

@@ -3,12 +3,12 @@ import { Duration, Effect, pipe, Ref, Schedule, Stream, SubscriptionRef } from "
 import * as A from "effect/Array"
 import * as Str from "effect/String"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
-import type { ConnectionState } from "../connection/ConnectionState.ts"
-import type { DeviceConnection } from "../connection/DeviceConnection.ts"
-import { DeviceId, type TighteningResult } from "../protocol/TighteningResult.ts"
-import { layer as layerInMemory, layerNetwork } from "../transport/InMemoryTransport.ts"
-import { Endpoint } from "../transport/Transport.ts"
-import { make } from "./DevicePool.ts"
+import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
+import type { DeviceConnection } from "../../src/connection/DeviceConnection.ts"
+import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
+import { layer as layerInMemory, layerNetwork } from "../../src/transport/InMemoryTransport.ts"
+import { Endpoint } from "../../src/transport/Transport.ts"
+import { make } from "../../src/pool/DevicePool.ts"
 
 const toolOne = DeviceId.make("tool-1")
 const toolTwo = DeviceId.make("tool-2")

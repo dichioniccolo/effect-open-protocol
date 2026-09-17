@@ -4,7 +4,7 @@ import { pipe, Result } from "effect"
 import * as A from "effect/Array"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
-import { decodeHeader, encodeHeader, Header } from "./Header.ts"
+import { decodeHeader, encodeHeader, Header } from "../../src/protocol/Header.ts"
 import {
   AcknowledgeResult,
   CommandAccepted,
@@ -22,8 +22,8 @@ import {
   SubscribeResults,
   UnknownMessage,
   UnsubscribeResults
-} from "./Messages.ts"
-import { MalformedHeader, UnsupportedFeature } from "./ProtocolError.ts"
+} from "../../src/protocol/Messages.ts"
+import { MalformedHeader, UnsupportedFeature } from "../../src/protocol/ProtocolError.ts"
 import {
   ControllerTimestamp,
   DeviceId,
@@ -31,7 +31,7 @@ import {
   TighteningId,
   TighteningResult,
   TighteningStatus
-} from "./TighteningResult.ts"
+} from "../../src/protocol/TighteningResult.ts"
 
 const deviceId = DeviceId.make("tool-1")
 

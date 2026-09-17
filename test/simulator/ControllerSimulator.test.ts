@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect, Fiber, pipe, Stream } from "effect"
-import { frames } from "../src/protocol/Framer.ts"
+import { frames } from "../../src/protocol/Framer.ts"
 import {
   CommandError,
   CommunicationStart,
@@ -10,11 +10,11 @@ import {
   KeepAlive,
   type Message,
   SubscribeResults
-} from "../src/protocol/Messages.ts"
-import { DeviceId } from "../src/protocol/TighteningResult.ts"
-import { InMemoryNetwork, layerNetwork } from "../src/transport/InMemoryTransport.ts"
-import { type Duplex, Endpoint } from "../src/transport/Transport.ts"
-import { make } from "./ControllerSimulator.ts"
+} from "../../src/protocol/Messages.ts"
+import { DeviceId } from "../../src/protocol/TighteningResult.ts"
+import { InMemoryNetwork, layerNetwork } from "../../src/transport/InMemoryTransport.ts"
+import { type Duplex, Endpoint } from "../../src/transport/Transport.ts"
+import { make } from "../../simulator/ControllerSimulator.ts"
 
 const deviceId = DeviceId.make("test-client")
 const endpoint = new Endpoint({ host: "simulator", port: 4545 })
