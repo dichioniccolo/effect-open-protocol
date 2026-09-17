@@ -397,26 +397,48 @@ logged and the state is observable.
 
 ## NestJS vs Effect
 
-> This section is the personal one, and it is the one I want to write with you
-> rather than for you. What follows is my reading from building this rewrite;
-> the production comparison is yours to complete.
+The NestJS version has been in production for a while, so the comparison is not
+theoretical. Three incidents from it shaped this rewrite.
 
-What was clearly better here than in the NestJS version:
+**We wrote the same tightening twice.** A network delay pushed our MID 0062
+past the controller's one second window, so the controller assumed we never got
+the result and sent MID 0061 again. We treated the second copy as a new
+tightening. Here, the identifier is the unit of truth: a result is acknowledged
+only after the handler has taken it, delivered results are remembered per
+device, and a resend is acknowledged again without the handler ever seeing it.
+Delivery is also serialised per device, so a resend arriving while the handler
+is still working on the original queues behind it instead of racing it.
+
+**One controller stopped every controller.** A device sent a MID we did not
+handle. The error propagated, the process died, and every other device on that
+instance stopped communicating with it. Two things prevent that now. An
+unsupported MID decodes into `UnknownMessage`, which is logged and dropped,
+because a message we do not model is not a reason to break a connection. And
+each device runs on its own supervised fiber, so a device that genuinely fails
+takes nothing else with it.
+
+**Results produced during an outage were gone.** The link dropped, the
+controller kept working, and the tightenings it completed in the meantime never
+reached us. Reconnecting was not enough, because a controller gives up on a
+result it cannot get acknowledged. The library now asks for them by identifier
+with MID 0064, both after reconnecting and whenever an incoming identifier
+jumps ahead of the last one delivered.
+
+What Effect made easier:
 
 - **Failures are in the type.** `ConnectionLost`, `HandshakeRejected`,
   `RequestTimeout` and `CommandRejected` are in the signature, so the compiler
   points at the case I have not handled. The original relied on exceptions and
-  on remembering.
+  on remembering, which is how an unhandled MID became an outage.
 - **Time is a value.** Keep-alive, silent-link detection and backoff timing are
   tested with `TestClock` in milliseconds of real time. In the original those
   paths were tested by waiting, or not at all.
 - **Lifetimes are explicit.** A connection attempt is a `Scope`; when it dies,
-  the socket and its fibers go with it. Framework lifecycle hooks never made
-  this as obvious, and leaked sockets were a recurring bug.
+  the socket and its fibers go with it.
 - **Retry is declarative.** `Schedule.exponential |> jittered |> modifyDelay`
   replaces a hand-written loop with its own timer bugs.
 
-What cost more:
+What it costs:
 
 - **The learning curve is real**, and it is steepest exactly where the power
   is: `Scope`, fiber supervision, and interruption.
@@ -425,16 +447,14 @@ What cost more:
 - **Team familiarity.** Any TypeScript developer can read the NestJS version.
   This one needs somebody who knows Effect.
 - **Ecosystem age.** The socket and CLI modules live under `unstable/` in
-  Effect v4, so I pinned an exact version.
+  Effect v4, so the version is pinned exactly.
 
-Questions I would like your answers to, to finish this section honestly:
-
-1. Which production incidents in the NestJS version would this design have
-   prevented, and which would it not?
-2. How much of the original service is the protocol, and how much is the
-   plumbing this library replaces?
-3. Would you put this in front of the team as it stands, or is the Effect
-   learning curve the deciding factor?
+I would run this in production as it stands. The three incidents above are
+structural in the old design and structural in this one, in opposite
+directions: the cases that used to lose or duplicate traceability data are the
+cases this version is built around. The learning curve is a real cost, and for
+this service it is worth paying, which is not the same as saying every service
+should be written this way.
 
 ## Use of AI
 
