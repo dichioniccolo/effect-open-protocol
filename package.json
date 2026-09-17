@@ -4,9 +4,16 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@effect/vitest": "4.0.0-rc.115",
+    "@types/bun": "latest",
+    "vitest": "^5.0.1",
+    "typescript": "^7.0.2"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "scripts": {
+    "test": "bunx --bun vitest run",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.115"
   }
 }
