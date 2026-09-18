@@ -35,3 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Effect reference checkout (scripts/setup-effect-ref.sh)
 .repos/*
+
+# Recorded wire traces (bun run controller / client, read by ui/)
+.wire-trace/

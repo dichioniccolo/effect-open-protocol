@@ -30,9 +30,11 @@ import {
   latencyOf,
   port,
   seed,
+  traceDb,
   traceFile,
   traceSink
 } from "./Wire.ts"
+import { makeRecording } from "./Recording.ts"
 
 const deviceId = Flag.String("device-id").pipe(
   Flag.withDescription("Identifier stamped on every result this client receives"),
@@ -61,13 +63,26 @@ const report = (result: TighteningResult): Effect.Effect<void> =>
 const run = Effect.fnUntraced(function* (config: {
   readonly host: string
   readonly port: number
+  readonly seed: number
   readonly latency: number
   readonly jitter: number
   readonly traceFile: O.Option<string>
+  readonly traceDb: string
   readonly deviceId: string
   readonly recoveryInterval: number
 }) {
-  const sink = yield* traceSink(config.traceFile)
+  const recording = yield* makeRecording({
+    traceDb: config.traceDb,
+    file: yield* traceSink(config.traceFile),
+    start: {
+      side: "client",
+      host: config.host,
+      port: config.port,
+      seed: config.seed,
+      latency: config.latency,
+      jitter: config.jitter
+    }
+  })
   const received = yield* Ref.make<ReadonlyArray<string>>([])
   const id = yield* Effect.orDie(S.decodeEffect(DeviceId)(config.deviceId))
 
@@ -84,7 +99,7 @@ const run = Effect.fnUntraced(function* (config: {
       )
   }).pipe(
     Effect.provide(
-      instrumentedTransport({ source: "client", sink, latency: latencyOf(config) })
+      instrumentedTransport({ source: "client", recording, latency: latencyOf(config) })
     )
   )
 
@@ -128,7 +143,7 @@ const run = Effect.fnUntraced(function* (config: {
 
 const command = Command.make(
   "client",
-  { host, port, seed, latency, jitter, traceFile, deviceId, recoveryInterval },
+  { host, port, seed, latency, jitter, traceFile, traceDb, deviceId, recoveryInterval },
   (config) =>
     pipe(
       run(config),

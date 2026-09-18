@@ -30,9 +30,11 @@ import {
   latencyOf,
   port,
   seed,
+  traceDb,
   traceFile,
   traceSink
 } from "./Wire.ts"
+import { makeRecording } from "./Recording.ts"
 
 const faultRate = Flag.Finite("fault-rate").pipe(
   Flag.withDescription("Probability that a frame this controller sends triggers a fault"),
@@ -102,22 +104,35 @@ const summary = (simulator: Simulator): Effect.Effect<void> =>
 const run = Effect.fnUntraced(function* (config: {
   readonly host: string
   readonly port: number
+  readonly seed: number
   readonly latency: number
   readonly jitter: number
   readonly traceFile: O.Option<string>
+  readonly traceDb: string
   readonly faultRate: number
   readonly resultInterval: number
   readonly controllerName: string
 }) {
   const endpoint = new Endpoint({ host: config.host, port: config.port })
-  const sink = yield* traceSink(config.traceFile)
+  const recording = yield* makeRecording({
+    traceDb: config.traceDb,
+    file: yield* traceSink(config.traceFile),
+    start: {
+      side: "controller",
+      host: config.host,
+      port: config.port,
+      seed: config.seed,
+      latency: config.latency,
+      jitter: config.jitter
+    }
+  })
   const link = latencyOf(config)
 
   const listener = yield* makeTcpListener({
     endpoint,
     decorate: (side) =>
       Effect.map(
-        instrument(side, { source: "controller", sink, latency: link }),
+        instrument(side, { source: "controller", recording, latency: link }),
         (wrapped) => ({ ...wrapped, close: side.close })
       )
   })
@@ -151,7 +166,7 @@ const run = Effect.fnUntraced(function* (config: {
 
 const command = Command.make(
   "controller",
-  { host, port, seed, latency, jitter, traceFile, faultRate, resultInterval, controllerName },
+  { host, port, seed, latency, jitter, traceFile, traceDb, faultRate, resultInterval, controllerName },
   (config) =>
     pipe(
       run(config),

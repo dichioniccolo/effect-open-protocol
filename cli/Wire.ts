@@ -15,6 +15,7 @@ import { Flag } from "effect/unstable/cli"
 import { type Duplex, Transport } from "../src/transport/Transport.ts"
 import { delayedDuplex, type LatencyOptions } from "../src/transport/WireLatency.ts"
 import { tracedDuplex, type WireEvent, wireEventLine, type WireSink } from "../src/transport/WireTrace.ts"
+import type { Recording } from "./Recording.ts"
 
 /**
  * Seed for every random decision, so a run can be replayed.
@@ -58,6 +59,17 @@ export const jitter = Flag.Int("jitter").pipe(
 export const traceFile = Flag.String("trace-file").pipe(
   Flag.withDescription("Also append every traced line to this file, as JSONL"),
   Flag.optional
+)
+
+/**
+ * The SQLite trace store both commands record into and the UI reads.
+ *
+ * @category flags
+ * @since 0.0.0
+ */
+export const traceDb = Flag.String("trace-db").pipe(
+  Flag.withDescription("SQLite file every traced event is recorded into, for the wire-trace UI"),
+  Flag.withDefault(".wire-trace/traces.sqlite")
 )
 
 /**
@@ -123,7 +135,8 @@ export const traceSink = Effect.fnUntraced(function* (path: O.Option<string>) {
 })
 
 /**
- * Stacks the tracer and the latency decorator over one byte channel.
+ * Stacks the tracer and the latency decorator over one byte channel, tracing
+ * into a fresh sink from the recording so the connection gets its own number.
  *
  * @category constructors
  * @since 0.0.0
@@ -132,14 +145,12 @@ export const instrument = Effect.fnUntraced(function* (
   duplex: Duplex,
   options: {
     readonly source: string
-    readonly sink: O.Option<WireSink>
+    readonly recording: Recording
     readonly latency: LatencyOptions
   }
 ) {
-  const traced = yield* tracedDuplex(duplex, {
-    source: options.source,
-    sink: O.getOrUndefined(options.sink)
-  })
+  const sink = yield* options.recording.nextConnection
+  const traced = yield* tracedDuplex(duplex, { source: options.source, sink })
   return delayedDuplex(traced, options.latency)
 })
 
@@ -152,7 +163,7 @@ export const instrument = Effect.fnUntraced(function* (
  */
 export const instrumentedTransport = (options: {
   readonly source: string
-  readonly sink: O.Option<WireSink>
+  readonly recording: Recording
   readonly latency: LatencyOptions
 }): Layer.Layer<Transport, never, Transport> =>
   Layer.effect(Transport)(
