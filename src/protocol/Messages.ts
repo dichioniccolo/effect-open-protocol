@@ -10,6 +10,9 @@
  * @since 0.0.0
  */
 import { Match, pipe, Result } from "effect"
+import * as A from "effect/Array"
+import * as O from "effect/Option"
+import * as Rec from "effect/Record"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
 import { padNumber, padText, parseDigits } from "./Ascii.ts"
@@ -41,8 +44,6 @@ export const Mid = S.Literals([1, 2, 3, 4, 5, 60, 61, 62, 63, 64, 65, 9999]).ann
  * @since 0.0.0
  */
 export type Mid = typeof Mid.Type
-
-const isMid = S.is(Mid)
 
 /**
  * Enables the communication with a controller (MID 0001).
@@ -218,9 +219,7 @@ const numberAt = (
         : parseDigits(raw, () => new PayloadDecodeError({ mid, reason: `${parameter} is not numeric` }))
   )
 
-const succeedMessage = (message: Message): Result.Result<Message, ProtocolError> => Result.succeed(message)
-
-const decodeStartAccepted = (data: string): Result.Result<Message, PayloadDecodeError> =>
+const decodeStartAccepted = (data: string): Result.Result<CommunicationStartAccepted, PayloadDecodeError> =>
   Result.gen(function* () {
     const cellId = yield* numberAt(2, data, 2, 6, "cellId")
     const channelId = yield* numberAt(2, data, 8, 10, "channelId")
@@ -228,55 +227,84 @@ const decodeStartAccepted = (data: string): Result.Result<Message, PayloadDecode
     return new CommunicationStartAccepted({ cellId, channelId, controllerName: Str.trimEnd(controllerName) })
   })
 
+const decodeCommandError = (data: string): Result.Result<CommandError, PayloadDecodeError> =>
+  Result.gen(function* () {
+    const mid = yield* numberAt(4, data, 0, 4, "mid")
+    const code = yield* numberAt(4, data, 4, 6, "code")
+    return new CommandError({ mid, code })
+  })
+
+const decodeRequestOldResult = (data: string): Result.Result<RequestOldResult, PayloadDecodeError> =>
+  pipe(
+    numberAt(64, data, 0, 10, "tighteningId"),
+    Result.flatMap((value) =>
+      pipe(
+        S.decodeResult(TighteningId)(value),
+        Result.mapError(() => new PayloadDecodeError({ mid: 64, reason: "tighteningId out of range" }))
+      )
+    ),
+    Result.map((tighteningId) => new RequestOldResult({ tighteningId }))
+  )
+
+/** What one modelled message is on the wire: its MID, and how its data field decodes. */
+interface Wire<M extends Message> {
+  readonly mid: Mid
+  readonly decode: (data: string, deviceId: DeviceId) => Result.Result<M, ProtocolError>
+}
+
+const wire = <M extends Message>(mid: Mid, decode: Wire<M>["decode"]): Wire<M> => ({ mid, decode })
+
+/** A message whose data field carries nothing: the MID is the whole message. */
+const empty = <M extends Message>(mid: Mid, message: () => M): Wire<M> => wire(mid, () => Result.succeed(message()))
+
+/**
+ * The wire format of every modelled message, keyed by tag.
+ *
+ * It is the one place a MID is written down: both directions read it, so a new
+ * message is added here and nowhere else, and `satisfies` refuses an entry
+ * whose decoder builds a different message than its key names.
+ */
+const wireFormat = {
+  CommunicationStart: empty(1, () => new CommunicationStart()),
+  CommunicationStartAccepted: wire(2, (data) => decodeStartAccepted(data)),
+  CommunicationStop: empty(3, () => new CommunicationStop()),
+  CommandError: wire(4, (data) => decodeCommandError(data)),
+  CommandAccepted: wire(5, (data) =>
+    pipe(
+      numberAt(5, data, 0, 4, "mid"),
+      Result.map((mid) => new CommandAccepted({ mid }))
+    )),
+  SubscribeResults: empty(60, () => new SubscribeResults()),
+  LastResult: wire(61, (data, deviceId) =>
+    pipe(
+      decodeLastResult(deviceId, data),
+      Result.map((result) => new LastResult({ result }))
+    )),
+  AcknowledgeResult: empty(62, () => new AcknowledgeResult()),
+  UnsubscribeResults: empty(63, () => new UnsubscribeResults()),
+  RequestOldResult: wire(64, (data) => decodeRequestOldResult(data)),
+  OldResult: wire(65, (data, deviceId) =>
+    pipe(
+      decodeOldResult(deviceId, data),
+      Result.map((result) => new OldResult({ result }))
+    )),
+  KeepAlive: empty(9999, () => new KeepAlive())
+} satisfies { readonly [T in Exclude<Message, UnknownMessage>["_tag"]]: Wire<Extract<Message, { readonly _tag: T }>> }
+
+const decoderFor: ReadonlyMap<number, Wire<Message>["decode"]> = new Map(
+  A.map(Rec.values(wireFormat), (format) => [format.mid, format.decode] as const)
+)
+
 const decodeBody = (
   header: Header,
   data: string,
   deviceId: DeviceId
 ): Result.Result<Message, ProtocolError> =>
-  isMid(header.mid)
-    ? Match.value(header.mid).pipe(
-      Match.when(1, () => succeedMessage(new CommunicationStart())),
-      Match.when(2, () => decodeStartAccepted(data)),
-      Match.when(3, () => succeedMessage(new CommunicationStop())),
-      Match.when(4, () =>
-        Result.gen(function* () {
-          const mid = yield* numberAt(4, data, 0, 4, "mid")
-          const code = yield* numberAt(4, data, 4, 6, "code")
-          return new CommandError({ mid, code })
-        })),
-      Match.when(5, () =>
-        pipe(
-          numberAt(5, data, 0, 4, "mid"),
-          Result.map((mid) => new CommandAccepted({ mid }))
-        )),
-      Match.when(60, () => succeedMessage(new SubscribeResults())),
-      Match.when(61, () =>
-        pipe(
-          decodeLastResult(deviceId, data),
-          Result.map((result) => new LastResult({ result }))
-        )),
-      Match.when(62, () => succeedMessage(new AcknowledgeResult())),
-      Match.when(63, () => succeedMessage(new UnsubscribeResults())),
-      Match.when(64, () =>
-        pipe(
-          numberAt(64, data, 0, 10, "tighteningId"),
-          Result.flatMap((value) =>
-            pipe(
-              S.decodeResult(TighteningId)(value),
-              Result.mapError(() => new PayloadDecodeError({ mid: 64, reason: "tighteningId out of range" }))
-            )
-          ),
-          Result.map((tighteningId) => new RequestOldResult({ tighteningId }))
-        )),
-      Match.when(65, () =>
-        pipe(
-          decodeOldResult(deviceId, data),
-          Result.map((result) => new OldResult({ result }))
-        )),
-      Match.when(9999, () => succeedMessage(new KeepAlive())),
-      Match.exhaustive
-    )
-    : Result.succeed(new UnknownMessage({ mid: header.mid, revision: header.revision, data }))
+  O.match(O.fromNullishOr(decoderFor.get(header.mid)), {
+    onNone: (): Result.Result<Message, ProtocolError> =>
+      Result.succeed(new UnknownMessage({ mid: header.mid, revision: header.revision, data })),
+    onSome: (decode) => decode(data, deviceId)
+  })
 
 /**
  * Decodes one complete frame, terminator excluded.
@@ -309,22 +337,7 @@ export const decodeMessage = (
 const revisionOf = (message: Message): number => message._tag === "UnknownMessage" ? message.revision : 1
 
 const midOf = (message: Message): number =>
-  Match.value(message).pipe(
-    Match.tag("CommunicationStart", () => 1),
-    Match.tag("CommunicationStartAccepted", () => 2),
-    Match.tag("CommunicationStop", () => 3),
-    Match.tag("CommandError", () => 4),
-    Match.tag("CommandAccepted", () => 5),
-    Match.tag("SubscribeResults", () => 60),
-    Match.tag("LastResult", () => 61),
-    Match.tag("AcknowledgeResult", () => 62),
-    Match.tag("UnsubscribeResults", () => 63),
-    Match.tag("RequestOldResult", () => 64),
-    Match.tag("OldResult", () => 65),
-    Match.tag("KeepAlive", () => 9999),
-    Match.tag("UnknownMessage", (unknown) => unknown.mid),
-    Match.exhaustive
-  )
+  message._tag === "UnknownMessage" ? message.mid : wireFormat[message._tag].mid
 
 const dataOf = (message: Message): string =>
   Match.value(message).pipe(

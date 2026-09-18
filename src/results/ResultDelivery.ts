@@ -88,6 +88,34 @@ interface Counters {
 }
 
 /**
+ * The pipeline of a connection nobody is listening to: every result is logged
+ * and dropped, and both counters stay at zero.
+ *
+ * It exists so the connection can say what it does with a result once, instead
+ * of asking whether a handler was configured at every use.
+ *
+ * **Example** (A connection with no result handler)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { dropping } from "effect-open-protocol"
+ *
+ * const program = Effect.map(dropping.delivered, (count) => count === 0)
+ * ```
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
+export const dropping: ResultDelivery = {
+  submit: (result) =>
+    Effect.logDebug("dropping a result: no handler is configured").pipe(
+      Effect.annotateLogs({ deviceId: result.deviceId, tighteningId: result.tighteningId })
+    ),
+  delivered: Effect.succeed(0),
+  duplicates: Effect.succeed(0)
+}
+
+/**
  * Starts the delivery loop for a device, for the lifetime of the calling scope.
  *
  * `acknowledge` is called only after the handler succeeded, or immediately for

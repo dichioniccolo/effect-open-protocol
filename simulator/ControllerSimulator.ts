@@ -3,42 +3,35 @@
  * it exercises.
  *
  * Reviewers have no tightening tool on their desk, so the simulator is what
- * makes this project runnable and verifiable. This module holds the minimal
- * behaviour: accept connections, answer the handshake, mirror keep-alives and
- * accept subscriptions. Fault injection and result generation arrive with the
- * later phases.
+ * makes this project runnable and verifiable. This module owns the lifecycle
+ * alone: accepting connections, serving a session, producing results and
+ * waiting for their acknowledgement. What a controller answers lives in
+ * `ControllerBehaviour`, how it misbehaves on the wire in `FaultyWire`, and
+ * what it remembers in `SessionState`.
  *
  * @since 0.0.0
  */
 import { NodeSocketServer } from "@effect/platform-node"
-import { Deferred, Duration, Effect, Fiber, Match, pipe, Queue, Ref, Scope, Stream } from "effect"
+import { Deferred, Duration, Effect, Fiber, pipe, Queue, Ref, Scope, Stream } from "effect"
 import * as A from "effect/Array"
 import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import { frames } from "../src/protocol/Framer.ts"
-import {
-  CommandAccepted,
-  CommandError,
-  CommunicationStartAccepted,
-  decodeMessage,
-  encodeMessage,
-  KeepAlive,
-  LastResult,
-  type Message,
-  OldResult
-} from "../src/protocol/Messages.ts"
-import {
-  ControllerTimestamp,
-  DeviceId,
-  TighteningId,
-  TighteningResult
-} from "../src/protocol/TighteningResult.ts"
+import { decodeMessage, LastResult } from "../src/protocol/Messages.ts"
+import { type TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork, type ServerSide } from "../src/transport/InMemoryTransport.ts"
 import { ConnectionLost, type Endpoint } from "../src/transport/Transport.ts"
-import * as Faults from "./Faults.ts"
-
-const simulatorDevice = DeviceId.make("simulator")
+import {
+  type ControllerIdentity,
+  observe,
+  replyTo,
+  resultFor,
+  simulatorDevice
+} from "./ControllerBehaviour.ts"
+import type * as Faults from "./Faults.ts"
+import { encoder, sendWithFaults } from "./FaultyWire.ts"
+import { forget, initialSessionState, latestOf, type SessionState } from "./SessionState.ts"
 
 /**
  * The simulated controller could not take its TCP port.
@@ -57,16 +50,8 @@ export class SimulatorListenFailed extends S.TaggedError<SimulatorListenFailed>(
  * @category models
  * @since 0.0.0
  */
-export interface SimulatorOptions {
+export interface SimulatorOptions extends ControllerIdentity {
   readonly endpoint: Endpoint
-  /** Controller identity reported in the handshake reply. */
-  readonly cellId?: number | undefined
-  readonly channelId?: number | undefined
-  readonly controllerName?: string | undefined
-  /** Rejects the handshake with this Open Protocol error code when set. */
-  readonly rejectStartWith?: number | undefined
-  /** Stops answering once the session is established: the socket stays open but goes quiet. */
-  readonly silent?: boolean | undefined
   /** Produces a tightening result on this interval once a subscription exists. */
   readonly resultInterval?: Duration.Duration | undefined
   /** How long to wait for MID 0062 before resending a result. Defaults to 5 seconds. */
@@ -104,201 +89,6 @@ export interface Simulator {
   readonly backlog: Effect.Effect<number>
 }
 
-interface SessionState {
-  readonly subscribed: boolean
-  readonly keepAlives: number
-  readonly stops: number
-  readonly nextId: number
-  readonly generated: number
-  readonly abandoned: ReadonlyArray<TighteningId>
-  readonly connection: O.Option<ServerSide>
-  readonly pendingAck: O.Option<Deferred.Deferred<void>>
-  readonly quiet: boolean
-  /** Whether a client has subscribed at least once: nothing is produced before that. */
-  readonly everSubscribed: boolean
-  /** Frames held back by a `CoalesceFrames` fault, flushed with the next write. */
-  readonly pending: ReadonlyArray<Uint8Array>
-}
-
-const encoder = new TextEncoder()
-
-/** How long a coalesced frame waits for a travelling companion. */
-const coalesceFlushDelay = Duration.millis(50)
-
-const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
-  const total = A.reduce(chunks, 0, (sum, chunk) => sum + chunk.length)
-  const joined = new Uint8Array(total)
-  A.reduce(chunks, 0, (offset, chunk) => {
-    joined.set(chunk, offset)
-    return offset + chunk.length
-  })
-  return joined
-}
-
-/**
- * Turns a reply the controller was about to send into the refusal it would
- * send instead. A pushed result has no command to refuse, so it is left alone.
- */
-const rejectionFor = (message: Message, code: number): O.Option<Message> =>
-  Match.value(message).pipe(
-    Match.tag("CommandAccepted", (accepted): O.Option<Message> => O.some(new CommandError({ mid: accepted.mid, code }))),
-    Match.tag("CommunicationStartAccepted", (): O.Option<Message> => O.some(new CommandError({ mid: 1, code }))),
-    Match.tag("OldResult", (): O.Option<Message> => O.some(new CommandError({ mid: 64, code }))),
-    Match.tag("KeepAlive", (): O.Option<Message> => O.some(new CommandError({ mid: 9999, code }))),
-    Match.orElse((): O.Option<Message> => O.none())
-  )
-
-/**
- * Sends a frame the way a misbehaving controller would: delayed, fragmented,
- * coalesced with the frame before it, refused, or not at all because the link
- * just died.
- */
-const sendWithFaults = (
-  connection: ServerSide,
-  message: Message,
-  options: SimulatorOptions,
-  state: Ref.Ref<SessionState>,
-  refuseFor: (duration: Duration.Duration) => Effect.Effect<void>
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const bytes = encoder.encode(encodeMessage(message))
-    const quiet = yield* Effect.map(Ref.get(state), (current) => current.quiet)
-    const fault = yield* O.match(quiet ? O.none() : O.fromNullishOr(options.faults), {
-      onNone: () => Effect.succeed<Faults.Fault>({ _tag: "None" }),
-      onSome: (config) => Faults.next(config)
-    })
-
-    /** Writes whatever a coalesce fault held back, in front of this frame. */
-    const flush = (frame: Uint8Array): Effect.Effect<void> =>
-      pipe(
-        Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }]),
-        Effect.flatMap((pending) =>
-          Effect.ignore(
-            connection.send(A.length(pending) === 0 ? frame : concat(A.append(pending, frame)))
-          )
-        )
-      )
-
-    return yield* Match.value(fault).pipe(
-      Match.tag("None", () => flush(bytes)),
-      Match.tag("DropConnection", () =>
-        pipe(
-          Ref.update(state, (current) => forget(current, connection)),
-          Effect.andThen(connection.close("the controller dropped the connection"))
-        )),
-      Match.tag("GoSilent", (silent) => Effect.sleep(silent.duration)),
-      Match.tag("DelayReply", (delayed) => Effect.andThen(Effect.sleep(delayed.duration), flush(bytes))),
-      Match.tag("SplitFrame", (split) =>
-        pipe(
-          Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }]),
-          Effect.flatMap((pending) =>
-            Effect.forEach(
-              A.appendAll(pending, Faults.split(bytes, split.pieces)),
-              (piece) => Effect.ignore(connection.send(piece)),
-              { discard: true }
-            )
-          )
-        )),
-      // The frame is held back so it rides along with the next one and the
-      // client sees two messages inside a single read. A short timer flushes it
-      // anyway: coalescing delays frames, it does not eat them, and a quiet
-      // link would otherwise hold a result until the session died.
-      Match.tag("CoalesceFrames", () =>
-        pipe(
-          Ref.update(state, (current) => ({ ...current, pending: A.append(current.pending, bytes) })),
-          Effect.andThen(
-            Effect.forkChild(
-              Effect.andThen(
-                Effect.sleep(coalesceFlushDelay),
-                pipe(
-                  Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }]),
-                  Effect.flatMap((held) =>
-                    A.length(held) === 0 ? Effect.void : Effect.ignore(connection.send(concat(held)))
-                  )
-                )
-              )
-            )
-          ),
-          Effect.asVoid
-        )),
-      Match.tag("RejectCommand", (rejected) =>
-        O.match(rejectionFor(message, rejected.code), {
-          onNone: () => flush(bytes),
-          onSome: (refusal) => flush(encoder.encode(encodeMessage(refusal)))
-        })),
-      // The controller stops accepting new sessions for a while, the way one
-      // does while it reboots. Established traffic is untouched, and the
-      // window is owned by the simulator: a session that dies mid-outage must
-      // not leave the endpoint refusing connections forever.
-      Match.tag("RefuseConnections", (outage) =>
-        Effect.andThen(refuseFor(outage.duration), flush(bytes))),
-      Match.exhaustive
-    )
-  })
-
-const timestamp = ControllerTimestamp.make("2026-09-17:10:14:16")
-
-const resultFor = (id: number): TighteningResult =>
-  new TighteningResult({
-    deviceId: simulatorDevice,
-    tighteningId: TighteningId.make(id),
-    vin: `VIN${id}`,
-    parameterSetId: id % 1000,
-    status: id % 10 === 0 ? "NOK" : "OK",
-    torqueStatus: "OK",
-    angleStatus: "OK",
-    torque: (1000 + (id % 500)) / 100,
-    angle: 90 + (id % 10),
-    timestamp
-  })
-
-const replyTo = (
-  message: Message,
-  options: SimulatorOptions,
-  store: MutableHashMap.MutableHashMap<number, TighteningResult>,
-  latest: O.Option<number>
-): O.Option<Message> =>
-  Match.value(message).pipe(
-    Match.tag("CommunicationStart", () =>
-      O.some(
-        O.match(O.fromNullishOr(options.rejectStartWith), {
-          onNone: (): Message =>
-            new CommunicationStartAccepted({
-              cellId: options.cellId ?? 1,
-              channelId: options.channelId ?? 1,
-              controllerName: options.controllerName ?? "Simulator"
-            }),
-          onSome: (code): Message => new CommandError({ mid: 1, code })
-        })
-      )),
-    Match.tag(
-      "KeepAlive",
-      (): O.Option<Message> => options.silent === true ? O.none() : O.some(new KeepAlive())
-    ),
-    Match.tag("SubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 60 }))),
-    Match.tag("UnsubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 63 }))),
-    Match.tag("CommunicationStop", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 3 }))),
-    Match.tag("RequestOldResult", (request): O.Option<Message> => {
-      const wanted = request.tighteningId === 0 ? latest : O.some(request.tighteningId as number)
-      return O.some(
-        O.match(O.flatMap(wanted, (id) => MutableHashMap.get(store, id)), {
-          onNone: (): Message => new CommandError({ mid: 64, code: 15 }),
-          onSome: (result): Message => new OldResult({ result })
-        })
-      )
-    }),
-    Match.orElse((): O.Option<Message> => O.none())
-  )
-
-const observe = (message: Message, current: SessionState): SessionState =>
-  Match.value(message).pipe(
-    Match.tag("SubscribeResults", () => ({ ...current, subscribed: true, everSubscribed: true })),
-    Match.tag("UnsubscribeResults", () => ({ ...current, subscribed: false })),
-    Match.tag("KeepAlive", () => ({ ...current, keepAlives: current.keepAlives + 1 })),
-    Match.tag("CommunicationStop", () => ({ ...current, subscribed: false, stops: current.stops + 1 })),
-    Match.orElse(() => current)
-  )
-
 const serve = (
   connection: ServerSide,
   state: Ref.Ref<SessionState>,
@@ -326,7 +116,7 @@ const serve = (
                     })
                     : O.match(replyTo(message, options, store, latestOf(current)), {
                       onNone: () => Effect.void,
-                      onSome: (reply) => sendWithFaults(connection, reply, options, state, refuseFor)
+                      onSome: (reply) => sendWithFaults(connection, reply, options.faults, state, refuseFor)
                     })
                 )
               )
@@ -339,19 +129,6 @@ const serve = (
     ),
     Effect.andThen(Ref.update(state, (current) => forget(current, connection)))
   )
-
-/**
- * Forgets a connection only when it is still the current one: an old session
- * cleaning up must never unhook the session that replaced it.
- */
-const forget = (current: SessionState, connection: ServerSide): SessionState =>
-  O.match(current.connection, {
-    onNone: () => current,
-    onSome: (open) => open === connection ? { ...current, subscribed: false, connection: O.none() } : current
-  })
-
-const latestOf = (current: SessionState): O.Option<number> =>
-  current.nextId <= 1 ? O.none() : O.some(current.nextId - 1)
 
 /**
  * Starts a simulated controller on the in-memory network for the lifetime of
@@ -379,19 +156,7 @@ export const makeWith = Effect.fnUntraced(function* (
   refuse: (refused: boolean) => Effect.Effect<void>
 ) {
   const store = MutableHashMap.empty<number, TighteningResult>()
-  const state = yield* Ref.make<SessionState>({
-    subscribed: false,
-    keepAlives: 0,
-    stops: 0,
-    nextId: 1,
-    generated: 0,
-    abandoned: [],
-    connection: O.none(),
-    pendingAck: O.none(),
-    quiet: false,
-    everSubscribed: false,
-    pending: []
-  })
+  const state = yield* Ref.make<SessionState>(initialSessionState)
   const ackTimeout = options.ackTimeout ?? Duration.seconds(5)
   const ackAttempts = options.ackAttempts ?? 3
   const accepted = yield* accept
@@ -434,7 +199,7 @@ export const makeWith = Effect.fnUntraced(function* (
               const acknowledged = yield* Deferred.make<void>()
               yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.some(acknowledged) }))
               const attempt = pipe(
-                sendWithFaults(connection, new LastResult({ result }), options, state, refuseFor),
+                sendWithFaults(connection, new LastResult({ result }), options.faults, state, refuseFor),
                 Effect.andThen(Deferred.await(acknowledged)),
                 Effect.timeoutOption(ackTimeout),
                 Effect.catchCause(() => Effect.succeed(O.none<void>()))

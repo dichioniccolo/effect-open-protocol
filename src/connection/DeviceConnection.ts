@@ -9,23 +9,17 @@
  * and fibers before the next attempt begins.
  *
  * The parts that are policies of their own live next door: the defaults in
- * `DeviceSettings`, the live session and its loops in `Session`, and the
- * result gap policy in `GapRecovery`.
+ * `DeviceSettings`, the live session and its loops in `Session`, the opening
+ * exchange in `Handshake`, and the result gap policy in `GapRecovery`.
  *
  * @since 0.0.0
  */
-import { Context, Effect, Fiber, Layer, Match, pipe, Ref, SubscriptionRef } from "effect"
+import { Context, Effect, Fiber, Layer, Match, pipe, Ref, type Scope, SubscriptionRef } from "effect"
 import * as O from "effect/Option"
-import {
-  AcknowledgeResult,
-  CommunicationStart,
-  CommunicationStop,
-  type Message,
-  SubscribeResults
-} from "../protocol/Messages.ts"
+import { AcknowledgeResult, CommunicationStop, type Message } from "../protocol/Messages.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
 import { makeDedup } from "../results/Dedup.ts"
-import { makeResultDelivery, type ResultDelivery } from "../results/ResultDelivery.ts"
+import { dropping, makeResultDelivery, type ResultDelivery } from "../results/ResultDelivery.ts"
 import { ConnectionLost, Transport } from "../transport/Transport.ts"
 import { CommandRejected, HandshakeRejected, NotReady, RequestTimeout } from "./ConnectionError.ts"
 import {
@@ -45,6 +39,7 @@ import {
 } from "./ConnectionState.ts"
 import { type DeviceConfig, resolveSettings } from "./DeviceSettings.ts"
 import { makeGapRecovery } from "./GapRecovery.ts"
+import { startCommunication, subscribeResults } from "./Handshake.ts"
 import { expectReply, makeRequestReply } from "./RequestReply.ts"
 import { keepAliveLoop, readLoop, sendRaw, type Session } from "./Session.ts"
 
@@ -112,31 +107,32 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
   const session = yield* Ref.make(O.none<Session>())
   const dedup = yield* makeDedup(settings.dedupCapacity)
 
+  // No handler means nothing is listening: the connection still runs, but it
+  // neither subscribes nor recovers, and every result that arrives is dropped.
+  const collectsResults = settings.onResult !== undefined
+
   const delivery = yield* O.match(O.fromNullishOr(settings.onResult), {
-    onNone: () => Effect.succeed(O.none<ResultDelivery>()),
+    onNone: (): Effect.Effect<ResultDelivery, never, Scope.Scope> => Effect.succeed(dropping),
     onSome: (handler) =>
-      Effect.map(
-        makeResultDelivery({
-          delivery: { handler, handlerRetry: settings.handlerRetry, bufferSize: settings.resultBuffer },
-          dedup,
-          acknowledge: (result) =>
-            pipe(
-              Ref.get(session),
-              Effect.flatMap((open) =>
-                O.match(open, {
-                  onNone: () => Effect.fail(new ConnectionLost({ reason: "no session to acknowledge on" })),
-                  onSome: (current) => sendRaw(current.duplex, new AcknowledgeResult())
-                })
-              ),
-              Effect.tap(() =>
-                Effect.logDebug("acknowledged a result").pipe(
-                  Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
-                )
+      makeResultDelivery({
+        delivery: { handler, handlerRetry: settings.handlerRetry, bufferSize: settings.resultBuffer },
+        dedup,
+        acknowledge: (result) =>
+          pipe(
+            Ref.get(session),
+            Effect.flatMap((open) =>
+              O.match(open, {
+                onNone: () => Effect.fail(new ConnectionLost({ reason: "no session to acknowledge on" })),
+                onSome: (current) => sendRaw(current.duplex, new AcknowledgeResult())
+              })
+            ),
+            Effect.tap(() =>
+              Effect.logDebug("acknowledged a result").pipe(
+                Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
               )
             )
-        }),
-        O.some
-      )
+          )
+      })
   })
 
   const recovery = yield* makeGapRecovery({ settings, dedup })
@@ -167,16 +163,8 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
 
   const routeUnsolicited = (current: Session, message: Message): Effect.Effect<void> =>
     Match.value(message).pipe(
-      Match.tag("LastResult", (carrier) =>
-        O.match(delivery, {
-          onNone: () => Effect.logDebug("dropping a result: no handler is configured"),
-          onSome: (pipeline) => recovery.submitResult(current, pipeline, carrier.result)
-        })),
-      Match.tag("OldResult", (carrier) =>
-        O.match(delivery, {
-          onNone: () => Effect.logDebug("dropping a result: no handler is configured"),
-          onSome: (pipeline) => pipeline.submit(carrier.result)
-        })),
+      Match.tag("LastResult", (carrier) => recovery.submitResult(current, delivery, carrier.result)),
+      Match.tag("OldResult", (carrier) => delivery.submit(carrier.result)),
       Match.orElse((other) =>
         Effect.logWarning("unsolicited message dropped").pipe(
           Effect.annotateLogs({ deviceId: settings.id, message: other._tag })
@@ -224,35 +212,14 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
 
     yield* Effect.raceFirst(
       Effect.gen(function* () {
-        const accepted = yield* current.replies.request(
-          new CommunicationStart(),
-          1,
-          expectReply(1, "CommunicationStartAccepted")
-        ).pipe(
-          Effect.catchTag("CommandRejected", (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))),
-          Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })))
-        )
-        const controllerName = accepted._tag === "CommunicationStartAccepted" ? accepted.controllerName : ""
+        const controllerName = yield* startCommunication(current)
         yield* emit(new Accepted({ controllerName }))
 
         // Recovery runs before the subscription: a result produced between the
         // two would otherwise be treated as history by the first baseline.
-        yield* O.match(delivery, {
-          onNone: () => Effect.void,
-          onSome: (pipeline) => recovery.recoverGap(current, pipeline)
-        })
+        yield* collectsResults ? recovery.recoverGap(current, delivery) : Effect.void
 
-        yield* O.match(delivery, {
-          onNone: () => Effect.void,
-          onSome: () =>
-            pipe(
-              current.replies.request(new SubscribeResults(), 60, expectReply(60)),
-              Effect.asVoid,
-              Effect.catchTag("CommandRejected", (rejected) =>
-                Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` }))),
-              Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })))
-            )
-        })
+        yield* collectsResults ? subscribeResults(current) : Effect.void
         yield* emit(new Subscribed())
 
         yield* emit(new Recovered())
@@ -266,11 +233,9 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
     // goes quiet holding results we never received, so the connection asks the
     // controller where it stands on a timer. One MID 0064 per interval.
     const reconcile = yield* Effect.forkChild(
-      O.match(delivery, {
-        onNone: () => Effect.never,
-        onSome: (pipeline) =>
-          Effect.forever(Effect.andThen(Effect.sleep(settings.recoveryInterval), recovery.recoverGap(current, pipeline)))
-      })
+      collectsResults
+        ? Effect.forever(Effect.andThen(Effect.sleep(settings.recoveryInterval), recovery.recoverGap(current, delivery)))
+        : Effect.never
     )
     return yield* pipe(
       readerFailed,
@@ -361,14 +326,8 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
       withSession((current) => current.replies.request(message, mid, expectReply(mid, direct))),
     send: (message) => withSession((current) => sendRaw(current.duplex, message)),
     close,
-    delivered: O.match(delivery, {
-      onNone: () => Effect.succeed(0),
-      onSome: (pipeline) => pipeline.delivered
-    }),
-    duplicates: O.match(delivery, {
-      onNone: () => Effect.succeed(0),
-      onSome: (pipeline) => pipeline.duplicates
-    })
+    delivered: delivery.delivered,
+    duplicates: delivery.duplicates
   } satisfies DeviceConnectionShape
 })
 

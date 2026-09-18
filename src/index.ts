@@ -67,6 +67,11 @@ export * from "./connection/GapRecovery.ts"
 /**
  * @since 0.0.0
  */
+export * from "./connection/Handshake.ts"
+
+/**
+ * @since 0.0.0
+ */
 export * from "./connection/Session.ts"
 
 /**

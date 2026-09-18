@@ -162,13 +162,63 @@ interface Scan {
   readonly values: ReadonlyArray<string>
 }
 
-/** A parameter slot inside a fixed MID layout: its id and value width. */
+/** The fields of a result that a wire layout carries. */
+type Field =
+  | "tighteningId"
+  | "vin"
+  | "parameterSetId"
+  | "status"
+  | "torqueStatus"
+  | "angleStatus"
+  | "torque"
+  | "angle"
+  | "timestamp"
+
+/**
+ * A parameter slot inside a fixed MID layout: its id, its value width, the
+ * field it carries when this library models one, and how it renders.
+ *
+ * A layout is declared once and read in both directions, so a slot cannot be
+ * decoded at one width and encoded at another.
+ */
 interface Slot {
   readonly id: string
   readonly width: number
+  readonly field: O.Option<Field>
+  readonly render: (result: TighteningResult) => string
 }
 
-const slot = (id: string, width: number): Slot => ({ id, width })
+/** A slot this library does not model: it decodes to nothing and renders a neutral value. */
+const unused = (id: string, width: number, render: (result: TighteningResult) => string): Slot => ({
+  id,
+  width,
+  field: O.none(),
+  render
+})
+
+const zeros = (id: string, width: number): Slot => unused(id, width, () => padNumber(0, width))
+
+const digits = (id: string, width: number, field: Field, get: (result: TighteningResult) => number): Slot => ({
+  id,
+  width,
+  field: O.some(field),
+  render: (result) => padNumber(get(result), width)
+})
+
+const text = (id: string, width: number, field: Field, get: (result: TighteningResult) => string): Slot => ({
+  id,
+  width,
+  field: O.some(field),
+  render: (result) => padText(get(result), width)
+})
+
+/** A slot whose value is already exactly `width` characters, such as a timestamp. */
+const verbatim = (id: string, width: number, field: Field, get: (result: TighteningResult) => string): Slot => ({
+  id,
+  width,
+  field: O.some(field),
+  render: get
+})
 
 const emptyScan: Result.Result<Scan, PayloadDecodeError> = Result.succeed({ offset: 0, values: [] })
 
@@ -205,6 +255,9 @@ const readSlots = (
     Result.map(({ values }) => values)
   )
 
+const renderSlots = (slots: ReadonlyArray<Slot>) => (result: TighteningResult): string =>
+  A.join(A.map(slots, (slot) => slot.id + slot.render(result)), "")
+
 const digitsValue = (
   mid: number,
   parameter: string,
@@ -230,88 +283,86 @@ const enumValue = <A>(
     )
   )
 
-const decodeWith = (
-  mid: number,
-  slots: ReadonlyArray<Slot>,
-  pick: {
-    readonly tighteningId: number
-    readonly vin: number
-    readonly parameterSetId: number
-    readonly status: number
-    readonly torqueStatus: number
-    readonly angleStatus: number
-    readonly torque: number
-    readonly angle: number
-    readonly timestamp: number
-  }
-) =>
-(deviceId: DeviceId, data: string): Result.Result<TighteningResult, PayloadDecodeError> =>
-  Result.gen(function* () {
-    const values = yield* readSlots(mid, data, slots)
-    const at = (index: number): string => pipe(A.get(values, index), O.getOrElse(() => ""))
-    const tighteningId = yield* digitsValue(mid, "tighteningId", at(pick.tighteningId))
-    const parameterSetId = yield* digitsValue(mid, "parameterSetId", at(pick.parameterSetId))
-    const status = yield* enumValue(mid, "status", at(pick.status), TighteningStatus.literals)
-    const torqueStatus = yield* enumValue(mid, "torqueStatus", at(pick.torqueStatus), LimitStatus.literals)
-    const angleStatus = yield* enumValue(mid, "angleStatus", at(pick.angleStatus), LimitStatus.literals)
-    const torqueCentiNm = yield* digitsValue(mid, "torque", at(pick.torque))
-    const angle = yield* digitsValue(mid, "angle", at(pick.angle))
-    const timestamp = at(pick.timestamp)
-    return yield* pipe(
-      S.decodeResult(TighteningResult)({
-        deviceId,
-        tighteningId,
-        vin: Str.trimEnd(at(pick.vin)),
-        parameterSetId,
-        status,
-        torqueStatus,
-        angleStatus,
-        torque: torqueCentiNm / 100,
-        angle,
-        timestamp
-      }),
-      Result.mapError((issue) => new PayloadDecodeError({ mid, reason: `${issue}` }))
-    )
-  })
+const decodeWith = (mid: number, slots: ReadonlyArray<Slot>) => {
+  const positions = new Map(
+    A.getSomes(A.map(slots, (slot, index) => O.map(slot.field, (field) => [field, index] as const)))
+  )
+  return (deviceId: DeviceId, data: string): Result.Result<TighteningResult, PayloadDecodeError> =>
+    Result.gen(function* () {
+      const values = yield* readSlots(mid, data, slots)
+      const at = (field: Field): string =>
+        pipe(
+          O.fromNullishOr(positions.get(field)),
+          O.flatMap((index) => A.get(values, index)),
+          O.getOrElse(() => "")
+        )
+      const tighteningId = yield* digitsValue(mid, "tighteningId", at("tighteningId"))
+      const parameterSetId = yield* digitsValue(mid, "parameterSetId", at("parameterSetId"))
+      const status = yield* enumValue(mid, "status", at("status"), TighteningStatus.literals)
+      const torqueStatus = yield* enumValue(mid, "torqueStatus", at("torqueStatus"), LimitStatus.literals)
+      const angleStatus = yield* enumValue(mid, "angleStatus", at("angleStatus"), LimitStatus.literals)
+      const torqueCentiNm = yield* digitsValue(mid, "torque", at("torque"))
+      const angle = yield* digitsValue(mid, "angle", at("angle"))
+      return yield* pipe(
+        S.decodeResult(TighteningResult)({
+          deviceId,
+          tighteningId,
+          vin: Str.trimEnd(at("vin")),
+          parameterSetId,
+          status,
+          torqueStatus,
+          angleStatus,
+          torque: torqueCentiNm / 100,
+          angle,
+          timestamp: at("timestamp")
+        }),
+        Result.mapError((issue) => new PayloadDecodeError({ mid, reason: `${issue}` }))
+      )
+    })
+}
+
+const statusIndex = <A extends string>(values: ReadonlyArray<A>, value: A): number =>
+  pipe(A.findFirstIndex(values, (candidate) => candidate === value), O.getOrElse(() => 0))
 
 const tighteningResultSlots: ReadonlyArray<Slot> = [
-  slot("01", 4),
-  slot("02", 2),
-  slot("03", 25),
-  slot("04", 25),
-  slot("05", 2),
-  slot("06", 3),
-  slot("07", 4),
-  slot("08", 4),
-  slot("09", 1),
-  slot("10", 1),
-  slot("11", 1),
-  slot("12", 6),
-  slot("13", 6),
-  slot("14", 6),
-  slot("15", 6),
-  slot("16", 5),
-  slot("17", 5),
-  slot("18", 5),
-  slot("19", 5),
-  slot("20", 19),
-  slot("21", 19),
-  slot("22", 1),
-  slot("23", 10)
+  unused("01", 4, () => padNumber(1, 4)),
+  unused("02", 2, () => padNumber(1, 2)),
+  unused("03", 25, () => padText("", 25)),
+  text("04", 25, "vin", (result) => result.vin),
+  zeros("05", 2),
+  digits("06", 3, "parameterSetId", (result) => result.parameterSetId),
+  zeros("07", 4),
+  zeros("08", 4),
+  digits("09", 1, "status", (result) => statusIndex(TighteningStatus.literals, result.status)),
+  digits("10", 1, "torqueStatus", (result) => statusIndex(LimitStatus.literals, result.torqueStatus)),
+  digits("11", 1, "angleStatus", (result) => statusIndex(LimitStatus.literals, result.angleStatus)),
+  zeros("12", 6),
+  zeros("13", 6),
+  zeros("14", 6),
+  digits("15", 6, "torque", (result) => result.torque * 100),
+  zeros("16", 5),
+  zeros("17", 5),
+  zeros("18", 5),
+  digits("19", 5, "angle", (result) => result.angle),
+  verbatim("20", 19, "timestamp", (result) => result.timestamp),
+  // The layout carries the timestamp twice; only the first one is read back.
+  unused("21", 19, (result) => result.timestamp),
+  unused("22", 1, () => padNumber(2, 1)),
+  digits("23", 10, "tighteningId", (result) => result.tighteningId)
 ]
 
 const oldResultSlots: ReadonlyArray<Slot> = [
-  slot("01", 10),
-  slot("02", 25),
-  slot("03", 3),
-  slot("04", 4),
-  slot("05", 1),
-  slot("06", 1),
-  slot("07", 1),
-  slot("08", 6),
-  slot("09", 5),
-  slot("10", 19),
-  slot("11", 1)
+  digits("01", 10, "tighteningId", (result) => result.tighteningId),
+  text("02", 25, "vin", (result) => result.vin),
+  digits("03", 3, "parameterSetId", (result) => result.parameterSetId),
+  zeros("04", 4),
+  digits("05", 1, "status", (result) => statusIndex(TighteningStatus.literals, result.status)),
+  digits("06", 1, "torqueStatus", (result) => statusIndex(LimitStatus.literals, result.torqueStatus)),
+  digits("07", 1, "angleStatus", (result) => statusIndex(LimitStatus.literals, result.angleStatus)),
+  digits("08", 6, "torque", (result) => result.torque * 100),
+  digits("09", 5, "angle", (result) => result.angle),
+  verbatim("10", 19, "timestamp", (result) => result.timestamp),
+  unused("11", 1, () => padNumber(2, 1))
 ]
 
 /**
@@ -320,17 +371,7 @@ const oldResultSlots: ReadonlyArray<Slot> = [
  * @category decoding
  * @since 0.0.0
  */
-export const decodeLastResult = decodeWith(61, tighteningResultSlots, {
-  tighteningId: 22,
-  vin: 3,
-  parameterSetId: 5,
-  status: 8,
-  torqueStatus: 9,
-  angleStatus: 10,
-  torque: 14,
-  angle: 18,
-  timestamp: 19
-})
+export const decodeLastResult = decodeWith(61, tighteningResultSlots)
 
 /**
  * Decodes the data field of MID 0065 revision 1.
@@ -338,20 +379,7 @@ export const decodeLastResult = decodeWith(61, tighteningResultSlots, {
  * @category decoding
  * @since 0.0.0
  */
-export const decodeOldResult = decodeWith(65, oldResultSlots, {
-  tighteningId: 0,
-  vin: 1,
-  parameterSetId: 2,
-  status: 4,
-  torqueStatus: 5,
-  angleStatus: 6,
-  torque: 7,
-  angle: 8,
-  timestamp: 9
-})
-
-const statusIndex = <A extends string>(values: ReadonlyArray<A>, value: A): number =>
-  pipe(A.findFirstIndex(values, (candidate) => candidate === value), O.getOrElse(() => 0))
+export const decodeOldResult = decodeWith(65, oldResultSlots)
 
 /**
  * Renders a result as the data field of MID 0061 revision 1.
@@ -363,30 +391,7 @@ const statusIndex = <A extends string>(values: ReadonlyArray<A>, value: A): numb
  * @category encoding
  * @since 0.0.0
  */
-export const encodeLastResult = (result: TighteningResult): string =>
-  "01" + padNumber(1, 4) +
-  "02" + padNumber(1, 2) +
-  "03" + padText("", 25) +
-  "04" + padText(result.vin, 25) +
-  "05" + padNumber(0, 2) +
-  "06" + padNumber(result.parameterSetId, 3) +
-  "07" + padNumber(0, 4) +
-  "08" + padNumber(0, 4) +
-  "09" + padNumber(statusIndex(TighteningStatus.literals, result.status), 1) +
-  "10" + padNumber(statusIndex(LimitStatus.literals, result.torqueStatus), 1) +
-  "11" + padNumber(statusIndex(LimitStatus.literals, result.angleStatus), 1) +
-  "12" + padNumber(0, 6) +
-  "13" + padNumber(0, 6) +
-  "14" + padNumber(0, 6) +
-  "15" + padNumber(result.torque * 100, 6) +
-  "16" + padNumber(0, 5) +
-  "17" + padNumber(0, 5) +
-  "18" + padNumber(0, 5) +
-  "19" + padNumber(result.angle, 5) +
-  "20" + result.timestamp +
-  "21" + result.timestamp +
-  "22" + padNumber(2, 1) +
-  "23" + padNumber(result.tighteningId, 10)
+export const encodeLastResult: (result: TighteningResult) => string = renderSlots(tighteningResultSlots)
 
 /**
  * Renders a result as the data field of MID 0065 revision 1.
@@ -394,15 +399,4 @@ export const encodeLastResult = (result: TighteningResult): string =>
  * @category encoding
  * @since 0.0.0
  */
-export const encodeOldResult = (result: TighteningResult): string =>
-  "01" + padNumber(result.tighteningId, 10) +
-  "02" + padText(result.vin, 25) +
-  "03" + padNumber(result.parameterSetId, 3) +
-  "04" + padNumber(0, 4) +
-  "05" + padNumber(statusIndex(TighteningStatus.literals, result.status), 1) +
-  "06" + padNumber(statusIndex(LimitStatus.literals, result.torqueStatus), 1) +
-  "07" + padNumber(statusIndex(LimitStatus.literals, result.angleStatus), 1) +
-  "08" + padNumber(result.torque * 100, 6) +
-  "09" + padNumber(result.angle, 5) +
-  "10" + result.timestamp +
-  "11" + padNumber(2, 1)
+export const encodeOldResult: (result: TighteningResult) => string = renderSlots(oldResultSlots)

@@ -17,6 +17,7 @@ import {
   KeepAlive,
   LastResult,
   type Message,
+  Mid,
   OldResult,
   RequestOldResult,
   SubscribeResults,
@@ -128,6 +129,15 @@ describe("Messages", () => {
     A.forEach(messages, (message) => {
       assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
     })
+  })
+
+  it("gives every modelled message its own MID from the supported domain", () => {
+    const mids = A.map(
+      A.filter(messages, (message) => message._tag !== "UnknownMessage"),
+      (message) => Number(Str.substring(4, 8)(encodeMessage(message)))
+    )
+    A.forEach(mids, (mid) => expect(S.is(Mid)(mid)).toBe(true))
+    expect(A.length(A.dedupe(mids))).toBe(A.length(mids))
   })
 
   it("announces a length that excludes the terminator", () => {

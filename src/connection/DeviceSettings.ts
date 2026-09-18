@@ -57,30 +57,6 @@ export interface DeviceConfig {
 }
 
 /**
- * A `DeviceConfig` with every default filled in.
- *
- * @category models
- * @since 0.0.0
- */
-export interface DeviceSettings {
-  readonly id: DeviceId
-  readonly endpoint: Endpoint
-  readonly reconnect: Schedule.Schedule<unknown>
-  readonly keepAliveInterval: Duration.Duration
-  readonly responseTimeout: Duration.Duration
-  readonly stopTimeout: Duration.Duration
-  readonly recoveryAttempts: number
-  readonly recoveryRetryDelay: Duration.Duration
-  readonly recoveryTimeout: Duration.Duration
-  readonly recoveryInterval: Duration.Duration
-  readonly recoveryLimit: number | undefined
-  readonly onResult: ResultHandler | undefined
-  readonly handlerRetry: Schedule.Schedule<unknown> | undefined
-  readonly resultBuffer: number | undefined
-  readonly dedupCapacity: number | undefined
-}
-
-/**
  * Jittered exponential backoff, capped at 30 seconds: the default gap between
  * connection attempts.
  *
@@ -92,6 +68,37 @@ export const defaultReconnect: Schedule.Schedule<Duration.Duration> = pipe(
   Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.seconds(30)))),
   Schedule.jittered
 )
+
+/**
+ * The knobs that have a default, and what they fall back to.
+ *
+ * Every default lives here once: `DeviceSettings` is derived from these keys,
+ * so a new knob cannot be declared resolved without being resolved.
+ *
+ * @category constants
+ * @since 0.0.0
+ */
+export const defaultSettings = {
+  reconnect: defaultReconnect,
+  keepAliveInterval: Duration.seconds(10),
+  responseTimeout: Duration.seconds(5),
+  stopTimeout: Duration.seconds(1),
+  recoveryAttempts: 5,
+  recoveryRetryDelay: Duration.millis(500),
+  recoveryTimeout: Duration.seconds(1),
+  recoveryInterval: Duration.seconds(5)
+}
+
+/** The knobs `defaultSettings` answers for; `Pick` refuses a key `DeviceConfig` does not have. */
+type Defaulted = keyof typeof defaultSettings
+
+/**
+ * A `DeviceConfig` with every default filled in.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface DeviceSettings extends Omit<DeviceConfig, Defaulted>, Required<Pick<DeviceConfig, Defaulted>> {}
 
 /**
  * Fills in every default a device connection needs.
@@ -113,19 +120,13 @@ export const defaultReconnect: Schedule.Schedule<Duration.Duration> = pipe(
  * @since 0.0.0
  */
 export const resolveSettings = (config: DeviceConfig): DeviceSettings => ({
-  id: config.id,
-  endpoint: config.endpoint,
-  reconnect: config.reconnect ?? defaultReconnect,
-  keepAliveInterval: config.keepAliveInterval ?? Duration.seconds(10),
-  responseTimeout: config.responseTimeout ?? Duration.seconds(5),
-  stopTimeout: config.stopTimeout ?? Duration.seconds(1),
-  recoveryAttempts: config.recoveryAttempts ?? 5,
-  recoveryRetryDelay: config.recoveryRetryDelay ?? Duration.millis(500),
-  recoveryTimeout: config.recoveryTimeout ?? Duration.seconds(1),
-  recoveryInterval: config.recoveryInterval ?? Duration.seconds(5),
-  recoveryLimit: config.recoveryLimit,
-  onResult: config.onResult,
-  handlerRetry: config.handlerRetry,
-  resultBuffer: config.resultBuffer,
-  dedupCapacity: config.dedupCapacity
+  ...config,
+  reconnect: config.reconnect ?? defaultSettings.reconnect,
+  keepAliveInterval: config.keepAliveInterval ?? defaultSettings.keepAliveInterval,
+  responseTimeout: config.responseTimeout ?? defaultSettings.responseTimeout,
+  stopTimeout: config.stopTimeout ?? defaultSettings.stopTimeout,
+  recoveryAttempts: config.recoveryAttempts ?? defaultSettings.recoveryAttempts,
+  recoveryRetryDelay: config.recoveryRetryDelay ?? defaultSettings.recoveryRetryDelay,
+  recoveryTimeout: config.recoveryTimeout ?? defaultSettings.recoveryTimeout,
+  recoveryInterval: config.recoveryInterval ?? defaultSettings.recoveryInterval
 })
