@@ -3,5 +3,29 @@
   "version": "0.0.0",
   "description": "Browser view of recorded Open Protocol wire traces.",
   "type": "module",
-  "private": true
+  "private": true,
+  "scripts": {
+    "dev": "bun --bun next dev",
+    "build": "bun --bun next build",
+    "start": "bun --bun next start",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/atom-react": "4.0.0-rc.115",
+    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+    "@wire-trace/store": "workspace:*",
+    "effect": "4.0.0-rc.115",
+    "next": "16.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/bun": "latest",
+    "@types/node": "^24",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "^7.0.2"
+  }
 }
