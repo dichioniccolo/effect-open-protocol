@@ -8,8 +8,15 @@ import * as Num from "effect/Number"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
-import { type KeyboardEvent, useMemo } from "react"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
+import { type KeyboardEvent, useMemo } from "react"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   eventsAtom,
   Filters,
@@ -20,7 +27,8 @@ import {
   selectedEventAtom,
   visibleAtom
 } from "@/lib/atoms"
-import { type DirectionFilter, EventPageJson, headerOf, noFilters, RunJson } from "@/lib/wire"
+import { cn } from "@/lib/utils"
+import { DirectionFilter, EventPageJson, headerOf, noFilters, RunJson } from "@/lib/wire"
 import type { Header } from "../../../../src/protocol/Header.ts"
 import { dateOf, LiveDot, SideBadge, timeOf } from "../../ui"
 
@@ -35,14 +43,13 @@ export function RunView({ run, events }: { readonly run: string; readonly events
   )
   return O.match(decoded, {
     onNone: () => (
-      <main className="flex-1 p-8 text-sm text-danger">Unable to read this run. Reload the page to try again.</main>
+      <main className="flex-1 p-8 text-sm text-destructive">
+        Unable to read this run. Reload the page to try again.
+      </main>
     ),
     onSome: (page) => <LoadedRun run={page.run} initial={page.events} />
   })
 }
-
-/** Pressable controls get the same small, interruptible press. */
-const press = "transition-[scale] duration-150 ease-out motion-safe:active:scale-[0.96]"
 
 function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: ReadonlyArray<StoredEvent> }) {
   useAtomInitialValues([[eventsAtom(run.id), initial]])
@@ -52,13 +59,13 @@ function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: Read
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-line px-6 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b px-6 py-3">
         <div className="flex items-center gap-2">
           <h1 className="font-mono text-sm font-medium">Run #{run.id}</h1>
           <SideBadge side={run.side} />
           <LiveBadge live={live} ended={O.isSome(run.endedAt)} />
         </div>
-        <p className="font-mono text-xs text-fg-muted tabular-nums">
+        <p className="font-mono text-xs text-muted-foreground tabular-nums">
           {run.host}:{run.port} · seed {run.seed} · latency {run.latency}±{run.jitter}&nbsp;ms · started{" "}
           {dateOf(run.startedAt)} {timeOf(run.startedAt)} UTC
         </p>
@@ -75,15 +82,15 @@ function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: Read
 /** Whether new events are still arriving. The label carries the state; the dot only decorates it. */
 function LiveBadge({ live, ended }: { readonly live: AsyncResult.AsyncResult<number, unknown>; readonly ended: boolean }) {
   return ended
-    ? <span className="text-xs text-fg-muted">Ended</span>
+    ? <span className="text-xs text-muted-foreground">Ended</span>
     : AsyncResult.match(live, {
-      onInitial: () => <span className="text-xs text-fg-muted">Connecting…</span>,
+      onInitial: () => <span className="text-xs text-muted-foreground">Connecting…</span>,
       onSuccess: () => (
         <span className="inline-flex items-center gap-1.5 text-xs text-live">
           <LiveDot /> Live
         </span>
       ),
-      onFailure: () => <span className="text-xs text-danger">Live updates stopped. Reload to reconnect.</span>
+      onFailure: () => <span className="text-xs text-destructive">Live updates stopped. Reload to reconnect.</span>
     })
 }
 
@@ -93,53 +100,70 @@ const directions: ReadonlyArray<readonly [DirectionFilter, string]> = [
   ["recv", "Received"]
 ]
 
+const decodeDirection = S.decodeUnknownOption(DirectionFilter)
+
+/** One MID filter choice; `null` is "any MID". */
+interface MidItem {
+  readonly label: string
+  readonly value: string | null
+}
+
 function FilterBar({ runId, shown, total }: { readonly runId: Run["id"]; readonly shown: number; readonly total: number }) {
   const [filters, setFilters] = useAtom(filtersAtom)
   const mids = useAtomValue(midsAtom(runId))
   const set = (change: Partial<Filters>) => setFilters(new Filters({ ...filters, ...change }))
+  const midItems = A.prepend(
+    A.map(mids, (mid): MidItem => ({ label: mid, value: mid })),
+    { label: "Any", value: null } satisfies MidItem
+  )
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-raised/40 px-6 py-2 text-xs">
-      {/* 6px outer radius = 4px inner radius + 2px padding. */}
-      <div role="group" aria-label="Direction" className="flex gap-0.5 rounded-md p-0.5 shadow-ring">
-        {A.map(directions, ([direction, label]) => {
-          const active = filters.direction === direction
-          return (
-            <button
-              key={direction}
-              type="button"
-              aria-pressed={active}
-              onClick={() => set({ direction })}
-              className={`rounded-sm px-2.5 py-1 ${press} ${
-                active ? "bg-selected text-fg" : "text-fg-secondary hover:text-fg"
-              }`}
-            >
-              {label}
-            </button>
-          )
-        })}
-      </div>
-      <label className="flex items-center gap-2 text-fg-secondary">
-        MID
-        <select
-          value={O.getOrElse(filters.mid, () => "")}
-          onChange={(event) => set({ mid: O.liftPredicate(event.target.value, (value) => value !== "") })}
-          className="rounded-md border border-line bg-canvas px-1.5 py-1 font-mono text-base text-fg sm:text-xs"
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b bg-card/40 px-6 py-2">
+      <ToggleGroup
+        aria-label="Direction"
+        variant="outline"
+        size="sm"
+        spacing={0}
+        value={[filters.direction]}
+        // Pressing the active item empties the group; a direction is always chosen, so keep it.
+        onValueChange={(value) => O.map(O.flatMap(A.head(value), decodeDirection), (direction) => set({ direction }))}
+      >
+        {A.map(directions, ([direction, label]) => (
+          <ToggleGroupItem key={direction} value={direction}>
+            {label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <Field orientation="horizontal" className="w-auto">
+        <FieldLabel htmlFor="mid-filter">MID</FieldLabel>
+        <Select
+          items={midItems}
+          value={O.getOrNull(filters.mid)}
+          onValueChange={(value) => set({ mid: O.fromNullishOr(value) })}
         >
-          <option value="">Any</option>
-          {A.map(mids, (mid) => <option key={mid} value={mid}>{mid}</option>)}
-        </select>
-      </label>
-      <label className="flex cursor-pointer items-center gap-2 py-1 text-fg-secondary">
-        <input
-          type="checkbox"
+          <SelectTrigger id="mid-filter" size="sm" className="min-w-24 font-mono">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {A.map(midItems, (item) => (
+                <SelectItem key={item.label} value={item.value} className="font-mono">
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field orientation="horizontal" className="w-auto">
+        <Checkbox
+          id="show-chunks"
           checked={filters.showChunks}
-          onChange={(event) => set({ showChunks: event.target.checked })}
-          className="accent-live"
+          onCheckedChange={(checked) => set({ showChunks: checked })}
         />
-        Show socket chunks
-      </label>
-      <span className="ms-auto font-mono text-fg-muted tabular-nums">
+        <FieldLabel htmlFor="show-chunks">Show socket chunks</FieldLabel>
+      </Field>
+      <span className="ms-auto font-mono text-xs text-muted-foreground tabular-nums">
         {shown} of {total} events
       </span>
     </div>
@@ -179,52 +203,57 @@ function PacketTable(
   const openId = O.map(open, (event) => event.id)
 
   return (
-    <div className="min-h-0 overflow-auto border-line lg:border-e">
+    // The table's own container becomes the scroller, so the header can stick.
+    <div className="min-h-0 overflow-hidden lg:border-e [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-auto">
       {A.match(events, {
         onEmpty: () =>
           total === 0
             ? (
-              <div className="px-6 py-10 text-sm">
-                <p className="font-medium">No events recorded yet</p>
-                <p className="mt-1 text-fg-secondary">Events appear here as soon as this run exchanges a frame.</p>
-              </div>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>No events recorded yet</EmptyTitle>
+                  <EmptyDescription>Events appear here as soon as this run exchanges a frame.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
             )
             : (
-              <div className="px-6 py-10 text-sm">
-                <p className="font-medium">No events match these filters</p>
-                <button
-                  type="button"
-                  onClick={() => setFilters(noFilters)}
-                  className={`mt-3 rounded-md px-2.5 py-1 text-xs text-fg shadow-ring hover:shadow-ring-hover ${press}`}
-                >
-                  Clear filters
-                </button>
-              </div>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>No events match these filters</EmptyTitle>
+                  <EmptyDescription>
+                    {total} events in this run are hidden by the direction, MID or chunk filters.
+                  </EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <Button variant="outline" size="sm" onClick={() => setFilters(noFilters)}>
+                    Clear filters
+                  </Button>
+                </EmptyContent>
+              </Empty>
             ),
         onNonEmpty: (rows) => (
-          <table className="w-full table-fixed font-mono text-xs">
-            <thead className="sticky top-0 z-10 bg-canvas text-start text-xs tracking-wider text-fg-muted uppercase">
-              <tr className="border-b border-line">
-                <th className="w-32 py-1.5 ps-6 pe-3 text-start font-normal">Time (UTC)</th>
-                <th className="w-12 py-1.5 pe-3 text-start font-normal">Conn</th>
-                <th className="w-6 py-1.5 pe-3 font-normal"><span className="sr-only">Direction</span></th>
-                <th className="w-14 py-1.5 pe-3 text-start font-normal">MID</th>
-                <th className="w-16 py-1.5 pe-3 text-end font-normal">Bytes</th>
-                <th className="py-1.5 pe-6 text-start font-normal">Raw</th>
-              </tr>
-            </thead>
-            <tbody onKeyDown={moveWithArrows}>
+          <Table className="table-fixed font-mono text-xs">
+            <TableHeader className="sticky top-0 bg-background">
+              <TableRow>
+                <TableHead className="w-32 ps-6">Time (UTC)</TableHead>
+                <TableHead className="w-12">Conn</TableHead>
+                <TableHead className="w-8"><span className="sr-only">Direction</span></TableHead>
+                <TableHead className="w-14">MID</TableHead>
+                <TableHead className="w-16 text-end">Bytes</TableHead>
+                <TableHead className="pe-6">Raw</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody onKeyDown={moveWithArrows}>
               {A.map(rows, (event) => {
                 const isOpen = O.contains(openId, event.id)
-                const muted = isOpen ? "text-fg-secondary" : "text-fg-muted"
+                const quiet = isOpen ? "text-subtle-foreground" : "text-muted-foreground"
                 return (
-                  <tr
+                  <TableRow
                     key={event.id}
-                    className={`relative border-b border-line ${isOpen ? "bg-selected" : "hover:bg-raised"} ${
-                      event.kind === "chunk" ? muted : "text-fg"
-                    }`}
+                    data-state={isOpen ? "selected" : undefined}
+                    className={cn("relative", event.kind === "chunk" && quiet)}
                   >
-                    <td className={`py-1 ps-6 pe-3 whitespace-nowrap tabular-nums ${muted}`}>
+                    <TableCell className={cn("py-1 ps-6 tabular-nums", quiet)}>
                       {/* One button per row, stretched over the row, so the row is a real control. */}
                       <button
                         type="button"
@@ -234,23 +263,23 @@ function PacketTable(
                           O.getOrElse(event.mid, () => "")
                         } at ${timeOf(event.at)}`}
                         onClick={() => setSelected(isOpen ? O.none() : O.some(event.id))}
-                        className="text-start after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-focus"
+                        className="text-start outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-inset"
                       >
                         {timeOf(event.at)}
                       </button>
-                    </td>
-                    <td className={`py-1 pe-3 tabular-nums ${muted}`}>{event.connection}</td>
-                    <td className={`py-1 pe-3 ${muted}`}>{arrow(event)}</td>
-                    <td className="py-1 pe-3">
+                    </TableCell>
+                    <TableCell className={cn("py-1 tabular-nums", quiet)}>{event.connection}</TableCell>
+                    <TableCell className={cn("py-1", quiet)}>{arrow(event)}</TableCell>
+                    <TableCell className="py-1">
                       {O.getOrElse(event.mid, () => (event.kind === "chunk" ? "chunk" : "----"))}
-                    </td>
-                    <td className={`py-1 pe-3 text-end tabular-nums ${muted}`}>{event.bytes}</td>
-                    <td className="truncate py-1 pe-6 whitespace-pre">{event.raw}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className={cn("py-1 text-end tabular-nums", quiet)}>{event.bytes}</TableCell>
+                    <TableCell className="truncate py-1 pe-6 whitespace-pre">{event.raw}</TableCell>
+                  </TableRow>
                 )
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )
       })}
     </div>
@@ -261,7 +290,7 @@ function PacketTable(
 const escapes = /(\\x[0-9a-f]{2}|\\[0tnr\\])/g
 
 const Raw = ({ raw }: { readonly raw: string }) => (
-  <pre className="rounded-md bg-canvas p-3 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap shadow-ring">
+  <pre className="rounded-md border bg-background p-3 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
     {A.map(Str.split(raw, escapes), (part, index) =>
       index % 2 === 1
         ? <span key={index} className="text-escape">{part}</span>
@@ -281,32 +310,33 @@ const headerRows = (header: Header): ReadonlyArray<readonly [string, string]> =>
 const Fields = ({ rows }: { readonly rows: ReadonlyArray<readonly [string, string]> }) => (
   <dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-xs">
     {A.flatMap(rows, ([label, value]) => [
-      <dt key={`${label}-t`} className="text-fg-muted">{label}</dt>,
+      <dt key={`${label}-t`} className="text-muted-foreground">{label}</dt>,
       <dd key={`${label}-d`} className="font-mono tabular-nums">{value}</dd>
     ])}
   </dl>
 )
 
+const SectionTitle = ({ children }: { readonly children: string }) => (
+  <h3 className="text-xs font-medium text-muted-foreground">{children}</h3>
+)
+
 function DetailPane({ runId }: { readonly runId: Run["id"] }) {
   const open = useAtomValue(selectedEventAtom(runId))
   return (
-    <aside
-      aria-label="Event detail"
-      className="min-h-0 overflow-auto border-t border-line bg-raised/40 px-6 py-5 lg:border-t-0"
-    >
+    <aside aria-label="Event detail" className="min-h-0 overflow-auto border-t bg-card/40 px-6 py-5 lg:border-t-0">
       {O.match(open, {
         onNone: () => (
-          <p className="text-sm text-pretty text-fg-secondary">
+          <p className="text-sm text-pretty text-subtle-foreground">
             Select an event to see its raw bytes and decoded header.
           </p>
         ),
         onSome: (event) => (
-          <div className="space-y-6">
+          <div className="flex flex-col gap-6">
             <div className="flex items-baseline justify-between gap-4">
               <h2 className="text-sm font-medium">
                 {event.direction === "send" ? "Sent" : "Received"} {event.kind}
               </h2>
-              <span className="font-mono text-xs text-fg-muted tabular-nums">Event #{event.id}</span>
+              <span className="font-mono text-xs text-muted-foreground tabular-nums">Event #{event.id}</span>
             </div>
             <Fields
               rows={[
@@ -315,15 +345,15 @@ function DetailPane({ runId }: { readonly runId: Run["id"] }) {
                 ["Size", `${event.bytes} bytes`]
               ]}
             />
-            <section>
-              <h3 className="mb-2 text-xs tracking-wider text-fg-muted uppercase">Raw, escaped</h3>
+            <section className="flex flex-col gap-2">
+              <SectionTitle>Raw, escaped</SectionTitle>
               <Raw raw={event.raw} />
             </section>
-            <section>
-              <h3 className="mb-2 text-xs tracking-wider text-fg-muted uppercase">Header</h3>
+            <section className="flex flex-col gap-2">
+              <SectionTitle>Header</SectionTitle>
               {O.match(headerOf(event), {
                 onNone: () => (
-                  <p className="text-xs text-pretty text-fg-secondary">
+                  <p className="text-xs text-pretty text-subtle-foreground">
                     {event.kind === "chunk"
                       ? "A socket chunk has no header of its own. Turn off socket chunks and select a frame to read one."
                       : "This frame's header does not decode."}

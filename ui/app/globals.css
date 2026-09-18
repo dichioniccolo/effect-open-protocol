@@ -1,40 +1,107 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
 
 /*
- * Semantic tokens. Components use these roles, never raw palette steps, so a
- * role can change without auditing every usage. Contrast was measured against
- * the surface each text role renders on (WCAG, 12px text needs 4.5:1):
- *   fg-secondary  7.56 on canvas, 6.74 on raised
- *   fg-muted      5.89 on canvas, 5.25 on raised (4.41 on selected, so a
- *                 selected row lifts muted text to fg-secondary)
+ * The app is dark only, so one set of values serves both :root and .dark
+ * (the class stays on <html> so shadcn's `dark:` variants apply).
+ *
+ * shadcn's variable names, this project's values. Every text role was measured
+ * against the surface it renders on (WCAG AA, 12px text needs 4.5:1):
+ *   --foreground          zinc-100
+ *   --subtle-foreground   7.56 on background, 6.74 on card
+ *   --muted-foreground    5.89 on background, 5.25 on card; 4.41 on muted, so
+ *                         a selected row lifts muted text to subtle
  */
-@theme {
-  --color-canvas: var(--color-zinc-950);
-  --color-raised: var(--color-zinc-900);
-  --color-selected: var(--color-zinc-800);
-  --color-line: var(--color-zinc-800);
+:root,
+.dark {
+  color-scheme: dark;
 
-  --color-fg: var(--color-zinc-100);
-  --color-fg-secondary: var(--color-zinc-400);
-  --color-fg-muted: oklch(64% 0.016 286);
+  /* Surfaces: page, raised panels, selected and pressed states. */
+  --background: oklch(0.141 0.005 285.823); /* zinc-950 */
+  --foreground: oklch(0.967 0.001 286.375); /* zinc-100 */
+  --card: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --muted: oklch(0.274 0.006 286.033); /* zinc-800 */
+  --muted-foreground: oklch(0.64 0.016 286);
+  --subtle-foreground: oklch(0.705 0.015 286.067); /* zinc-400 */
 
-  /* Live and recording: the one thing in motion on the page. */
-  --color-live: var(--color-emerald-400);
-  /* Something needs attention: a run that stopped without an end stamp. */
-  --color-warning: var(--color-amber-300);
-  --color-danger: var(--color-red-400);
-  /* Which CLI recorded a run. Hues kept clear of live and warning. */
-  --color-side-controller: var(--color-violet-300);
-  --color-side-client: var(--color-sky-300);
-  /* Keyboard focus indicator. */
-  --color-focus: var(--color-zinc-100);
-  /* Escape sequences inside a raw wire string. */
-  --color-escape: var(--color-fuchsia-300);
+  /* Actions. Primary is neutral so the one accent hue stays "live". */
+  --primary: var(--foreground);
+  --primary-foreground: var(--card);
+  --secondary: var(--muted);
+  --secondary-foreground: var(--foreground);
+  --accent: var(--muted);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.704 0.191 22.216); /* red-400 */
 
-  --shadow-ring: 0 0 0 1px oklch(1 0 0 / 0.08);
-  --shadow-ring-hover: 0 0 0 1px oklch(1 0 0 / 0.13);
+  /* Lines and focus. */
+  --border: var(--muted);
+  --input: var(--muted);
+  --ring: var(--foreground);
+
+  /* Roles shadcn has no name for. */
+  --live: oklch(0.765 0.177 163.223); /* emerald-400: live and recording, the one thing in motion */
+  --warning: oklch(0.879 0.169 91.605); /* amber-300: a run that stopped without an end time */
+  --side-controller: oklch(0.811 0.111 293.571); /* violet-300 */
+  --side-client: oklch(0.828 0.111 230.318); /* sky-300 */
+  --escape: oklch(0.833 0.145 321.434); /* fuchsia-300: escape sequences in a raw wire string */
+
+  --radius: 0.625rem;
 }
 
-:root {
-  color-scheme: dark;
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-live: var(--live);
+  --color-warning: var(--warning);
+  --color-side-controller: var(--side-controller);
+  --color-side-client: var(--side-client);
+  --color-escape: var(--escape);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }

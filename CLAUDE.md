@@ -55,6 +55,13 @@ throwaway component state.
   `.repos/effect/packages/atom/react`).
 - Validate atom APIs against that source, not training-data priors.
 
+Components come from shadcn/ui (Base UI primitives, `base-nova` style) and live
+in `ui/components/ui/`. Add them with `bunx --bun shadcn@latest add <name>` from
+`ui/` and follow the `shadcn` skill. Colors are shadcn's variable names with
+this project's values, defined once in `ui/app/globals.css`; use the semantic
+utilities (`bg-background`, `text-muted-foreground`, `text-live`, ...), never
+raw palette steps.
+
 For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
 
 ## Effect Agent Setup
