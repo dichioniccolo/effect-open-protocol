@@ -1,1 +1,40 @@
 @import "tailwindcss";
+
+/*
+ * Semantic tokens. Components use these roles, never raw palette steps, so a
+ * role can change without auditing every usage. Contrast was measured against
+ * the surface each text role renders on (WCAG, 12px text needs 4.5:1):
+ *   fg-secondary  7.56 on canvas, 6.74 on raised
+ *   fg-muted      5.89 on canvas, 5.25 on raised (4.41 on selected, so a
+ *                 selected row lifts muted text to fg-secondary)
+ */
+@theme {
+  --color-canvas: var(--color-zinc-950);
+  --color-raised: var(--color-zinc-900);
+  --color-selected: var(--color-zinc-800);
+  --color-line: var(--color-zinc-800);
+
+  --color-fg: var(--color-zinc-100);
+  --color-fg-secondary: var(--color-zinc-400);
+  --color-fg-muted: oklch(64% 0.016 286);
+
+  /* Live and recording: the one thing in motion on the page. */
+  --color-live: var(--color-emerald-400);
+  /* Something needs attention: a run that stopped without an end stamp. */
+  --color-warning: var(--color-amber-300);
+  --color-danger: var(--color-red-400);
+  /* Which CLI recorded a run. Hues kept clear of live and warning. */
+  --color-side-controller: var(--color-violet-300);
+  --color-side-client: var(--color-sky-300);
+  /* Keyboard focus indicator. */
+  --color-focus: var(--color-zinc-100);
+  /* Escape sequences inside a raw wire string. */
+  --color-escape: var(--color-fuchsia-300);
+
+  --shadow-ring: 0 0 0 1px oklch(1 0 0 / 0.08);
+  --shadow-ring-hover: 0 0 0 1px oklch(1 0 0 / 0.13);
+}
+
+:root {
+  color-scheme: dark;
+}
