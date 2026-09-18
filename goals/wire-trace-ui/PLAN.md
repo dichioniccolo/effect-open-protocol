@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: `in-progress`
+Status: `complete`
 
 ## Phases
 
@@ -15,8 +15,8 @@ Status: `in-progress`
 | P4 Views | complete | `/` run list, `/runs/[id]` packet list with the chunks toggle and direction and MID filters, detail pane with raw string and `decodeHeader` fields. State in atoms, first page hydrated. | The recorded runs from P3 browse correctly after a UI restart. |
 | P5 Live | complete | SSE route handler polling past a cursor, framed with `Sse` encoding, ending on abort; a live-feed atom appending to the event list; live marker on the run list. | New packets appear without reload while the CLIs run; closing the tab ends the poll loop. |
 | P6 Docs | complete | README section on recording, `--trace-db`, `WIRE_TRACE_DB` and starting the UI; JSDoc rubric pass on exported `store/` symbols; full verification run. | Verification matrix in `SPEC.md` green. |
-| P7 PR to mergeable | pending | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
-| P8 Close | pending | Write the closeout reflection and flip packet state. | Packet status and evidence are updated; a closeout reflection exists. |
+| P7 PR to mergeable | complete | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
+| P8 Close | complete | Write the closeout reflection and flip packet state. | Packet status and evidence are updated; a closeout reflection exists. |
 
 <!--
 Phase ids must match ops/manifest.json `phases[]`. A packet may use its own
