@@ -23,11 +23,11 @@ const pageSize = 500
  * neither the request's abort signal nor the body stream's cancel fires, in
  * dev or in `next start`. Left alone, a closed tab would poll the file forever.
  * Ending every connection after a bounded time caps that, and costs a live tab
- * nothing: `EventSource` reconnects on its own and resumes from the last id.
+ * nothing: the browser's live atom reconnects and resumes from the last id.
  */
 const lifetime = Duration.seconds(20)
 
-/** Where to resume: a reconnecting `EventSource` sends the last id it saw. */
+/** Where to resume: `?after=`, or the standard `Last-Event-ID` header. */
 const cursorOf = (request: NextRequest): EventId =>
   pipe(
     O.fromNullishOr(request.headers.get("last-event-id") ?? request.nextUrl.searchParams.get("after")),
@@ -40,7 +40,7 @@ const cursorOf = (request: NextRequest): EventId =>
  *
  * The CLIs write from other processes, so nothing here can be told that a row
  * arrived: the feed polls the file past the last id it sent. Each message
- * carries that id, which an `EventSource` sends back when it reconnects. The
+ * carries that id, and the browser resumes after it when it reconnects. The
  * poll loop ends when the browser goes away, where the runtime reports it, and
  * after `lifetime` regardless.
  */
@@ -64,9 +64,7 @@ const feed = (runId: RunId, after: EventId) =>
         Effect.map(S.encodeEffect(EventPageJson)(page), (data) =>
           Sse.encoder.write({ _tag: "Event", id: `${A.lastNonEmpty(page).id}`, event: "events", data }))
       ),
-      Stream.prepend([Sse.encoder.write(new Sse.Retry({ duration: Duration.seconds(1), lastEventId: undefined }))]),
-      Stream.encodeText,
-      Stream.ensuring(Effect.logInfo("live feed closed").pipe(Effect.annotateLogs({ runId })))
+      Stream.encodeText
     )
   })
 
