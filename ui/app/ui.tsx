@@ -1,8 +1,12 @@
 import { Match } from "effect"
+import * as Str from "effect/String"
 import type { RunSide } from "@wire-trace/store"
 
 /** The time part of an ISO timestamp, to the millisecond. */
-export const timeOf = (iso: string): string => iso.slice(11, 23)
+export const timeOf = (iso: string): string => Str.substring(11, 23)(iso)
+
+/** The date part of an ISO timestamp. */
+export const dateOf = (iso: string): string => Str.substring(0, 10)(iso)
 
 export const SideBadge = ({ side }: { readonly side: RunSide }) =>
   Match.value(side).pipe(

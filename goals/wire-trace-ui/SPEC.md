@@ -77,7 +77,8 @@ Carried from the brief's rabbit holes, plus the repo's standing rules.
   frontend on `AtomHttpApi`. Record the switch in the decision log below.
 - **The sink only enqueues.** `tracedDuplex` awaits the sink before
   `duplex.send` (`src/transport/WireTrace.ts:240`) and `bun:sqlite` blocks
-  the event loop on a busy lock. The sink offers to a bounded `Queue`; a
+  the event loop on a busy lock. The sink offers to an unbounded `Queue`, so
+  offering never waits; a
   scoped fiber drains it with `Queue.takeBetween` and writes one transaction
   per batch. A failed write logs a warning and is dropped, as `traceSink`
   does. Storage never fails or slows `send`.
@@ -90,7 +91,8 @@ Carried from the brief's rabbit holes, plus the repo's standing rules.
 - **`Reactivity` is process-local.** The UI cannot be invalidated by the CLIs'
   writes. Live updates come from an SSE route that polls for events past the
   client's cursor (the `events` autoincrement id) and ends its poll loop on
-  the request's abort signal.
+  the request's abort signal or after a 20 s connection lifetime, whichever
+  comes first (see the SSE lifetime decision).
 - **Migrations load from a record, not a glob.** A bundled Next server has no
   migration directory to scan.
 - **Atoms are Effect v4 atoms.** `effect/unstable/reactivity` and
@@ -131,38 +133,38 @@ atoms, so the stack is repo policy, not a packet exception.
 
 ## Acceptance Criteria
 
-- [ ] The root is a Bun workspace with `store` and `ui`; `bunx tsc --noEmit`,
+- [x] The root is a Bun workspace with `store` and `ui`; `bunx tsc --noEmit`,
       `bun run test` and `bun run build` at the root are unchanged in outcome.
-- [ ] `bun run controller` and `bun run client` record to
+- [x] `bun run controller` and `bun run client` record to
       `.wire-trace/traces.sqlite` without any flag; `--trace-db <path>`
       redirects; `.wire-trace/` is gitignored.
-- [ ] Each process launch inserts one `runs` row (side, start, host, port,
+- [x] Each process launch inserts one `runs` row (side, start, host, port,
       seed, latency, jitter) and stamps its end time on exit, including
       Ctrl-C.
-- [ ] Every chunk and frame the tracer emits lands in `events` with its run
+- [x] Every chunk and frame the tracer emits lands in `events` with its run
       id and connection number, in order, including the last events before
       Ctrl-C.
-- [ ] A sink whose writes fail never fails or delays `send`, proven by a test.
-- [ ] Migrations applied twice are harmless, and two clients migrating the
+- [x] A sink whose writes fail never fails or delays `send`, proven by a test.
+- [x] Migrations applied twice are harmless, and two clients migrating the
       same new file at once both succeed, proven by tests.
-- [ ] `ui/` runs with `bun --bun run dev` and builds with `bun run build`.
-- [ ] `/` lists runs newest first with side, start time, port, event count,
+- [x] `ui/` runs with `bun --bun run dev` and builds with `bun run build`.
+- [x] `/` lists runs newest first with side, start time, port, event count,
       and a live marker while a run is still recording.
-- [ ] `/runs/[id]` lists the run's frames with time, direction, MID, bytes and
+- [x] `/runs/[id]` lists the run's frames with time, direction, MID, bytes and
       truncated raw; a toggle reveals chunks; direction and MID filters work.
-- [ ] Selecting a packet shows the full escaped raw string and the decoded
+- [x] Selecting a packet shows the full escaped raw string and the decoded
       header (length, MID, revision, ack flag, station, spindle).
-- [ ] With a run open, new packets appear without a reload while the CLIs
+- [x] With a run open, new packets appear without a reload while the CLIs
       run; closing the tab ends the server's poll loop within one connection
       lifetime (20 s), since Next on Bun does not report disconnects.
-- [ ] UI state (runs, events, filters, selection, live feed) lives in Effect
+- [x] UI state (runs, events, filters, selection, live feed) lives in Effect
       atoms; the first page is server-rendered and the atoms take over in the
       browser.
-- [ ] Either P1 passed, or the fallback topology is in place and the switch is
+- [x] Either P1 passed, or the fallback topology is in place and the switch is
       recorded in this spec's decision log.
-- [ ] `README.md` documents recording, `--trace-db`, `WIRE_TRACE_DB`, and how
+- [x] `README.md` documents recording, `--trace-db`, `WIRE_TRACE_DB`, and how
       to start the UI.
-- [ ] No unrelated refactors or formatting churn.
+- [x] No unrelated refactors or formatting churn.
 
 ## Verification Matrix
 

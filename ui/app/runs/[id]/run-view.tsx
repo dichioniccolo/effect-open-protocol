@@ -6,6 +6,7 @@ import { Match } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
+import * as Str from "effect/String"
 import { useMemo } from "react"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import {
@@ -20,7 +21,7 @@ import {
 } from "@/lib/atoms"
 import { type DirectionFilter, EventPageJson, headerOf, RunJson } from "@/lib/wire"
 import type { Header } from "../../../../src/protocol/Header.ts"
-import { SideBadge, timeOf } from "../../ui"
+import { dateOf, SideBadge, timeOf } from "../../ui"
 
 export function RunView({ run, events }: { readonly run: string; readonly events: string }) {
   const decoded = useMemo(
@@ -53,7 +54,7 @@ function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: Read
         </div>
         <span className="font-mono text-xs text-zinc-500">
           {run.host}:{run.port} · seed {run.seed} · latency {run.latency}±{run.jitter} ms · started{" "}
-          {run.startedAt.slice(0, 10)} {timeOf(run.startedAt)} UTC
+          {dateOf(run.startedAt)} {timeOf(run.startedAt)} UTC
         </span>
       </div>
       <FilterBar runId={run.id} shown={shown.length} total={all.length} />
@@ -194,7 +195,7 @@ const escapes = /(\\x[0-9a-f]{2}|\\[0tnr\\])/g
 
 const Raw = ({ raw }: { readonly raw: string }) => (
   <pre className="font-mono text-xs leading-relaxed break-all whitespace-pre-wrap text-zinc-200">
-    {A.map(raw.split(escapes), (part, index) =>
+    {A.map(Str.split(raw, escapes), (part, index) =>
       index % 2 === 1
         ? <span key={index} className="rounded-sm bg-fuchsia-500/15 text-fuchsia-300">{part}</span>
         : <span key={index} className="bg-zinc-800/60">{part}</span>)}
@@ -203,7 +204,7 @@ const Raw = ({ raw }: { readonly raw: string }) => (
 
 const headerRows = (header: Header): ReadonlyArray<readonly [string, string]> => [
   ["length", `${header.length}`],
-  ["MID", `${header.mid}`.padStart(4, "0")],
+  ["MID", Str.padStart(4, "0")(`${header.mid}`)],
   ["revision", `${header.revision}`],
   ["ack", header.noAck ? "no ack" : "acknowledged"],
   ["station", `${header.stationId}`],

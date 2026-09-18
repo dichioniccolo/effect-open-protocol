@@ -34,12 +34,27 @@ follow the instructions in goals/wire-trace-ui/GOAL.md
 
 ## Current Phase
 
-P0 Workspace, not started.
+P7, PR to mergeable. P0 to P6 are complete; the P1 gate passed, so the
+fallback topology was not needed.
 
 ## Latest Evidence
 
-None yet. The packet was graduated on 2026-09-18 and no implementation has
-landed.
+As of 2026-09-18: `bunx tsc --noEmit`, `bun run test` (89 tests across 16
+files, up from 82 across 14), `bun run build`, and `tsc` plus `next build` in
+`ui/` all green.
+
+End-to-end runs against real sockets: both CLIs recorded to one file while the
+UI was open. Recorded events matched the logged frames exactly (591 frames and
+1182 events for the client, 592 and 1184 for the controller), both runs were
+stamped ended on Ctrl-C, and the run page grew from 828 to 856 events without a
+reload. After a 20 s reconnect the browser held 1100 events against 1104 in the
+file, the gap being the poll interval. Filters and the detail pane were driven
+in headless Chromium with no console errors.
+
+Two findings changed the contract and are recorded in `SPEC.md` Decisions:
+Next on Bun never reports a browser disconnect, so each SSE connection lives
+20 s; and the first page is handed over as encoded JSON rather than through
+`HydrationBoundary`.
 
 ## Notes
 
