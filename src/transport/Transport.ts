@@ -16,10 +16,13 @@ import * as S from "effect/Schema"
  * @category models
  * @since 0.0.0
  */
-export class Endpoint extends S.Class<Endpoint>("Endpoint")({
-  host: S.String.check(S.isMinLength(1)),
-  port: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 65535 }))
-}, { description: "Host and port of a controller" }) {}
+export class Endpoint extends S.Class<Endpoint>("Endpoint")(
+  {
+    host: S.String.check(S.isMinLength(1)),
+    port: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 65535 }))
+  },
+  { description: "Host and port of a controller" }
+) {}
 
 /**
  * A connection could not be opened.
@@ -65,6 +68,9 @@ export interface Duplex {
  * @category services
  * @since 0.0.0
  */
-export class Transport extends Context.Service<Transport, {
-  readonly connect: (endpoint: Endpoint) => Effect.Effect<Duplex, ConnectionFailed, Scope.Scope>
-}>()("effect-open-protocol/Transport") {}
+export class Transport extends Context.Service<
+  Transport,
+  {
+    readonly connect: (endpoint: Endpoint) => Effect.Effect<Duplex, ConnectionFailed, Scope.Scope>
+  }
+>()("effect-open-protocol/Transport") {}

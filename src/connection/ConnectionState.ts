@@ -27,9 +27,13 @@ import * as S from "effect/Schema"
  * @category models
  * @since 0.0.0
  */
-export class Disconnected extends S.TaggedClass<Disconnected>()("Disconnected", {}, {
-  description: "Idle, before the first connection attempt"
-}) {}
+export class Disconnected extends S.TaggedClass<Disconnected>()(
+  "Disconnected",
+  {},
+  {
+    description: "Idle, before the first connection attempt"
+  }
+) {}
 
 /**
  * A transport connection is being opened.
@@ -37,9 +41,13 @@ export class Disconnected extends S.TaggedClass<Disconnected>()("Disconnected", 
  * @category models
  * @since 0.0.0
  */
-export class Connecting extends S.TaggedClass<Connecting>()("Connecting", {
-  attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1))
-}, { description: "Opening the transport connection" }) {}
+export class Connecting extends S.TaggedClass<Connecting>()(
+  "Connecting",
+  {
+    attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1))
+  },
+  { description: "Opening the transport connection" }
+) {}
 
 /**
  * The socket is open and the communication start exchange is in flight.
@@ -47,9 +55,13 @@ export class Connecting extends S.TaggedClass<Connecting>()("Connecting", {
  * @category models
  * @since 0.0.0
  */
-export class Handshaking extends S.TaggedClass<Handshaking>()("Handshaking", {
-  attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1))
-}, { description: "Waiting for the controller to accept the session" }) {}
+export class Handshaking extends S.TaggedClass<Handshaking>()(
+  "Handshaking",
+  {
+    attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1))
+  },
+  { description: "Waiting for the controller to accept the session" }
+) {}
 
 /**
  * The session is open and subscriptions are being restored.
@@ -57,10 +69,14 @@ export class Handshaking extends S.TaggedClass<Handshaking>()("Handshaking", {
  * @category models
  * @since 0.0.0
  */
-export class Subscribing extends S.TaggedClass<Subscribing>()("Subscribing", {
-  attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1)),
-  controllerName: S.String
-}, { description: "Restoring the tightening result subscription" }) {}
+export class Subscribing extends S.TaggedClass<Subscribing>()(
+  "Subscribing",
+  {
+    attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1)),
+    controllerName: S.String
+  },
+  { description: "Restoring the tightening result subscription" }
+) {}
 
 /**
  * Results missed while the connection was down are being fetched.
@@ -68,10 +84,14 @@ export class Subscribing extends S.TaggedClass<Subscribing>()("Subscribing", {
  * @category models
  * @since 0.0.0
  */
-export class Recovering extends S.TaggedClass<Recovering>()("Recovering", {
-  attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1)),
-  controllerName: S.String
-}, { description: "Fetching results missed during the outage" }) {}
+export class Recovering extends S.TaggedClass<Recovering>()(
+  "Recovering",
+  {
+    attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1)),
+    controllerName: S.String
+  },
+  { description: "Fetching results missed during the outage" }
+) {}
 
 /**
  * The connection is live and carrying traffic.
@@ -79,9 +99,13 @@ export class Recovering extends S.TaggedClass<Recovering>()("Recovering", {
  * @category models
  * @since 0.0.0
  */
-export class Ready extends S.TaggedClass<Ready>()("Ready", {
-  controllerName: S.String
-}, { description: "Connected, subscribed and up to date" }) {}
+export class Ready extends S.TaggedClass<Ready>()(
+  "Ready",
+  {
+    controllerName: S.String
+  },
+  { description: "Connected, subscribed and up to date" }
+) {}
 
 /**
  * The connection failed and the next attempt is scheduled.
@@ -89,10 +113,14 @@ export class Ready extends S.TaggedClass<Ready>()("Ready", {
  * @category models
  * @since 0.0.0
  */
-export class WaitingToReconnect extends S.TaggedClass<WaitingToReconnect>()("WaitingToReconnect", {
-  attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1)),
-  reason: S.String
-}, { description: "Backing off before the next attempt" }) {}
+export class WaitingToReconnect extends S.TaggedClass<WaitingToReconnect>()(
+  "WaitingToReconnect",
+  {
+    attempt: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(1)),
+    reason: S.String
+  },
+  { description: "Backing off before the next attempt" }
+) {}
 
 /**
  * The application asked to close; resources are being released.
@@ -100,9 +128,13 @@ export class WaitingToReconnect extends S.TaggedClass<WaitingToReconnect>()("Wai
  * @category models
  * @since 0.0.0
  */
-export class Closing extends S.TaggedClass<Closing>()("Closing", {}, {
-  description: "Releasing the session, best effort communication stop"
-}) {}
+export class Closing extends S.TaggedClass<Closing>()(
+  "Closing",
+  {},
+  {
+    description: "Releasing the session, best effort communication stop"
+  }
+) {}
 
 /**
  * Terminal state: the connection will never carry traffic again.
@@ -154,9 +186,13 @@ export type ConnectionEvent =
  * @category models
  * @since 0.0.0
  */
-export class AttemptStarted extends S.TaggedClass<AttemptStarted>()("AttemptStarted", {}, {
-  description: "A connection attempt began"
-}) {}
+export class AttemptStarted extends S.TaggedClass<AttemptStarted>()(
+  "AttemptStarted",
+  {},
+  {
+    description: "A connection attempt began"
+  }
+) {}
 
 /**
  * The transport connection is open.
@@ -164,9 +200,13 @@ export class AttemptStarted extends S.TaggedClass<AttemptStarted>()("AttemptStar
  * @category models
  * @since 0.0.0
  */
-export class Opened extends S.TaggedClass<Opened>()("Opened", {}, {
-  description: "The transport connection is open"
-}) {}
+export class Opened extends S.TaggedClass<Opened>()(
+  "Opened",
+  {},
+  {
+    description: "The transport connection is open"
+  }
+) {}
 
 /**
  * The controller accepted the session.
@@ -174,9 +214,13 @@ export class Opened extends S.TaggedClass<Opened>()("Opened", {}, {
  * @category models
  * @since 0.0.0
  */
-export class Accepted extends S.TaggedClass<Accepted>()("Accepted", {
-  controllerName: S.String
-}, { description: "The controller accepted the communication start" }) {}
+export class Accepted extends S.TaggedClass<Accepted>()(
+  "Accepted",
+  {
+    controllerName: S.String
+  },
+  { description: "The controller accepted the communication start" }
+) {}
 
 /**
  * Subscriptions were restored.
@@ -184,9 +228,13 @@ export class Accepted extends S.TaggedClass<Accepted>()("Accepted", {
  * @category models
  * @since 0.0.0
  */
-export class Subscribed extends S.TaggedClass<Subscribed>()("Subscribed", {}, {
-  description: "The tightening result subscription is active"
-}) {}
+export class Subscribed extends S.TaggedClass<Subscribed>()(
+  "Subscribed",
+  {},
+  {
+    description: "The tightening result subscription is active"
+  }
+) {}
 
 /**
  * Gap recovery finished.
@@ -194,9 +242,13 @@ export class Subscribed extends S.TaggedClass<Subscribed>()("Subscribed", {}, {
  * @category models
  * @since 0.0.0
  */
-export class Recovered extends S.TaggedClass<Recovered>()("Recovered", {}, {
-  description: "Missed results were fetched"
-}) {}
+export class Recovered extends S.TaggedClass<Recovered>()(
+  "Recovered",
+  {},
+  {
+    description: "Missed results were fetched"
+  }
+) {}
 
 /**
  * The attempt or the live session failed.
@@ -204,9 +256,13 @@ export class Recovered extends S.TaggedClass<Recovered>()("Recovered", {}, {
  * @category models
  * @since 0.0.0
  */
-export class Failed extends S.TaggedClass<Failed>()("Failed", {
-  reason: S.String
-}, { description: "The attempt or session failed" }) {}
+export class Failed extends S.TaggedClass<Failed>()(
+  "Failed",
+  {
+    reason: S.String
+  },
+  { description: "The attempt or session failed" }
+) {}
 
 /**
  * The application asked to close the connection.
@@ -214,9 +270,13 @@ export class Failed extends S.TaggedClass<Failed>()("Failed", {
  * @category models
  * @since 0.0.0
  */
-export class CloseRequested extends S.TaggedClass<CloseRequested>()("CloseRequested", {}, {
-  description: "close() was called"
-}) {}
+export class CloseRequested extends S.TaggedClass<CloseRequested>()(
+  "CloseRequested",
+  {},
+  {
+    description: "close() was called"
+  }
+) {}
 
 /**
  * Every resource of the connection was released.
@@ -224,9 +284,13 @@ export class CloseRequested extends S.TaggedClass<CloseRequested>()("CloseReques
  * @category models
  * @since 0.0.0
  */
-export class Released extends S.TaggedClass<Released>()("Released", {}, {
-  description: "Resources were released"
-}) {}
+export class Released extends S.TaggedClass<Released>()(
+  "Released",
+  {},
+  {
+    description: "Resources were released"
+  }
+) {}
 
 /**
  * A transition that the state machine forbids.
@@ -295,36 +359,41 @@ export const transition = (state: ConnectionState, event: ConnectionEvent): Tran
   isFinal(state)
     ? invalid(state, event)
     : Match.value(event).pipe(
-      Match.tag("CloseRequested", () => moveTo(new Closing())),
-      Match.tag("Released", () => state._tag === "Closing" ? moveTo(new Closed()) : invalid(state, event)),
-      Match.tag("AttemptStarted", () =>
-        Match.value(state).pipe(
-          Match.tag("Disconnected", () => moveTo(new Connecting({ attempt: 1 }))),
-          Match.tag("WaitingToReconnect", (waiting) => moveTo(new Connecting({ attempt: waiting.attempt + 1 }))),
-          Match.orElse(() => invalid(state, event))
-        )),
-      Match.tag("Opened", () =>
-        state._tag === "Connecting"
-          ? moveTo(new Handshaking({ attempt: state.attempt }))
-          : invalid(state, event)),
-      Match.tag("Accepted", (accepted) =>
-        state._tag === "Handshaking"
-          ? moveTo(new Subscribing({ attempt: state.attempt, controllerName: accepted.controllerName }))
-          : invalid(state, event)),
-      Match.tag("Subscribed", () =>
-        state._tag === "Subscribing"
-          ? moveTo(new Recovering({ attempt: state.attempt, controllerName: state.controllerName }))
-          : invalid(state, event)),
-      Match.tag("Recovered", () =>
-        state._tag === "Recovering"
-          ? moveTo(new Ready({ controllerName: state.controllerName }))
-          : invalid(state, event)),
-      Match.tag("Failed", (failed) =>
-        Match.value(state).pipe(
-          Match.tag("Connecting", "Handshaking", "Subscribing", "Recovering", (open) =>
-            moveTo(new WaitingToReconnect({ attempt: open.attempt, reason: failed.reason }))),
-          Match.tag("Ready", () => moveTo(new WaitingToReconnect({ attempt: 1, reason: failed.reason }))),
-          Match.orElse(() => invalid(state, event))
-        )),
-      Match.exhaustive
-    )
+        Match.tag("CloseRequested", () => moveTo(new Closing())),
+        Match.tag("Released", () => (state._tag === "Closing" ? moveTo(new Closed()) : invalid(state, event))),
+        Match.tag("AttemptStarted", () =>
+          Match.value(state).pipe(
+            Match.tag("Disconnected", () => moveTo(new Connecting({ attempt: 1 }))),
+            Match.tag("WaitingToReconnect", (waiting) => moveTo(new Connecting({ attempt: waiting.attempt + 1 }))),
+            Match.orElse(() => invalid(state, event))
+          )
+        ),
+        Match.tag("Opened", () =>
+          state._tag === "Connecting" ? moveTo(new Handshaking({ attempt: state.attempt })) : invalid(state, event)
+        ),
+        Match.tag("Accepted", (accepted) =>
+          state._tag === "Handshaking"
+            ? moveTo(new Subscribing({ attempt: state.attempt, controllerName: accepted.controllerName }))
+            : invalid(state, event)
+        ),
+        Match.tag("Subscribed", () =>
+          state._tag === "Subscribing"
+            ? moveTo(new Recovering({ attempt: state.attempt, controllerName: state.controllerName }))
+            : invalid(state, event)
+        ),
+        Match.tag("Recovered", () =>
+          state._tag === "Recovering"
+            ? moveTo(new Ready({ controllerName: state.controllerName }))
+            : invalid(state, event)
+        ),
+        Match.tag("Failed", (failed) =>
+          Match.value(state).pipe(
+            Match.tag("Connecting", "Handshaking", "Subscribing", "Recovering", (open) =>
+              moveTo(new WaitingToReconnect({ attempt: open.attempt, reason: failed.reason }))
+            ),
+            Match.tag("Ready", () => moveTo(new WaitingToReconnect({ attempt: 1, reason: failed.reason }))),
+            Match.orElse(() => invalid(state, event))
+          )
+        ),
+        Match.exhaustive
+      )

@@ -5,14 +5,7 @@ import { NodeServices } from "@effect/platform-node"
 import { Effect, FileSystem, Layer, Path } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import {
-  EventId,
-  EventQuery,
-  NewEvent,
-  RunId,
-  RunStart,
-  WireStore
-} from "../src/WireStore.ts"
+import { EventId, EventQuery, NewEvent, RunId, RunStart, WireStore } from "../src/WireStore.ts"
 
 /** A fresh database file in a directory that disappears with the test. */
 const tempDatabase = Effect.gen(function* () {
@@ -22,8 +15,7 @@ const tempDatabase = Effect.gen(function* () {
   return path.join(directory, "traces.sqlite")
 })
 
-const storeAt = (filename: string) =>
-  WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)
+const storeAt = (filename: string) => WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)
 
 const start = new RunStart({
   side: "client",
@@ -60,7 +52,9 @@ describe("WireStore", () => {
           event(id, "2026-09-18T10:00:00.150Z", { direction: "recv", mid: O.some("0002") })
         ])
 
-        const all = yield* store.events(new EventQuery({ runId: id, kind: O.none(), direction: O.none(), mid: O.none() }))
+        const all = yield* store.events(
+          new EventQuery({ runId: id, kind: O.none(), direction: O.none(), mid: O.none() })
+        )
         expect(A.map(all, (stored) => stored.kind)).toEqual(["chunk", "frame", "frame"])
         expect(all[0]?.mid).toEqual(O.none())
         expect(all[2]?.direction).toBe("recv")
@@ -82,17 +76,27 @@ describe("WireStore", () => {
         expect(A.map(after, (stored) => stored.id)).toEqual([all[2]?.id])
 
         const open = yield* store.findRun(id)
-        assertSome(O.map(open, (run) => run.eventCount), 3)
-        assertSome(O.flatMap(open, (run) => run.lastEventAt), "2026-09-18T10:00:00.150Z")
+        assertSome(
+          O.map(open, (run) => run.eventCount),
+          3
+        )
+        assertSome(
+          O.flatMap(open, (run) => run.lastEventAt),
+          "2026-09-18T10:00:00.150Z"
+        )
         assertNone(O.flatMap(open, (run) => run.endedAt))
 
         yield* store.endRun(id, "2026-09-18T10:05:00.000Z")
         const ended = yield* store.findRun(id)
-        assertSome(O.flatMap(ended, (run) => run.endedAt), "2026-09-18T10:05:00.000Z")
+        assertSome(
+          O.flatMap(ended, (run) => run.endedAt),
+          "2026-09-18T10:05:00.000Z"
+        )
 
         assertNone(yield* store.findRun(RunId.make(id + 1)))
       }).pipe(Effect.provide(storeAt(filename)))
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)))
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  )
 
   it.effect("lists runs newest first and ignores an empty batch", () =>
     Effect.gen(function* () {
@@ -106,39 +110,41 @@ describe("WireStore", () => {
         expect(A.map(runs, (run) => run.id)).toEqual([second, first])
         expect(A.map(runs, (run) => run.eventCount)).toEqual([0, 0])
       }).pipe(Effect.provide(storeAt(filename)))
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)))
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  )
 
   it.effect("keeps its data when the migrations run again", () =>
     Effect.gen(function* () {
       const filename = yield* tempDatabase
-      const id = yield* WireStore.use((store) => store.startRun(start)).pipe(
-        Effect.provide(storeAt(filename))
-      )
-      const runs = yield* WireStore.use((store) => store.listRuns).pipe(
-        Effect.provide(storeAt(filename))
-      )
+      const id = yield* WireStore.use((store) => store.startRun(start)).pipe(Effect.provide(storeAt(filename)))
+      const runs = yield* WireStore.use((store) => store.listRuns).pipe(Effect.provide(storeAt(filename)))
       expect(A.map(runs, (run) => run.id)).toEqual([id])
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)))
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  )
 
-  it.effect("lets two processes open a new file at once", () =>
-    Effect.gen(function* () {
-      const filename = yield* tempDatabase
-      const path = yield* Path.Path
-      const script = path.join(import.meta.dirname, "fixtures", "open.ts")
-      const open = Effect.tryPromise(async () => {
-        const child = Bun.spawn([process.execPath, script, filename], { stdout: "pipe", stderr: "pipe" })
-        const [code, stdout, stderr] = await Promise.all([
-          child.exited,
-          new Response(child.stdout).text(),
-          new Response(child.stderr).text()
+  it.effect(
+    "lets two processes open a new file at once",
+    () =>
+      Effect.gen(function* () {
+        const filename = yield* tempDatabase
+        const path = yield* Path.Path
+        const script = path.join(import.meta.dirname, "fixtures", "open.ts")
+        const open = Effect.tryPromise(async () => {
+          const child = Bun.spawn([process.execPath, script, filename], { stdout: "pipe", stderr: "pipe" })
+          const [code, stdout, stderr] = await Promise.all([
+            child.exited,
+            new Response(child.stdout).text(),
+            new Response(child.stderr).text()
+          ])
+          return { code, stdout, stderr }
+        })
+        const results = yield* Effect.all([open, open, open], { concurrency: "unbounded" })
+        expect(A.map(results, (result) => [result.code, result.stdout.trim(), result.stderr])).toEqual([
+          [0, "ok 0", ""],
+          [0, "ok 0", ""],
+          [0, "ok 0", ""]
         ])
-        return { code, stdout, stderr }
-      })
-      const results = yield* Effect.all([open, open, open], { concurrency: "unbounded" })
-      expect(A.map(results, (result) => [result.code, result.stdout.trim(), result.stderr])).toEqual([
-        [0, "ok 0", ""],
-        [0, "ok 0", ""],
-        [0, "ok 0", ""]
-      ])
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)), { timeout: 30_000 })
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    { timeout: 30_000 }
+  )
 })

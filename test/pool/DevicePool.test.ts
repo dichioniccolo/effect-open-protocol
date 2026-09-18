@@ -17,131 +17,140 @@ const endpointTwo = new Endpoint({ host: "sim", port: 4546 })
 const missing = new Endpoint({ host: "sim", port: 9999 })
 
 const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(
-    Effect.provide(DevicePool.layer),
-    Effect.provide(layerComplete)
-  )
+  Effect.scoped(effect).pipe(Effect.provide(DevicePool.layer), Effect.provide(layerComplete))
 
 const awaitReady = (connection: DeviceConnectionShape): Effect.Effect<ConnectionState> =>
   pipe(
     SubscriptionRef.changes(connection.state),
     Stream.filter((current) => current._tag === "Ready"),
     Stream.runHead,
-    Effect.flatMap((head) => head._tag === "Some" ? Effect.succeed(head.value) : Effect.never)
+    Effect.flatMap((head) => (head._tag === "Some" ? Effect.succeed(head.value) : Effect.never))
   )
 
-const settle = <A>(
-  effect: Effect.Effect<A>,
-  predicate: (value: A) => boolean,
-  attempts = 500
-): Effect.Effect<A> =>
+const settle = <A>(effect: Effect.Effect<A>, predicate: (value: A) => boolean, attempts = 500): Effect.Effect<A> =>
   Effect.flatMap(effect, (value) =>
     predicate(value) || attempts <= 0
       ? Effect.succeed(value)
-      : Effect.andThen(Effect.yieldNow, settle(effect, predicate, attempts - 1)))
+      : Effect.andThen(Effect.yieldNow, settle(effect, predicate, attempts - 1))
+  )
 
 describe("DevicePool", () => {
   it.effect("runs several devices at once", () =>
-    provided(Effect.gen(function* () {
-      yield* makeSimulator({ endpoint: endpointOne, controllerName: "one" })
-      yield* makeSimulator({ endpoint: endpointTwo, controllerName: "two" })
-      const pool = yield* DevicePool
+    provided(
+      Effect.gen(function* () {
+        yield* makeSimulator({ endpoint: endpointOne, controllerName: "one" })
+        yield* makeSimulator({ endpoint: endpointTwo, controllerName: "two" })
+        const pool = yield* DevicePool
 
-      const first = yield* pool.add({ id: toolOne, endpoint: endpointOne })
-      const second = yield* pool.add({ id: toolTwo, endpoint: endpointTwo })
-      yield* awaitReady(first)
-      yield* awaitReady(second)
+        const first = yield* pool.add({ id: toolOne, endpoint: endpointOne })
+        const second = yield* pool.add({ id: toolTwo, endpoint: endpointTwo })
+        yield* awaitReady(first)
+        yield* awaitReady(second)
 
-      const status = yield* pool.status
-      expect(A.length(status)).toBe(2)
-      expect(A.every(status, (device) => device.state._tag === "Ready")).toBe(true)
-    })))
+        const status = yield* pool.status
+        expect(A.length(status)).toBe(2)
+        expect(A.every(status, (device) => device.state._tag === "Ready")).toBe(true)
+      })
+    )
+  )
 
   it.effect("keeps a failing device from affecting the others", () =>
-    provided(Effect.gen(function* () {
-      yield* makeSimulator({ endpoint: endpointOne })
-      const pool = yield* DevicePool
+    provided(
+      Effect.gen(function* () {
+        yield* makeSimulator({ endpoint: endpointOne })
+        const pool = yield* DevicePool
 
-      const healthy = yield* pool.add({ id: toolOne, endpoint: endpointOne })
-      const broken = yield* pool.add({
-        id: toolTwo,
-        endpoint: missing,
-        reconnect: Schedule.spaced(Duration.seconds(1))
+        const healthy = yield* pool.add({ id: toolOne, endpoint: endpointOne })
+        const broken = yield* pool.add({
+          id: toolTwo,
+          endpoint: missing,
+          reconnect: Schedule.spaced(Duration.seconds(1))
+        })
+        yield* awaitReady(healthy)
+
+        const brokenState = yield* settle(
+          SubscriptionRef.get(broken.state),
+          (current) => current._tag === "WaitingToReconnect"
+        )
+        expect(brokenState._tag).toBe("WaitingToReconnect")
+        expect((yield* SubscriptionRef.get(healthy.state))._tag).toBe("Ready")
       })
-      yield* awaitReady(healthy)
-
-      const brokenState = yield* settle(
-        SubscriptionRef.get(broken.state),
-        (current) => current._tag === "WaitingToReconnect"
-      )
-      expect(brokenState._tag).toBe("WaitingToReconnect")
-      expect((yield* SubscriptionRef.get(healthy.state))._tag).toBe("Ready")
-    })))
+    )
+  )
 
   it.effect("refuses to add the same device twice", () =>
-    provided(Effect.gen(function* () {
-      yield* makeSimulator({ endpoint: endpointOne })
-      const pool = yield* DevicePool
-      yield* pool.add({ id: toolOne, endpoint: endpointOne })
+    provided(
+      Effect.gen(function* () {
+        yield* makeSimulator({ endpoint: endpointOne })
+        const pool = yield* DevicePool
+        yield* pool.add({ id: toolOne, endpoint: endpointOne })
 
-      const again = yield* Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
+        const again = yield* Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
 
-      expect(again._tag).toBe("Failure")
-    })))
+        expect(again._tag).toBe("Failure")
+      })
+    )
+  )
 
   it.effect("lets only one of two concurrent adds of the same device win", () =>
-    provided(Effect.gen(function* () {
-      yield* makeSimulator({ endpoint: endpointOne })
-      const pool = yield* DevicePool
+    provided(
+      Effect.gen(function* () {
+        yield* makeSimulator({ endpoint: endpointOne })
+        const pool = yield* DevicePool
 
-      const both = yield* Effect.all(
-        [
-          Effect.result(pool.add({ id: toolOne, endpoint: endpointOne })),
-          Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
-        ],
-        { concurrency: "unbounded" }
-      )
+        const both = yield* Effect.all(
+          [
+            Effect.result(pool.add({ id: toolOne, endpoint: endpointOne })),
+            Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
+          ],
+          { concurrency: "unbounded" }
+        )
 
-      expect(A.length(A.filter(both, (outcome) => outcome._tag === "Success"))).toBe(1)
-      expect(A.length(A.filter(both, (outcome) => outcome._tag === "Failure"))).toBe(1)
-      expect(A.length(yield* pool.status)).toBe(1)
-    })))
+        expect(A.length(A.filter(both, (outcome) => outcome._tag === "Success"))).toBe(1)
+        expect(A.length(A.filter(both, (outcome) => outcome._tag === "Failure"))).toBe(1)
+        expect(A.length(yield* pool.status)).toBe(1)
+      })
+    )
+  )
 
   it.effect("stops a device on remove and forgets it", () =>
-    provided(Effect.gen(function* () {
-      yield* makeSimulator({ endpoint: endpointOne })
-      const pool = yield* DevicePool
-      const connection = yield* pool.add({ id: toolOne, endpoint: endpointOne })
-      yield* awaitReady(connection)
+    provided(
+      Effect.gen(function* () {
+        yield* makeSimulator({ endpoint: endpointOne })
+        const pool = yield* DevicePool
+        const connection = yield* pool.add({ id: toolOne, endpoint: endpointOne })
+        yield* awaitReady(connection)
 
-      yield* pool.remove(toolOne)
-      yield* settle(pool.status, (status) => A.length(status) === 0)
+        yield* pool.remove(toolOne)
+        yield* settle(pool.status, (status) => A.length(status) === 0)
 
-      expect(A.fromIterable(yield* pool.status)).toEqual([])
-      expect((yield* pool.get(toolOne))._tag).toBe("None")
-    })))
+        expect(A.fromIterable(yield* pool.status)).toEqual([])
+        expect((yield* pool.get(toolOne))._tag).toBe("None")
+      })
+    )
+  )
 
   it.effect("delivers results per device", () =>
-    provided(Effect.gen(function* () {
-      const first = yield* makeSimulator({ endpoint: endpointOne })
-      const second = yield* makeSimulator({ endpoint: endpointTwo })
-      const received = yield* Ref.make<ReadonlyArray<string>>([])
-      const onResult = (result: TighteningResult) =>
-        Ref.update(received, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
-      const pool = yield* DevicePool
+    provided(
+      Effect.gen(function* () {
+        const first = yield* makeSimulator({ endpoint: endpointOne })
+        const second = yield* makeSimulator({ endpoint: endpointTwo })
+        const received = yield* Ref.make<ReadonlyArray<string>>([])
+        const onResult = (result: TighteningResult) =>
+          Ref.update(received, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
+        const pool = yield* DevicePool
 
-      const one = yield* pool.add({ id: toolOne, endpoint: endpointOne, onResult })
-      const two = yield* pool.add({ id: toolTwo, endpoint: endpointTwo, onResult })
-      yield* awaitReady(one)
-      yield* awaitReady(two)
+        const one = yield* pool.add({ id: toolOne, endpoint: endpointOne, onResult })
+        const two = yield* pool.add({ id: toolTwo, endpoint: endpointTwo, onResult })
+        yield* awaitReady(one)
+        yield* awaitReady(two)
 
-      yield* first.produce
-      yield* second.produce
-      const all = yield* settle(Ref.get(received), (current) => A.length(current) === 2)
+        yield* first.produce
+        yield* second.produce
+        const all = yield* settle(Ref.get(received), (current) => A.length(current) === 2)
 
-      expect(A.sort(all, Str.Order)).toEqual([
-        "tool-1:1",
-        "tool-2:1"
-      ])
-    })))
+        expect(A.sort(all, Str.Order)).toEqual(["tool-1:1", "tool-2:1"])
+      })
+    )
+  )
 })

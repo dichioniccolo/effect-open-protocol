@@ -131,15 +131,18 @@ const Count = S.Int.check(S.isGreaterThanOrEqualTo(0))
  * @category models
  * @since 0.0.0
  */
-export class RunStart extends S.Class<RunStart>("RunStart")({
-  side: RunSide,
-  startedAt: S.String,
-  host: S.String,
-  port: S.Int,
-  seed: S.Int,
-  latency: Count,
-  jitter: Count
-}, { description: "The launch settings a run is recorded with" }) {}
+export class RunStart extends S.Class<RunStart>("RunStart")(
+  {
+    side: RunSide,
+    startedAt: S.String,
+    host: S.String,
+    port: S.Int,
+    seed: S.Int,
+    latency: Count,
+    jitter: Count
+  },
+  { description: "The launch settings a run is recorded with" }
+) {}
 
 /**
  * A recorded run with what a run list needs: its event count, its newest
@@ -164,12 +167,15 @@ export class RunStart extends S.Class<RunStart>("RunStart")({
  * @category models
  * @since 0.0.0
  */
-export class Run extends RunStart.extend<Run>("Run")({
-  id: RunId,
-  endedAt: S.OptionFromNullOr(S.String),
-  eventCount: Count,
-  lastEventAt: S.OptionFromNullOr(S.String)
-}, { description: "A recorded CLI run with its event count and activity" }) {}
+export class Run extends RunStart.extend<Run>("Run")(
+  {
+    id: RunId,
+    endedAt: S.OptionFromNullOr(S.String),
+    eventCount: Count,
+    lastEventAt: S.OptionFromNullOr(S.String)
+  },
+  { description: "A recorded CLI run with its event count and activity" }
+) {}
 
 /**
  * One traced chunk or frame, ready to be written.
@@ -198,16 +204,19 @@ export class Run extends RunStart.extend<Run>("Run")({
  * @category models
  * @since 0.0.0
  */
-export class NewEvent extends S.Class<NewEvent>("NewEvent")({
-  runId: RunId,
-  connection: S.Int.check(S.isGreaterThan(0)),
-  at: S.String,
-  direction: WireDirection,
-  kind: WireEventKind,
-  bytes: Count,
-  mid: S.OptionFromNullOr(S.String),
-  raw: S.String
-}, { description: "A traced wire event tagged with its run and connection" }) {}
+export class NewEvent extends S.Class<NewEvent>("NewEvent")(
+  {
+    runId: RunId,
+    connection: S.Int.check(S.isGreaterThan(0)),
+    at: S.String,
+    direction: WireDirection,
+    kind: WireEventKind,
+    bytes: Count,
+    mid: S.OptionFromNullOr(S.String),
+    raw: S.String
+  },
+  { description: "A traced wire event tagged with its run and connection" }
+) {}
 
 /**
  * A recorded event as it is read back, carrying the row id a reader uses as
@@ -227,9 +236,12 @@ export class NewEvent extends S.Class<NewEvent>("NewEvent")({
  * @category models
  * @since 0.0.0
  */
-export class StoredEvent extends NewEvent.extend<StoredEvent>("StoredEvent")({
-  id: EventId
-}, { description: "A recorded wire event with its row id" }) {}
+export class StoredEvent extends NewEvent.extend<StoredEvent>("StoredEvent")(
+  {
+    id: EventId
+  },
+  { description: "A recorded wire event with its row id" }
+) {}
 
 /**
  * Which events of a run to read: a page after a cursor, oldest first,
@@ -256,16 +268,17 @@ export class StoredEvent extends NewEvent.extend<StoredEvent>("StoredEvent")({
  * @category models
  * @since 0.0.0
  */
-export class EventQuery extends S.Class<EventQuery>("EventQuery")({
-  runId: RunId,
-  after: EventId.pipe(S.withConstructorDefault(Effect.succeed(EventId.make(0)))),
-  limit: S.Int.check(S.isBetween({ minimum: 1, maximum: 5000 })).pipe(
-    S.withConstructorDefault(Effect.succeed(500))
-  ),
-  kind: S.OptionFromNullOr(WireEventKind),
-  direction: S.OptionFromNullOr(WireDirection),
-  mid: S.OptionFromNullOr(S.String)
-}, { description: "A page of one run's events after a cursor, with optional filters" }) {}
+export class EventQuery extends S.Class<EventQuery>("EventQuery")(
+  {
+    runId: RunId,
+    after: EventId.pipe(S.withConstructorDefault(Effect.succeed(EventId.make(0)))),
+    limit: S.Int.check(S.isBetween({ minimum: 1, maximum: 5000 })).pipe(S.withConstructorDefault(Effect.succeed(500))),
+    kind: S.OptionFromNullOr(WireEventKind),
+    direction: S.OptionFromNullOr(WireDirection),
+    mid: S.OptionFromNullOr(S.String)
+  },
+  { description: "A page of one run's events after a cursor, with optional filters" }
+) {}
 
 /**
  * What the trace store can do: open and close runs, write events in batches,
@@ -346,15 +359,15 @@ export const make = Effect.gen(function* () {
     Request: EventQuery,
     Result: StoredEvent,
     execute: (query) =>
-      sql`select * from events where ${
-        sql.and(A.getSomes([
+      sql`select * from events where ${sql.and(
+        A.getSomes([
           O.some(sql`runId = ${query.runId}`),
           O.some(sql`id > ${query.after}`),
           O.map(O.fromNullishOr(query.kind), (kind) => sql`kind = ${kind}`),
           O.map(O.fromNullishOr(query.direction), (direction) => sql`direction = ${direction}`),
           O.map(O.fromNullishOr(query.mid), (mid) => sql`mid = ${mid}`)
-        ]))
-      } order by id limit ${query.limit}`
+        ])
+      )} order by id limit ${query.limit}`
   })
 
   return WireStore.of({
@@ -405,7 +418,6 @@ export const make = Effect.gen(function* () {
  * @since 0.0.0
  */
 export class WireStore extends Context.Service<WireStore, WireStoreShape>()("wire-trace/WireStore") {
-  static readonly layer: Layer.Layer<WireStore, SqlError | Migrator.MigrationError, SqlClient> = Layer.effect(
-    WireStore
-  )(make)
+  static readonly layer: Layer.Layer<WireStore, SqlError | Migrator.MigrationError, SqlClient> =
+    Layer.effect(WireStore)(make)
 }

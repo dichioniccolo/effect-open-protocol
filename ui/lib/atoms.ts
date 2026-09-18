@@ -39,17 +39,19 @@ export interface ListedRun {
   readonly status: RunStatus
 }
 
-const statusAt = (now: DateTime.Utc) => (run: Run): RunStatus =>
-  O.isSome(run.endedAt)
-    ? "ended"
-    : pipe(
-      run.lastEventAt,
-      O.orElse(() => O.some(run.startedAt)),
-      O.flatMap(DateTime.make),
-      O.exists((last) => Duration.isLessThan(DateTime.distance(last, now), quietAfter))
-    )
-    ? "recording"
-    : "quiet"
+const statusAt =
+  (now: DateTime.Utc) =>
+  (run: Run): RunStatus =>
+    O.isSome(run.endedAt)
+      ? "ended"
+      : pipe(
+            run.lastEventAt,
+            O.orElse(() => O.some(run.startedAt)),
+            O.flatMap(DateTime.make),
+            O.exists((last) => Duration.isLessThan(DateTime.distance(last, now), quietAfter))
+          )
+        ? "recording"
+        : "quiet"
 
 /** Lists the runs with their status, stamped against the current time. */
 export const listRuns = (runs: ReadonlyArray<Run>, now: DateTime.Utc): ReadonlyArray<ListedRun> =>
@@ -71,16 +73,19 @@ const fetchRuns = pipe(
  * On the server it stays initial: the page renders the list it loaded itself,
  * and polling starts in the browser.
  */
-export const runsAtom = runtime.atom(Stream.fromEffectSchedule(fetchRuns, Schedule.spaced(pollEvery))).pipe(
-  Atom.withServerValueInitial
-)
+export const runsAtom = runtime
+  .atom(Stream.fromEffectSchedule(fetchRuns, Schedule.spaced(pollEvery)))
+  .pipe(Atom.withServerValueInitial)
 
 /** Every event of a run the browser has, oldest first. */
 export const eventsAtom = Atom.family((_: RunId) => Atom.make<ReadonlyArray<StoredEvent>>([]).pipe(Atom.keepAlive))
 
 /** The newest event id the browser holds for a run, or 0 before the first. */
 const cursorOf = (events: ReadonlyArray<StoredEvent>): number =>
-  O.getOrElse(O.map(A.last(events), (event) => event.id), () => 0)
+  O.getOrElse(
+    O.map(A.last(events), (event) => event.id),
+    () => 0
+  )
 
 /** How long to wait before opening the next live connection. */
 const reconnectEvery = Duration.seconds(1)
@@ -124,24 +129,29 @@ const connection = (runId: RunId, after: number) =>
  * shows as `reconnecting` and is retried on the same beat, never fatal.
  */
 export const liveAtom = Atom.family((runId: RunId) =>
-  runtime.atom((get) => {
-    const events = eventsAtom(runId)
-    const append = (page: ReadonlyArray<StoredEvent>) =>
-      Effect.sync(() =>
-        get.registry.update(events, (held) => {
-          const after = cursorOf(held)
-          return A.appendAll(held, A.filter(page, (event) => event.id > after))
-        })
+  runtime
+    .atom((get) => {
+      const events = eventsAtom(runId)
+      const append = (page: ReadonlyArray<StoredEvent>) =>
+        Effect.sync(() =>
+          get.registry.update(events, (held) => {
+            const after = cursorOf(held)
+            return A.appendAll(
+              held,
+              A.filter(page, (event) => event.id > after)
+            )
+          })
+        )
+      return pipe(
+        // Read the cursor when each connection opens, not once for the atom.
+        Stream.unwrap(Effect.sync(() => connection(runId, cursorOf(get.once(events))))),
+        Stream.tap(append),
+        Stream.map((): LiveStatus => "live"),
+        Stream.catchCause(() => Stream.succeed<LiveStatus>("reconnecting")),
+        Stream.repeat(Schedule.spaced(reconnectEvery))
       )
-    return pipe(
-      // Read the cursor when each connection opens, not once for the atom.
-      Stream.unwrap(Effect.sync(() => connection(runId, cursorOf(get.once(events))))),
-      Stream.tap(append),
-      Stream.map((): LiveStatus => "live"),
-      Stream.catchCause(() => Stream.succeed<LiveStatus>("reconnecting")),
-      Stream.repeat(Schedule.spaced(reconnectEvery))
-    )
-  }).pipe(Atom.withServerValueInitial)
+    })
+    .pipe(Atom.withServerValueInitial)
 )
 
 /** The packet list filters. */

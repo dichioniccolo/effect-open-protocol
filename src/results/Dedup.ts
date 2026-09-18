@@ -102,14 +102,15 @@ export const makeDedup = Effect.fnUntraced(function* (capacity: number = default
   })
 
   /** Advances the watermark across every identifier already delivered. */
-  const advance = (from: TighteningId, ahead: HashSet.HashSet<TighteningId>): {
+  const advance = (
+    from: TighteningId,
+    ahead: HashSet.HashSet<TighteningId>
+  ): {
     readonly watermark: O.Option<TighteningId>
     readonly ahead: HashSet.HashSet<TighteningId>
   } => {
     const next = TighteningId.make(from + 1)
-    return HashSet.has(ahead, next)
-      ? advance(next, HashSet.remove(ahead, next))
-      : { watermark: O.some(from), ahead }
+    return HashSet.has(ahead, next) ? advance(next, HashSet.remove(ahead, next)) : { watermark: O.some(from), ahead }
   }
 
   /** Records the identifier, evicting the oldest once the window is full. */
@@ -121,12 +122,12 @@ export const makeDedup = Effect.fnUntraced(function* (capacity: number = default
     return A.length(order) <= capacity
       ? { ids: HashSet.add(current.ids, id), order }
       : O.match(A.head(order), {
-        onNone: () => ({ ids: HashSet.add(current.ids, id), order }),
-        onSome: (oldest) => ({
-          ids: HashSet.add(HashSet.remove(current.ids, oldest), id),
-          order: A.drop(order, 1)
+          onNone: () => ({ ids: HashSet.add(current.ids, id), order }),
+          onSome: (oldest) => ({
+            ids: HashSet.add(HashSet.remove(current.ids, oldest), id),
+            order: A.drop(order, 1)
+          })
         })
-      })
   }
 
   const seen = (id: TighteningId): Effect.Effect<boolean> =>
@@ -154,24 +155,28 @@ export const makeDedup = Effect.fnUntraced(function* (capacity: number = default
 
   const markBaseline = (id: TighteningId): Effect.Effect<void> =>
     Ref.update(state, (current) =>
-      O.isSome(current.watermark) ? current : { ...current, ...advance(id, current.ahead) })
+      O.isSome(current.watermark) ? current : { ...current, ...advance(id, current.ahead) }
+    )
 
   /** The oldest identifier held aside, which is where a baseline has to start. */
   const lowestAhead = (ahead: HashSet.HashSet<TighteningId>): O.Option<TighteningId> =>
-    A.reduce(
-      A.fromIterable(ahead),
-      O.none<TighteningId>(),
-      (lowest, id) => O.match(lowest, { onNone: () => O.some(id), onSome: (value) => O.some(id < value ? id : value) })
+    A.reduce(A.fromIterable(ahead), O.none<TighteningId>(), (lowest, id) =>
+      O.match(lowest, { onNone: () => O.some(id), onSome: (value) => O.some(id < value ? id : value) })
     )
 
   const markNoHistory: Effect.Effect<void> = Ref.update(state, (current) =>
     O.isSome(current.watermark)
       ? { ...current, emptyHistory: true }
-      // A result already arrived while we were asking: it is the baseline.
-      : O.match(lowestAhead(current.ahead), {
-        onNone: () => ({ ...current, emptyHistory: true }),
-        onSome: (lowest) => ({ ...current, emptyHistory: true, ...advance(lowest, HashSet.remove(current.ahead, lowest)) })
-      }))
+      : // A result already arrived while we were asking: it is the baseline.
+        O.match(lowestAhead(current.ahead), {
+          onNone: () => ({ ...current, emptyHistory: true }),
+          onSome: (lowest) => ({
+            ...current,
+            emptyHistory: true,
+            ...advance(lowest, HashSet.remove(current.ahead, lowest))
+          })
+        })
+  )
 
   return {
     seen,

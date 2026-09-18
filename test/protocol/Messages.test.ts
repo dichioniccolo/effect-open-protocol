@@ -153,45 +153,37 @@ describe("Messages", () => {
     )
   })
 
-  it.prop(
-    "round trips tightening results",
-    [idValue, torqueValue, angleValue],
-    ([tighteningId, torque, angle]) => {
-      const message = new LastResult({
-        result: result({
-          tighteningId,
-          torque: torque / 100,
-          angle,
-          status: "NOK",
-          torqueStatus: "Low",
-          angleStatus: "OK",
-          vin: "VIN000123",
-          parameterSetId: 12
-        })
+  it.prop("round trips tightening results", [idValue, torqueValue, angleValue], ([tighteningId, torque, angle]) => {
+    const message = new LastResult({
+      result: result({
+        tighteningId,
+        torque: torque / 100,
+        angle,
+        status: "NOK",
+        torqueStatus: "Low",
+        angleStatus: "OK",
+        vin: "VIN000123",
+        parameterSetId: 12
       })
-      assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
-    }
-  )
+    })
+    assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
+  })
 
-  it.prop(
-    "round trips old results",
-    [idValue, torqueValue, angleValue],
-    ([tighteningId, torque, angle]) => {
-      const message = new OldResult({
-        result: result({
-          tighteningId,
-          torque: torque / 100,
-          angle,
-          status: "OK",
-          torqueStatus: "High",
-          angleStatus: "Low",
-          vin: "",
-          parameterSetId: 0
-        })
+  it.prop("round trips old results", [idValue, torqueValue, angleValue], ([tighteningId, torque, angle]) => {
+    const message = new OldResult({
+      result: result({
+        tighteningId,
+        torque: torque / 100,
+        angle,
+        status: "OK",
+        torqueStatus: "High",
+        angleStatus: "Low",
+        vin: "",
+        parameterSetId: 0
       })
-      assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
-    }
-  )
+    })
+    assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
+  })
 
   it("reports a truncated result payload", () => {
     const frame = withoutTerminator(encodeMessage(new LastResult({ result: sample })))

@@ -21,7 +21,11 @@ const decoder = new TextDecoder("latin1")
 
 const hexDigits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"] as const
 
-const digitAt = (index: number): string => pipe(A.get(hexDigits, index), O.getOrElse(() => "0"))
+const digitAt = (index: number): string =>
+  pipe(
+    A.get(hexDigits, index),
+    O.getOrElse(() => "0")
+  )
 
 /** Every byte value, as the latin1 character it decodes to. */
 const characters: ReadonlyArray<string> = pipe(
@@ -31,7 +35,11 @@ const characters: ReadonlyArray<string> = pipe(
   (text) => A.map(A.range(0, 255), (code) => Str.substring(code, code + 1)(text))
 )
 
-const characterOf = (code: number): string => pipe(A.get(characters, code), O.getOrElse(() => "?"))
+const characterOf = (code: number): string =>
+  pipe(
+    A.get(characters, code),
+    O.getOrElse(() => "?")
+  )
 
 const named: ReadonlyArray<readonly [number, string]> = [
   [0, "\\0"],
@@ -49,18 +57,19 @@ const tokens: ReadonlyArray<string> = A.map(A.range(0, 255), (code) =>
     A.findFirst(named, ([value]) => value === code),
     O.map(([, token]) => token),
     O.getOrElse(() =>
-      isPrintable(code)
-        ? characterOf(code)
-        : `\\x${digitAt(Math.floor(code / 16))}${digitAt(code % 16)}`
+      isPrintable(code) ? characterOf(code) : `\\x${digitAt(Math.floor(code / 16))}${digitAt(code % 16)}`
     )
-  ))
+  )
+)
 
-const tokenOf = (code: number): string => pipe(A.get(tokens, code), O.getOrElse(() => "\\x00"))
+const tokenOf = (code: number): string =>
+  pipe(
+    A.get(tokens, code),
+    O.getOrElse(() => "\\x00")
+  )
 
 /** The byte each single printable character stands for, for the way back. */
-const codes: ReadonlyMap<string, number> = new Map(
-  A.map(A.range(0, 255), (code) => [characterOf(code), code] as const)
-)
+const codes: ReadonlyMap<string, number> = new Map(A.map(A.range(0, 255), (code) => [characterOf(code), code] as const))
 
 const namedCodes: ReadonlyMap<string, number> = new Map(
   A.map(named, ([code, token]) => [Str.substring(1, 2)(token), code] as const)
@@ -70,8 +79,7 @@ const hexValues: ReadonlyMap<string, number> = new Map(
   A.map(A.range(0, 15), (value) => [digitAt(value), value] as const)
 )
 
-const lookup = (table: ReadonlyMap<string, number>, key: string): O.Option<number> =>
-  O.fromNullishOr(table.get(key))
+const lookup = (table: ReadonlyMap<string, number>, key: string): O.Option<number> => O.fromNullishOr(table.get(key))
 
 /**
  * Renders bytes as printable text, escaping everything a terminal should not
@@ -104,20 +112,19 @@ interface Token {
 }
 
 const escaped = (text: string, at: number): O.Option<Token> =>
-  pipe(
-    Str.substring(at + 1, at + 2)(text),
-    (marker) =>
-      Match.value(marker).pipe(
-        Match.when("x", () =>
-          pipe(
-            O.all([
-              lookup(hexValues, Str.substring(at + 2, at + 3)(text)),
-              lookup(hexValues, Str.substring(at + 3, at + 4)(text))
-            ]),
-            O.map(([high, low]) => ({ code: high * 16 + low, width: 4 }))
-          )),
-        Match.orElse(() => O.map(lookup(namedCodes, marker), (code) => ({ code, width: 2 })))
-      )
+  pipe(Str.substring(at + 1, at + 2)(text), (marker) =>
+    Match.value(marker).pipe(
+      Match.when("x", () =>
+        pipe(
+          O.all([
+            lookup(hexValues, Str.substring(at + 2, at + 3)(text)),
+            lookup(hexValues, Str.substring(at + 3, at + 4)(text))
+          ]),
+          O.map(([high, low]) => ({ code: high * 16 + low, width: 4 }))
+        )
+      ),
+      Match.orElse(() => O.map(lookup(namedCodes, marker), (code) => ({ code, width: 2 })))
+    )
   )
 
 const plain = (text: string, at: number): O.Option<Token> =>
@@ -147,11 +154,11 @@ export const unescapeWire = (text: string): Uint8Array => {
     at >= Str.length(text)
       ? collected
       : pipe(
-        Str.substring(at, at + 1)(text) === "\\" ? escaped(text, at) : plain(text, at),
-        O.match({
-          onNone: () => read(at + 1, collected),
-          onSome: (token) => read(at + token.width, A.append(collected, token.code))
-        })
-      )
+          Str.substring(at, at + 1)(text) === "\\" ? escaped(text, at) : plain(text, at),
+          O.match({
+            onNone: () => read(at + 1, collected),
+            onSome: (token) => read(at + token.width, A.append(collected, token.code))
+          })
+        )
   return Uint8Array.from(read(0, []))
 }

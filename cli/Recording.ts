@@ -35,17 +35,19 @@ const batchSize = 500
 
 const now = Effect.map(DateTime.now, DateTime.formatIso)
 
-const toRow = (runId: RunId, connection: number) => (event: WireEvent): NewEvent =>
-  new NewEvent({
-    runId,
-    connection,
-    at: event.at,
-    direction: event.direction,
-    kind: event.kind,
-    bytes: event.bytes,
-    mid: event.mid,
-    raw: event.raw
-  })
+const toRow =
+  (runId: RunId, connection: number) =>
+  (event: WireEvent): NewEvent =>
+    new NewEvent({
+      runId,
+      connection,
+      at: event.at,
+      direction: event.direction,
+      kind: event.kind,
+      bytes: event.bytes,
+      mid: event.mid,
+      raw: event.raw
+    })
 
 /**
  * Opens the trace store at `filename`, records the start of this run, and
@@ -59,26 +61,21 @@ const openDatabase = Effect.fnUntraced(function* (filename: string, start: RunSt
   const path = yield* Path.Path
   yield* fs.makeDirectory(path.dirname(filename), { recursive: true })
 
-  const context = yield* Layer.build(
-    WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })))
-  )
+  const context = yield* Layer.build(WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename }))))
   const store = Context.get(context, WireStore)
   const runId = yield* store.startRun(start)
   const queue = yield* Queue.unbounded<NewEvent>()
 
   const write = (batch: ReadonlyArray<NewEvent>) =>
     Effect.catchCause(store.insertEvents(batch), (cause) =>
-      Effect.logWarning("could not record wire events", cause).pipe(
-        Effect.annotateLogs({ dropped: batch.length })
-      ))
+      Effect.logWarning("could not record wire events", cause).pipe(Effect.annotateLogs({ dropped: batch.length }))
+    )
 
   // Taking is interruptible and writing is not, so stopping the writer never
   // strands a batch that was taken but not written.
   const writer = yield* Effect.forkChild(
     Effect.forever(
-      Effect.uninterruptibleMask((restore) =>
-        Effect.flatMap(restore(Queue.takeBetween(queue, 1, batchSize)), write)
-      )
+      Effect.uninterruptibleMask((restore) => Effect.flatMap(restore(Queue.takeBetween(queue, 1, batchSize)), write))
     )
   )
 
@@ -93,12 +90,11 @@ const openDatabase = Effect.fnUntraced(function* (filename: string, start: RunSt
     )
   )
 
-  yield* Effect.logInfo("recording to the trace store").pipe(
-    Effect.annotateLogs({ traceDb: filename, runId })
-  )
+  yield* Effect.logInfo("recording to the trace store").pipe(Effect.annotateLogs({ traceDb: filename, runId }))
 
-  return (connection: number): WireSink => (event) =>
-    Effect.asVoid(Queue.offer(queue, toRow(runId, connection)(event)))
+  return (connection: number): WireSink =>
+    (event) =>
+      Effect.asVoid(Queue.offer(queue, toRow(runId, connection)(event)))
 })
 
 /**
@@ -127,10 +123,13 @@ export const makeRecording = Effect.fnUntraced(function* (options: {
   const connections = yield* Ref.make(0)
 
   const recording: Recording = {
-    nextConnection: Effect.map(Ref.updateAndGet(connections, (n) => n + 1), (connection) => {
-      const sinks = A.getSomes([options.file, O.map(database, (forConnection) => forConnection(connection))])
-      return (event: WireEvent) => Effect.forEach(sinks, (sink) => sink(event), { discard: true })
-    })
+    nextConnection: Effect.map(
+      Ref.updateAndGet(connections, (n) => n + 1),
+      (connection) => {
+        const sinks = A.getSomes([options.file, O.map(database, (forConnection) => forConnection(connection))])
+        return (event: WireEvent) => Effect.forEach(sinks, (sink) => sink(event), { discard: true })
+      }
+    )
   }
   return recording
 })

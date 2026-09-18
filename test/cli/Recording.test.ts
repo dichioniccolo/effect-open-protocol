@@ -66,19 +66,28 @@ describe("Recording", () => {
 
       const { runs, events } = yield* readBack(filename)
       expect(A.map(runs, (run) => [run.side, run.eventCount])).toEqual([["client", 8]])
-      assertSome(O.map(O.flatMap(A.head(runs), (run) => run.endedAt), () => "ended"), "ended")
-      expect(A.map(events, (event) => [event.connection, event.direction, event.kind, O.getOrNull(event.mid)])).toEqual([
-        [1, "send", "chunk", null],
-        [1, "send", "frame", "0001"],
-        [1, "recv", "chunk", null],
-        [1, "recv", "frame", "0002"],
-        [2, "send", "chunk", null],
-        [2, "send", "frame", "0001"],
-        [2, "recv", "chunk", null],
-        [2, "recv", "frame", "0002"]
-      ])
+      assertSome(
+        O.map(
+          O.flatMap(A.head(runs), (run) => run.endedAt),
+          () => "ended"
+        ),
+        "ended"
+      )
+      expect(A.map(events, (event) => [event.connection, event.direction, event.kind, O.getOrNull(event.mid)])).toEqual(
+        [
+          [1, "send", "chunk", null],
+          [1, "send", "frame", "0001"],
+          [1, "recv", "chunk", null],
+          [1, "recv", "frame", "0002"],
+          [2, "send", "chunk", null],
+          [2, "send", "frame", "0001"],
+          [2, "recv", "chunk", null],
+          [2, "recv", "frame", "0002"]
+        ]
+      )
       expect(events[1]?.raw).toBe("00200001001         \\0")
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)))
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  )
 
   it.effect("never fails a send when the store cannot be written", () =>
     Effect.gen(function* () {
@@ -100,7 +109,8 @@ describe("Recording", () => {
         yield* traced.send(handshake)
         expect(yield* Ref.get(written)).toEqual([handshake])
       }).pipe(Effect.scoped)
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)))
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  )
 
   it.effect("still traces when the store cannot be opened", () =>
     Effect.gen(function* () {
@@ -121,5 +131,6 @@ describe("Recording", () => {
         yield* traced.send(handshake)
         expect(yield* Ref.get(written)).toEqual([handshake])
       }).pipe(Effect.scoped)
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)))
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  )
 })

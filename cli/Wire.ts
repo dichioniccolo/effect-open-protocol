@@ -168,7 +168,6 @@ export const instrumentedTransport = (options: {
 }): Layer.Layer<Transport, never, Transport> =>
   Layer.effect(Transport)(
     Effect.map(Transport, (transport) => ({
-      connect: (endpoint) =>
-        Effect.flatMap(transport.connect(endpoint), (duplex) => instrument(duplex, options))
+      connect: (endpoint) => Effect.flatMap(transport.connect(endpoint), (duplex) => instrument(duplex, options))
     }))
   )

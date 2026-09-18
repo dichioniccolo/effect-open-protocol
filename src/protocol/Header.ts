@@ -33,23 +33,14 @@ export const terminator = "\u0000"
 const field = (raw: string, name: string): Result.Result<number, MalformedHeader> =>
   parseDigits(Str.trim(raw), () => new MalformedHeader({ field: name, value: raw }))
 
-const fieldOrDefault = (
-  raw: string,
-  name: string,
-  fallback: number
-): Result.Result<number, MalformedHeader> =>
+const fieldOrDefault = (raw: string, name: string, fallback: number): Result.Result<number, MalformedHeader> =>
   Str.isEmpty(Str.trim(raw)) ? Result.succeed(fallback) : field(raw, name)
 
-const reserved = (
-  raw: string,
-  feature: string
-): Result.Result<void, MalformedHeader | UnsupportedFeature> =>
+const reserved = (raw: string, feature: string): Result.Result<void, MalformedHeader | UnsupportedFeature> =>
   pipe(
     fieldOrDefault(raw, feature, 0),
     Result.flatMap((value) =>
-      value === 0
-        ? Result.succeed(undefined)
-        : Result.fail(new UnsupportedFeature({ feature, value: raw }))
+      value === 0 ? Result.succeed(undefined) : Result.fail(new UnsupportedFeature({ feature, value: raw }))
     )
   )
 
@@ -77,14 +68,17 @@ const reserved = (
  * @category models
  * @since 0.0.0
  */
-export class Header extends S.Class<Header>("Header")({
-  length: S.Number.check(S.isInt(), S.isBetween({ minimum: headerLength, maximum: 9999 })),
-  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
-  revision: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
-  noAck: S.Boolean,
-  stationId: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 99 })),
-  spindleId: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 99 }))
-}, { description: "The 20 byte header carried by every Open Protocol message" }) {}
+export class Header extends S.Class<Header>("Header")(
+  {
+    length: S.Number.check(S.isInt(), S.isBetween({ minimum: headerLength, maximum: 9999 })),
+    mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
+    revision: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
+    noAck: S.Boolean,
+    stationId: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 99 })),
+    spindleId: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 99 }))
+  },
+  { description: "The 20 byte header carried by every Open Protocol message" }
+) {}
 
 /**
  * Decodes the 20 leading characters of a message into a `Header`.
@@ -107,30 +101,28 @@ export class Header extends S.Class<Header>("Header")({
  * @category decoding
  * @since 0.0.0
  */
-export const decodeHeader = (
-  text: string
-): Result.Result<Header, MalformedHeader | UnsupportedFeature> =>
+export const decodeHeader = (text: string): Result.Result<Header, MalformedHeader | UnsupportedFeature> =>
   Str.length(text) < headerLength
     ? Result.fail(new MalformedHeader({ field: "header", value: text }))
     : Result.gen(function* () {
-      const length = yield* field(Str.substring(0, 4)(text), "length")
-      const mid = yield* field(Str.substring(4, 8)(text), "mid")
-      const revision = yield* fieldOrDefault(Str.substring(8, 11)(text), "revision", 1)
-      const noAck = yield* fieldOrDefault(Str.substring(11, 12)(text), "noAck", 0)
-      const stationId = yield* fieldOrDefault(Str.substring(12, 14)(text), "stationId", 1)
-      const spindleId = yield* fieldOrDefault(Str.substring(14, 16)(text), "spindleId", 1)
-      yield* reserved(Str.substring(16, 18)(text), "sequenceNumber")
-      yield* reserved(Str.substring(18, 19)(text), "messageParts")
-      yield* reserved(Str.substring(19, 20)(text), "messagePartNumber")
-      return new Header({
-        length,
-        mid,
-        revision: revision === 0 ? 1 : revision,
-        noAck: noAck === 1,
-        stationId: stationId === 0 ? 1 : stationId,
-        spindleId: spindleId === 0 ? 1 : spindleId
+        const length = yield* field(Str.substring(0, 4)(text), "length")
+        const mid = yield* field(Str.substring(4, 8)(text), "mid")
+        const revision = yield* fieldOrDefault(Str.substring(8, 11)(text), "revision", 1)
+        const noAck = yield* fieldOrDefault(Str.substring(11, 12)(text), "noAck", 0)
+        const stationId = yield* fieldOrDefault(Str.substring(12, 14)(text), "stationId", 1)
+        const spindleId = yield* fieldOrDefault(Str.substring(14, 16)(text), "spindleId", 1)
+        yield* reserved(Str.substring(16, 18)(text), "sequenceNumber")
+        yield* reserved(Str.substring(18, 19)(text), "messageParts")
+        yield* reserved(Str.substring(19, 20)(text), "messagePartNumber")
+        return new Header({
+          length,
+          mid,
+          revision: revision === 0 ? 1 : revision,
+          noAck: noAck === 1,
+          stationId: stationId === 0 ? 1 : stationId,
+          spindleId: spindleId === 0 ? 1 : spindleId
+        })
       })
-    })
 
 /**
  * Renders a header as the 20 ASCII characters that open a message.

@@ -5,12 +5,7 @@ import { makeGapRecovery } from "../../src/connection/GapRecovery.ts"
 import { resolveSettings } from "../../src/connection/DeviceSettings.ts"
 import type { Session } from "../../src/connection/Session.ts"
 import { type Message, OldResult } from "../../src/protocol/Messages.ts"
-import {
-  ControllerTimestamp,
-  DeviceId,
-  TighteningId,
-  TighteningResult
-} from "../../src/protocol/TighteningResult.ts"
+import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 import { makeDedup } from "../../src/results/Dedup.ts"
 import type { ResultDelivery } from "../../src/results/ResultDelivery.ts"
@@ -56,8 +51,8 @@ const fixture = Effect.fnUntraced(function* () {
           Effect.succeed(
             message._tag === "RequestOldResult"
               ? new OldResult({
-                result: resultFor(message.tighteningId === 0 ? 3 : message.tighteningId)
-              })
+                  result: resultFor(message.tighteningId === 0 ? 3 : message.tighteningId)
+                })
               : new OldResult({ result: resultFor(3) })
           )
         )
@@ -88,7 +83,8 @@ describe("what triggers a MID 0064", () => {
       yield* Effect.yieldNow
 
       expect(yield* Ref.get(asked)).toEqual([])
-    }))
+    })
+  )
 
   // Live: the pass runs on a forked fiber and sleeps between attempts, so the
   // test clock would hold it still.
@@ -103,7 +99,8 @@ describe("what triggers a MID 0064", () => {
       const requests = yield* Ref.get(asked)
       expect(A.length(requests)).toBeGreaterThan(0)
       expect(A.every(requests, (mid) => mid === 64)).toBe(true)
-    }))
+    })
+  )
 
   it.effect("a result arriving before any baseline asks for nothing", () =>
     Effect.gen(function* () {
@@ -113,5 +110,6 @@ describe("what triggers a MID 0064", () => {
       yield* Effect.yieldNow
 
       expect(yield* Ref.get(asked)).toEqual([])
-    }))
+    })
+  )
 })

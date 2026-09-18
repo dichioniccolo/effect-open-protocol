@@ -25,20 +25,20 @@ const takeFrames = (
   return Str.length(buffer) < 4
     ? Result.succeed({ buffer, frames })
     : pipe(
-      parseDigits(lengthField, () => new MalformedHeader({ field: "length", value: lengthField })),
-      Result.flatMap((length) =>
-        length < headerLength
-          ? Result.fail(new InvalidLength({ length }))
-          : Str.length(buffer) < length + 1
-          ? Result.succeed({ buffer, frames })
-          : Str.substring(length, length + 1)(buffer) !== terminator
-          ? Result.fail(new MissingTerminator({ length }))
-          : takeFrames(
-            Str.substring(length + 1, Str.length(buffer))(buffer),
-            A.append(frames, Str.substring(0, length)(buffer))
-          )
+        parseDigits(lengthField, () => new MalformedHeader({ field: "length", value: lengthField })),
+        Result.flatMap((length) =>
+          length < headerLength
+            ? Result.fail(new InvalidLength({ length }))
+            : Str.length(buffer) < length + 1
+              ? Result.succeed({ buffer, frames })
+              : Str.substring(length, length + 1)(buffer) !== terminator
+                ? Result.fail(new MissingTerminator({ length }))
+                : takeFrames(
+                    Str.substring(length + 1, Str.length(buffer))(buffer),
+                    A.append(frames, Str.substring(0, length)(buffer))
+                  )
+        )
       )
-    )
 }
 
 /**
@@ -75,14 +75,12 @@ export const step = (
  * @category framing
  * @since 0.0.0
  */
-export const frames = <E, R>(
-  bytes: Stream.Stream<Uint8Array, E, R>
-): Stream.Stream<string, E | ProtocolError, R> =>
+export const frames = <E, R>(bytes: Stream.Stream<Uint8Array, E, R>): Stream.Stream<string, E | ProtocolError, R> =>
   pipe(
     bytes,
-    Stream.mapAccumEffect(() => "", (buffer: string, chunk: Uint8Array) =>
-      Effect.map(
-        Effect.fromResult(step(buffer, chunk)),
-        (next) => [next.buffer, next.frames] as const
-      ))
+    Stream.mapAccumEffect(
+      () => "",
+      (buffer: string, chunk: Uint8Array) =>
+        Effect.map(Effect.fromResult(step(buffer, chunk)), (next) => [next.buffer, next.frames] as const)
+    )
   )

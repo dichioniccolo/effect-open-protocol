@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, pipe, Queue, Ref, Stream } from "effect"
+import { Effect, Queue, Ref, Stream } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
@@ -65,7 +65,8 @@ describe("tracedDuplex", () => {
       expect(frame.mid).toStrictEqual(O.some("9999"))
       expect(frame.bytes).toBe(21)
       expect(unescapeWire(frame.raw)).toEqual(encoder.encode(wire))
-    }))
+    })
+  )
 
   it.effect("keeps a split frame as three chunks and one frame", () =>
     Effect.gen(function* () {
@@ -77,7 +78,8 @@ describe("tracedDuplex", () => {
       const recorded = yield* Ref.get(events)
       expect(A.length(kindsOf(recorded, "chunk"))).toBe(3)
       expect(A.length(kindsOf(recorded, "frame"))).toBe(1)
-    }))
+    })
+  )
 
   it.effect("keeps a coalesced read as one chunk and two frames", () =>
     Effect.gen(function* () {
@@ -87,11 +89,9 @@ describe("tracedDuplex", () => {
 
       const recorded = yield* Ref.get(events)
       expect(A.length(kindsOf(recorded, "chunk"))).toBe(1)
-      expect(A.map(kindsOf(recorded, "frame"), (event) => event.mid)).toStrictEqual([
-        O.some("9999"),
-        O.some("0060")
-      ])
-    }))
+      expect(A.map(kindsOf(recorded, "frame"), (event) => event.mid)).toStrictEqual([O.some("9999"), O.some("0060")])
+    })
+  )
 
   it.effect("forwards writes untouched and traces them as sends", () =>
     Effect.gen(function* () {
@@ -103,7 +103,8 @@ describe("tracedDuplex", () => {
       const recorded = yield* Ref.get(events)
       expect(A.map(recorded, (event) => event.direction)).toEqual(["send", "send"])
       expect(A.map(recorded, (event) => event.kind)).toEqual(["chunk", "frame"])
-    }))
+    })
+  )
 
   it.effect("keeps the two directions on separate reassembly buffers", () =>
     Effect.gen(function* () {
@@ -117,7 +118,8 @@ describe("tracedDuplex", () => {
       expect(A.length(kindsOf(recorded, "frame"))).toBe(1)
       const frame = yield* Effect.fromOption(A.head(kindsOf(recorded, "frame")))
       expect(frame.direction).toBe("send")
-    }))
+    })
+  )
 
   it.effect("survives a stream it cannot frame", () =>
     Effect.gen(function* () {
@@ -127,7 +129,8 @@ describe("tracedDuplex", () => {
       const recorded = yield* Ref.get(events)
       expect(A.length(kindsOf(recorded, "chunk"))).toBe(1)
       expect(A.length(kindsOf(recorded, "frame"))).toBe(0)
-    }))
+    })
+  )
 
   it.effect("renders a trace line as one JSON object", () =>
     Effect.gen(function* () {
@@ -138,9 +141,10 @@ describe("tracedDuplex", () => {
       const recorded = yield* Ref.get(events)
       const frame = yield* Effect.fromOption(A.head(kindsOf(recorded, "frame")))
       const line = yield* wireEventLine(frame)
-      expect(line).toContain("\"kind\":\"frame\"")
-      expect(line).toContain("\"mid\":\"9999\"")
-    }))
+      expect(line).toContain('"kind":"frame"')
+      expect(line).toContain('"mid":"9999"')
+    })
+  )
 
   it.effect("passes a transport failure through untouched", () =>
     Effect.gen(function* () {
@@ -152,5 +156,6 @@ describe("tracedDuplex", () => {
       )
       const exit = yield* Effect.exit(Stream.runDrain(traced.incoming))
       expect(exit._tag).toBe("Failure")
-    }))
+    })
+  )
 })

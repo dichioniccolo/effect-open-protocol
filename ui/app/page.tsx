@@ -11,7 +11,10 @@ export const dynamic = "force-dynamic"
 export default async function Page() {
   const { json, renderedAt } = await runtime.runPromise(
     Effect.all({
-      json: Effect.flatMap(WireStore.use((store) => store.listRuns), S.encodeEffect(RunListJson)),
+      json: Effect.flatMap(
+        WireStore.use((store) => store.listRuns),
+        S.encodeEffect(RunListJson)
+      ),
       renderedAt: Effect.map(DateTime.now, DateTime.formatIso)
     })
   )

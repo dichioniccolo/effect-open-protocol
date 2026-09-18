@@ -51,9 +51,13 @@ export type Mid = typeof Mid.Type
  * @category models
  * @since 0.0.0
  */
-export class CommunicationStart extends S.TaggedClass<CommunicationStart>()("CommunicationStart", {}, {
-  description: "MID 0001, opens the session"
-}) {}
+export class CommunicationStart extends S.TaggedClass<CommunicationStart>()(
+  "CommunicationStart",
+  {},
+  {
+    description: "MID 0001, opens the session"
+  }
+) {}
 
 /**
  * The controller accepted the session and describes itself (MID 0002).
@@ -61,13 +65,15 @@ export class CommunicationStart extends S.TaggedClass<CommunicationStart>()("Com
  * @category models
  * @since 0.0.0
  */
-export class CommunicationStartAccepted
-  extends S.TaggedClass<CommunicationStartAccepted>()("CommunicationStartAccepted", {
+export class CommunicationStartAccepted extends S.TaggedClass<CommunicationStartAccepted>()(
+  "CommunicationStartAccepted",
+  {
     cellId: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
     channelId: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99 })),
     controllerName: S.String
-  }, { description: "MID 0002, session accepted" })
-{}
+  },
+  { description: "MID 0002, session accepted" }
+) {}
 
 /**
  * Closes the communication (MID 0003).
@@ -75,9 +81,13 @@ export class CommunicationStartAccepted
  * @category models
  * @since 0.0.0
  */
-export class CommunicationStop extends S.TaggedClass<CommunicationStop>()("CommunicationStop", {}, {
-  description: "MID 0003, closes the session"
-}) {}
+export class CommunicationStop extends S.TaggedClass<CommunicationStop>()(
+  "CommunicationStop",
+  {},
+  {
+    description: "MID 0003, closes the session"
+  }
+) {}
 
 /**
  * The controller rejected the last command (MID 0004).
@@ -85,10 +95,14 @@ export class CommunicationStop extends S.TaggedClass<CommunicationStop>()("Commu
  * @category models
  * @since 0.0.0
  */
-export class CommandError extends S.TaggedClass<CommandError>()("CommandError", {
-  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
-  code: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99 }))
-}, { description: "MID 0004, negative acknowledge carrying the failed MID" }) {}
+export class CommandError extends S.TaggedClass<CommandError>()(
+  "CommandError",
+  {
+    mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
+    code: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99 }))
+  },
+  { description: "MID 0004, negative acknowledge carrying the failed MID" }
+) {}
 
 /**
  * The controller accepted the last command (MID 0005).
@@ -96,9 +110,13 @@ export class CommandError extends S.TaggedClass<CommandError>()("CommandError", 
  * @category models
  * @since 0.0.0
  */
-export class CommandAccepted extends S.TaggedClass<CommandAccepted>()("CommandAccepted", {
-  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 }))
-}, { description: "MID 0005, positive acknowledge carrying the accepted MID" }) {}
+export class CommandAccepted extends S.TaggedClass<CommandAccepted>()(
+  "CommandAccepted",
+  {
+    mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 }))
+  },
+  { description: "MID 0005, positive acknowledge carrying the accepted MID" }
+) {}
 
 /**
  * Subscribes to tightening results in reliable mode (MID 0060).
@@ -106,9 +124,13 @@ export class CommandAccepted extends S.TaggedClass<CommandAccepted>()("CommandAc
  * @category models
  * @since 0.0.0
  */
-export class SubscribeResults extends S.TaggedClass<SubscribeResults>()("SubscribeResults", {}, {
-  description: "MID 0060, subscribes to the last tightening result"
-}) {}
+export class SubscribeResults extends S.TaggedClass<SubscribeResults>()(
+  "SubscribeResults",
+  {},
+  {
+    description: "MID 0060, subscribes to the last tightening result"
+  }
+) {}
 
 /**
  * A pushed tightening result (MID 0061).
@@ -116,9 +138,13 @@ export class SubscribeResults extends S.TaggedClass<SubscribeResults>()("Subscri
  * @category models
  * @since 0.0.0
  */
-export class LastResult extends S.TaggedClass<LastResult>()("LastResult", {
-  result: TighteningResult
-}, { description: "MID 0061, last tightening result" }) {}
+export class LastResult extends S.TaggedClass<LastResult>()(
+  "LastResult",
+  {
+    result: TighteningResult
+  },
+  { description: "MID 0061, last tightening result" }
+) {}
 
 /**
  * Acknowledges a pushed tightening result (MID 0062).
@@ -126,9 +152,13 @@ export class LastResult extends S.TaggedClass<LastResult>()("LastResult", {
  * @category models
  * @since 0.0.0
  */
-export class AcknowledgeResult extends S.TaggedClass<AcknowledgeResult>()("AcknowledgeResult", {}, {
-  description: "MID 0062, acknowledges the last tightening result"
-}) {}
+export class AcknowledgeResult extends S.TaggedClass<AcknowledgeResult>()(
+  "AcknowledgeResult",
+  {},
+  {
+    description: "MID 0062, acknowledges the last tightening result"
+  }
+) {}
 
 /**
  * Cancels the tightening result subscription (MID 0063).
@@ -136,9 +166,13 @@ export class AcknowledgeResult extends S.TaggedClass<AcknowledgeResult>()("Ackno
  * @category models
  * @since 0.0.0
  */
-export class UnsubscribeResults extends S.TaggedClass<UnsubscribeResults>()("UnsubscribeResults", {}, {
-  description: "MID 0063, unsubscribes from tightening results"
-}) {}
+export class UnsubscribeResults extends S.TaggedClass<UnsubscribeResults>()(
+  "UnsubscribeResults",
+  {},
+  {
+    description: "MID 0063, unsubscribes from tightening results"
+  }
+) {}
 
 /**
  * Requests a stored result by its tightening id; `0` asks for the latest one
@@ -147,9 +181,13 @@ export class UnsubscribeResults extends S.TaggedClass<UnsubscribeResults>()("Uns
  * @category models
  * @since 0.0.0
  */
-export class RequestOldResult extends S.TaggedClass<RequestOldResult>()("RequestOldResult", {
-  tighteningId: TighteningId
-}, { description: "MID 0064, uploads an old tightening result by id" }) {}
+export class RequestOldResult extends S.TaggedClass<RequestOldResult>()(
+  "RequestOldResult",
+  {
+    tighteningId: TighteningId
+  },
+  { description: "MID 0064, uploads an old tightening result by id" }
+) {}
 
 /**
  * A stored result returned by the controller (MID 0065).
@@ -157,9 +195,13 @@ export class RequestOldResult extends S.TaggedClass<RequestOldResult>()("Request
  * @category models
  * @since 0.0.0
  */
-export class OldResult extends S.TaggedClass<OldResult>()("OldResult", {
-  result: TighteningResult
-}, { description: "MID 0065, old tightening result reply" }) {}
+export class OldResult extends S.TaggedClass<OldResult>()(
+  "OldResult",
+  {
+    result: TighteningResult
+  },
+  { description: "MID 0065, old tightening result reply" }
+) {}
 
 /**
  * Keep-alive, mirrored by the controller (MID 9999).
@@ -167,9 +209,13 @@ export class OldResult extends S.TaggedClass<OldResult>()("OldResult", {
  * @category models
  * @since 0.0.0
  */
-export class KeepAlive extends S.TaggedClass<KeepAlive>()("KeepAlive", {}, {
-  description: "MID 9999, keep-alive"
-}) {}
+export class KeepAlive extends S.TaggedClass<KeepAlive>()(
+  "KeepAlive",
+  {},
+  {
+    description: "MID 9999, keep-alive"
+  }
+) {}
 
 /**
  * A well-formed frame carrying a MID this library does not model.
@@ -177,11 +223,15 @@ export class KeepAlive extends S.TaggedClass<KeepAlive>()("KeepAlive", {}, {
  * @category models
  * @since 0.0.0
  */
-export class UnknownMessage extends S.TaggedClass<UnknownMessage>()("UnknownMessage", {
-  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
-  revision: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
-  data: S.String
-}, { description: "A frame whose MID is outside the supported subset" }) {}
+export class UnknownMessage extends S.TaggedClass<UnknownMessage>()(
+  "UnknownMessage",
+  {
+    mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
+    revision: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
+    data: S.String
+  },
+  { description: "A frame whose MID is outside the supported subset" }
+) {}
 
 /**
  * Every message this library can decode.
@@ -211,12 +261,10 @@ const numberAt = (
   to: number,
   parameter: string
 ): Result.Result<number, PayloadDecodeError> =>
-  pipe(
-    Str.substring(from, to)(data),
-    (raw) =>
-      Str.length(raw) !== to - from
-        ? Result.fail(new PayloadDecodeError({ mid, reason: `${parameter} is truncated` }))
-        : parseDigits(raw, () => new PayloadDecodeError({ mid, reason: `${parameter} is not numeric` }))
+  pipe(Str.substring(from, to)(data), (raw) =>
+    Str.length(raw) !== to - from
+      ? Result.fail(new PayloadDecodeError({ mid, reason: `${parameter} is truncated` }))
+      : parseDigits(raw, () => new PayloadDecodeError({ mid, reason: `${parameter} is not numeric` }))
   )
 
 const decodeStartAccepted = (data: string): Result.Result<CommunicationStartAccepted, PayloadDecodeError> =>
@@ -273,13 +321,15 @@ const wireFormat = {
     pipe(
       numberAt(5, data, 0, 4, "mid"),
       Result.map((mid) => new CommandAccepted({ mid }))
-    )),
+    )
+  ),
   SubscribeResults: empty(60, () => new SubscribeResults()),
   LastResult: wire(61, (data, deviceId) =>
     pipe(
       decodeLastResult(deviceId, data),
       Result.map((result) => new LastResult({ result }))
-    )),
+    )
+  ),
   AcknowledgeResult: empty(62, () => new AcknowledgeResult()),
   UnsubscribeResults: empty(63, () => new UnsubscribeResults()),
   RequestOldResult: wire(64, (data) => decodeRequestOldResult(data)),
@@ -287,7 +337,8 @@ const wireFormat = {
     pipe(
       decodeOldResult(deviceId, data),
       Result.map((result) => new OldResult({ result }))
-    )),
+    )
+  ),
   KeepAlive: empty(9999, () => new KeepAlive())
 } satisfies { readonly [T in Exclude<Message, UnknownMessage>["_tag"]]: Wire<Extract<Message, { readonly _tag: T }>> }
 
@@ -295,11 +346,7 @@ const decoderFor: ReadonlyMap<number, Wire<Message>["decode"]> = new Map(
   A.map(Rec.values(wireFormat), (format) => [format.mid, format.decode] as const)
 )
 
-const decodeBody = (
-  header: Header,
-  data: string,
-  deviceId: DeviceId
-): Result.Result<Message, ProtocolError> =>
+const decodeBody = (header: Header, data: string, deviceId: DeviceId): Result.Result<Message, ProtocolError> =>
   O.match(O.fromNullishOr(decoderFor.get(header.mid)), {
     onNone: (): Result.Result<Message, ProtocolError> =>
       Result.succeed(new UnknownMessage({ mid: header.mid, revision: header.revision, data })),
@@ -325,26 +372,29 @@ const decodeBody = (
  * @category decoding
  * @since 0.0.0
  */
-export const decodeMessage = (
-  frame: string,
-  deviceId: DeviceId
-): Result.Result<Message, ProtocolError> =>
+export const decodeMessage = (frame: string, deviceId: DeviceId): Result.Result<Message, ProtocolError> =>
   pipe(
     decodeHeader(frame),
     Result.flatMap((header) => decodeBody(header, Str.substring(headerLength, Str.length(frame))(frame), deviceId))
   )
 
-const revisionOf = (message: Message): number => message._tag === "UnknownMessage" ? message.revision : 1
+const revisionOf = (message: Message): number => (message._tag === "UnknownMessage" ? message.revision : 1)
 
 const midOf = (message: Message): number =>
   message._tag === "UnknownMessage" ? message.mid : wireFormat[message._tag].mid
 
 const dataOf = (message: Message): string =>
   Match.value(message).pipe(
-    Match.tag("CommunicationStartAccepted", (accepted) =>
-      "01" + padNumber(accepted.cellId, 4) +
-      "02" + padNumber(accepted.channelId, 2) +
-      "03" + padText(accepted.controllerName, 25)),
+    Match.tag(
+      "CommunicationStartAccepted",
+      (accepted) =>
+        "01" +
+        padNumber(accepted.cellId, 4) +
+        "02" +
+        padNumber(accepted.channelId, 2) +
+        "03" +
+        padText(accepted.controllerName, 25)
+    ),
     Match.tag("CommandError", (error) => padNumber(error.mid, 4) + padNumber(error.code, 2)),
     Match.tag("CommandAccepted", (accepted) => padNumber(accepted.mid, 4)),
     Match.tag("LastResult", (last) => encodeLastResult(last.result)),

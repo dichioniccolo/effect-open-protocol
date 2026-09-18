@@ -35,20 +35,29 @@ export const DirectionFilter = S.Literals(["all", ...WireDirection.literals]).an
 export type DirectionFilter = typeof DirectionFilter.Type
 
 /** How a run's packet list is narrowed. */
-export class Filters extends S.Class<Filters>("Filters")({
-  showChunks: S.Boolean,
-  direction: DirectionFilter,
-  mid: S.Option(S.String)
-}, { description: "Packet list filters: chunks, direction and MID" }) {}
+export class Filters extends S.Class<Filters>("Filters")(
+  {
+    showChunks: S.Boolean,
+    direction: DirectionFilter,
+    mid: S.Option(S.String)
+  },
+  { description: "Packet list filters: chunks, direction and MID" }
+) {}
 
 export const noFilters = new Filters({ showChunks: false, direction: "all", mid: O.none() })
 
 /** The events a run's packet list shows under the given filters. */
 export const visible = (events: ReadonlyArray<StoredEvent>, filters: Filters): ReadonlyArray<StoredEvent> =>
-  A.filter(events, (event) =>
-    (filters.showChunks || event.kind === "frame") &&
-    (filters.direction === "all" || event.direction === filters.direction) &&
-    O.getOrElse(O.map(filters.mid, (mid) => O.contains(event.mid, mid)), () => true))
+  A.filter(
+    events,
+    (event) =>
+      (filters.showChunks || event.kind === "frame") &&
+      (filters.direction === "all" || event.direction === filters.direction) &&
+      O.getOrElse(
+        O.map(filters.mid, (mid) => O.contains(event.mid, mid)),
+        () => true
+      )
+  )
 
 /** Every MID that appears in a run, sorted, for the MID filter. */
 export const midsOf = (events: ReadonlyArray<StoredEvent>): ReadonlyArray<string> =>
@@ -61,9 +70,7 @@ const latin1 = new TextDecoder("latin1")
  * whose header does not parse.
  */
 export const headerOf = (event: StoredEvent): O.Option<Header> =>
-  event.kind === "frame"
-    ? Result.getSuccess(decodeHeader(latin1.decode(unescapeWire(event.raw))))
-    : O.none()
+  event.kind === "frame" ? Result.getSuccess(decodeHeader(latin1.decode(unescapeWire(event.raw)))) : O.none()
 
 /** A run id as it appears in a URL. */
 export const RunIdFromString = S.FiniteFromString.pipe(S.decodeTo(RunId))

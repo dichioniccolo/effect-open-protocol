@@ -73,8 +73,8 @@ const reasonOf = (error: unknown): string =>
   error instanceof ConnectionLost
     ? error.reason
     : error instanceof HandshakeRejected
-    ? `handshake rejected with code ${error.code}`
-    : "connection attempt failed"
+      ? `handshake rejected with code ${error.code}`
+      : "connection attempt failed"
 
 /**
  * Opens a supervised connection that reconnects until it is closed.
@@ -174,9 +174,9 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
 
   const attempt = Effect.gen(function* () {
     yield* emit(new AttemptStarted())
-    const duplex = yield* transport.connect(settings.endpoint).pipe(
-      Effect.tapError((error) => emit(new Failed({ reason: error.reason })))
-    )
+    const duplex = yield* transport
+      .connect(settings.endpoint)
+      .pipe(Effect.tapError((error) => emit(new Failed({ reason: error.reason }))))
     yield* emit(new Opened())
     const lastSent = yield* Ref.make(0)
     const replies = yield* makeRequestReply({
@@ -184,9 +184,7 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
         pipe(
           sendRaw(duplex, message),
           Effect.tap(() =>
-            Effect.clockWith((clock) => clock.currentTimeMillis).pipe(
-              Effect.flatMap((now) => Ref.set(lastSent, now))
-            )
+            Effect.clockWith((clock) => clock.currentTimeMillis).pipe(Effect.flatMap((now) => Ref.set(lastSent, now)))
           )
         ),
       responseTimeout: settings.responseTimeout
@@ -202,12 +200,13 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
       )
     )
 
-    const reader = yield* Effect.forkChild(readLoop(current, settings.id, (message) => routeUnsolicited(current, message)))
+    const reader = yield* Effect.forkChild(
+      readLoop(current, settings.id, (message) => routeUnsolicited(current, message))
+    )
     // A socket that dies during the handshake, the subscription or recovery
     // must fail the attempt immediately instead of waiting for a timeout.
-    const readerFailed = Effect.flatMap(
-      Fiber.join(reader),
-      () => Effect.fail(new ConnectionLost({ reason: "the controller closed the connection" }))
+    const readerFailed = Effect.flatMap(Fiber.join(reader), () =>
+      Effect.fail(new ConnectionLost({ reason: "the controller closed the connection" }))
     )
 
     yield* Effect.raceFirst(
@@ -263,9 +262,7 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
 
   const fiber = yield* Effect.forkChild(supervisor)
 
-  const withSession = <A, E>(
-    use: (current: Session) => Effect.Effect<A, E>
-  ): Effect.Effect<A, E | NotReady> =>
+  const withSession = <A, E>(use: (current: Session) => Effect.Effect<A, E>): Effect.Effect<A, E | NotReady> =>
     Effect.gen(function* () {
       const current = yield* SubscriptionRef.get(state)
       const open = yield* Ref.get(session)
@@ -310,15 +307,13 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
   // no-op rather than a defect.
   const close = pipe(
     SubscriptionRef.get(state),
-    Effect.flatMap((current) =>
-      current._tag === "Closed" || current._tag === "Closing" ? Effect.void : closeOnce
-    )
+    Effect.flatMap((current) => (current._tag === "Closed" || current._tag === "Closing" ? Effect.void : closeOnce))
   )
 
   yield* Effect.addFinalizer(() =>
     pipe(
       SubscriptionRef.get(state),
-      Effect.flatMap((current) => current._tag === "Closed" ? Effect.void : Effect.ignore(close))
+      Effect.flatMap((current) => (current._tag === "Closed" ? Effect.void : Effect.ignore(close)))
     )
   )
 
