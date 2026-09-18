@@ -3,13 +3,13 @@
   "initiative": {
     "id": "wire-trace-ui",
     "title": "Wire-trace UI",
-    "status": "active",
+    "status": "completed-retained",
     "created": "2026-09-18",
     "updated": "2026-09-18",
     "packetAnchorDocument": "SPEC.md"
   },
   "packetPath": "goals/wire-trace-ui",
-  "lifecycle": "active",
+  "lifecycle": "completed-retained",
   "mission": "Record every wire event the controller and client CLIs trace into a shared SQLite file, and ship a Next.js UI (Bun, Tailwind, Effect atoms) that lists runs, pages and filters their packets, shows raw plus decoded header, and tails live runs over SSE.",
   "executionCapable": true,
   "reflectionRequired": true,
@@ -85,12 +85,12 @@
     {
       "id": "P7",
       "name": "PR to mergeable",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "id": "P8",
       "name": "Close",
-      "status": "pending"
+      "status": "complete"
     }
   ],
   "verificationCommands": [
@@ -110,5 +110,10 @@
     "The same blocker repeats after reasonable investigation.",
     "The P1 gate fails: switch to the fallback topology (Bun HttpApi server plus AtomHttpApi), record it in SPEC.md, and continue.",
     "The P0 workspace conversion breaks the library build or tests without an obvious fix: stop and report before touching src/."
-  ]
+  ],
+  "evidence": {
+    "pullRequest": "https://github.com/dichioniccolo/effect-open-protocol/pull/3",
+    "mergeStateStatus": "CLEAN",
+    "reflection": "history/reflections/2026-09-18-claude.md"
+  }
 }

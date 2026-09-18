@@ -2,7 +2,7 @@
 
 ## Status
 
-Lifecycle: `active`
+Lifecycle: `completed-retained`
 
 Source: [`ops/manifest.json`](./ops/manifest.json)
 
@@ -34,8 +34,8 @@ follow the instructions in goals/wire-trace-ui/GOAL.md
 
 ## Current Phase
 
-P7, PR to mergeable. P0 to P6 are complete; the P1 gate passed, so the
-fallback topology was not needed.
+Complete. Every phase landed; the P1 gate passed, so the fallback topology was
+not needed.
 
 ## Latest Evidence
 
@@ -55,6 +55,10 @@ Two findings changed the contract and are recorded in `SPEC.md` Decisions:
 Next on Bun never reports a browser disconnect, so each SSE connection lives
 20 s; and the first page is handed over as encoded JSON rather than through
 `HydrationBoundary`.
+
+Shipped as [PR #3](https://github.com/dichioniccolo/effect-open-protocol/pull/3),
+`mergeStateStatus: CLEAN` with no review threads. Closeout reflection:
+[`history/reflections/2026-09-18-claude.md`](./history/reflections/2026-09-18-claude.md).
 
 ## Notes
 
