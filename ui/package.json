@@ -1,0 +1,7 @@
+{
+  "name": "@wire-trace/ui",
+  "version": "0.0.0",
+  "description": "Browser view of recorded Open Protocol wire traces.",
+  "type": "module",
+  "private": true
+}

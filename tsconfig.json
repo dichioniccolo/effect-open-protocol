@@ -29,5 +29,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
-  }
+  },
+  // The Next.js app type-checks under its own tsconfig.
+  "exclude": ["node_modules", "ui"]
 }

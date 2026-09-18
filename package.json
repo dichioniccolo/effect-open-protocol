@@ -4,6 +4,10 @@
   "description": "Open Protocol client for tightening controllers, built with Effect: resilient connections and at-least-once result delivery.",
   "type": "module",
   "private": true,
+  "workspaces": [
+    "store",
+    "ui"
+  ],
   "engines": {
     "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
   },
