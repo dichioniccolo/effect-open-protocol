@@ -13,7 +13,7 @@
  * @since 0.0.0
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Effect, pipe, Random, Ref, Stream, SubscriptionRef } from "effect"
+import { Duration, Effect, pipe, Random, Ref, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
@@ -39,6 +39,13 @@ const deviceId = Flag.String("device-id").pipe(
   Flag.withDefault("tool-1")
 )
 
+const recoveryInterval = Flag.Int("recovery-interval").pipe(
+  Flag.withDescription(
+    "Milliseconds between MID 0064 reconciliations; 0 asks only when a session starts or a gap appears"
+  ),
+  Flag.withDefault(0)
+)
+
 const report = (result: TighteningResult): Effect.Effect<void> =>
   Effect.logInfo("result delivered").pipe(
     Effect.annotateLogs({
@@ -58,6 +65,7 @@ const run = Effect.fnUntraced(function* (config: {
   readonly jitter: number
   readonly traceFile: O.Option<string>
   readonly deviceId: string
+  readonly recoveryInterval: number
 }) {
   const sink = yield* traceSink(config.traceFile)
   const received = yield* Ref.make<ReadonlyArray<string>>([])
@@ -66,6 +74,9 @@ const run = Effect.fnUntraced(function* (config: {
   const connection = yield* makeDeviceConnection({
     id,
     endpoint: new Endpoint({ host: config.host, port: config.port }),
+    ...(config.recoveryInterval > 0
+      ? { recoveryInterval: Duration.millis(config.recoveryInterval) }
+      : {}),
     onResult: (result) =>
       pipe(
         Ref.update(received, (current) => A.append(current, `${result.tighteningId}`)),
@@ -82,7 +93,8 @@ const run = Effect.fnUntraced(function* (config: {
       endpoint: `${config.host}:${config.port}`,
       deviceId: config.deviceId,
       latency: config.latency,
-      jitter: config.jitter
+      jitter: config.jitter,
+      recoveryInterval: config.recoveryInterval
     })
   )
 
@@ -116,7 +128,7 @@ const run = Effect.fnUntraced(function* (config: {
 
 const command = Command.make(
   "client",
-  { host, port, seed, latency, jitter, traceFile, deviceId },
+  { host, port, seed, latency, jitter, traceFile, deviceId, recoveryInterval },
   (config) =>
     pipe(
       run(config),
