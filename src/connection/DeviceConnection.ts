@@ -228,14 +228,17 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
     )
 
     const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent, settings.keepAliveInterval))
-    // Recovery otherwise depends on something arriving: a session starting, or
-    // a result whose identifier reveals a gap. Neither happens on a line that
-    // goes quiet holding results we never received, so the connection asks the
-    // controller where it stands on a timer. One MID 0064 per interval.
+    // Recovery is driven by events: a session starting, and a pushed result
+    // whose identifier sits above the watermark. A caller who also wants the
+    // line polled asks for it with `recoveryInterval`, and pays one MID 0064
+    // per interval for the one case events miss: results lost while the
+    // session stayed up, with no later tightening to reveal the gap.
     const reconcile = yield* Effect.forkChild(
-      collectsResults
-        ? Effect.forever(Effect.andThen(Effect.sleep(settings.recoveryInterval), recovery.recoverGap(current, delivery)))
-        : Effect.never
+      O.match(collectsResults ? O.fromNullishOr(settings.recoveryInterval) : O.none(), {
+        onNone: (): Effect.Effect<never> => Effect.never,
+        onSome: (interval) =>
+          Effect.forever(Effect.andThen(Effect.sleep(interval), recovery.recoverGap(current, delivery)))
+      })
     )
     return yield* pipe(
       readerFailed,

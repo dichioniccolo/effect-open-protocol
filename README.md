@@ -142,6 +142,7 @@ socket itself.
 | `--seed` | both | Seeds every random decision, so a run replays. |
 | `--trace-file` | both | Appends every traced line to a file as JSONL. |
 | `--device-id` | client | Identifier stamped on received results. Defaults to `tool-1`. |
+| `--recovery-interval` | client | Milliseconds between MID 0064 reconciliations. `0`, the default, asks only on session start and on a detected gap. |
 | `--fault-rate` | controller | Probability that a frame the controller sends triggers a fault. |
 | `--result-interval` | controller | Milliseconds between generated results. `0` produces none on a timer. |
 | `--controller-name` | controller | Name reported in the handshake reply. |
@@ -286,14 +287,17 @@ drops the session.
 
 **A result the controller gives up on is gone**, which is why gap recovery
 exists. The library asks for missing results by identifier (MID 0064) and
-delivers them through the same path, at three moments: after reconnecting,
-whenever an arriving identifier jumps ahead of what has been delivered, and on
-a timer. The timer matters more than it sounds. The other two triggers both
-depend on something arriving, and a line that goes quiet while the controller
-holds results we never received would otherwise keep that gap forever, so the
-connection asks the controller where it stands every few seconds: one MID 0064
-per interval per device. Recovery is bounded by
-`recoveryLimit` so a device offline for a week cannot stall its own reconnect.
+delivers them through the same path. Two events trigger it: a session starting,
+which establishes where the controller stands, and a pushed identifier that
+jumps ahead of the last one delivered, which is the gap itself. A healthy link
+therefore carries one MID 0064 per session and nothing more.
+
+Both triggers depend on something arriving, which leaves one case uncovered:
+results missed while the session stayed up, with no later tightening to reveal
+the gap. Setting `recoveryInterval` closes it by polling, at the price of one
+MID 0064 per interval per device for as long as the process runs. It is off
+unless asked for. Recovery is bounded by `recoveryLimit` so a device offline for
+a week cannot stall its own reconnect.
 
 Identifiers do not start at zero. The baseline comes from asking the controller
 for its latest result on the first connection, and if that request fails no

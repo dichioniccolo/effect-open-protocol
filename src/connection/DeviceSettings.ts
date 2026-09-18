@@ -51,7 +51,14 @@ export interface DeviceConfig {
   readonly recoveryTimeout?: Duration.Duration | undefined
   /**
    * How often the connection reconciles with the controller's latest result
-   * while the session is up. One MID 0064 per interval. Defaults to 5 seconds.
+   * while the session is up, costing one MID 0064 per interval.
+   *
+   * Off unless set. Recovery normally needs no timer: it runs when a session
+   * starts and whenever a pushed identifier reveals a gap. A timer only adds
+   * the case where results were missed, the session never dropped, and no
+   * further tightening ever arrives to reveal it. Polling a controller for
+   * that costs traffic on every device, every interval, forever, so it is the
+   * caller's call to make.
    */
   readonly recoveryInterval?: Duration.Duration | undefined
 }
@@ -85,8 +92,7 @@ export const defaultSettings = {
   stopTimeout: Duration.seconds(1),
   recoveryAttempts: 5,
   recoveryRetryDelay: Duration.millis(500),
-  recoveryTimeout: Duration.seconds(1),
-  recoveryInterval: Duration.seconds(5)
+  recoveryTimeout: Duration.seconds(1)
 }
 
 /** The knobs `defaultSettings` answers for; `Pick` refuses a key `DeviceConfig` does not have. */
@@ -127,6 +133,5 @@ export const resolveSettings = (config: DeviceConfig): DeviceSettings => ({
   stopTimeout: config.stopTimeout ?? defaultSettings.stopTimeout,
   recoveryAttempts: config.recoveryAttempts ?? defaultSettings.recoveryAttempts,
   recoveryRetryDelay: config.recoveryRetryDelay ?? defaultSettings.recoveryRetryDelay,
-  recoveryTimeout: config.recoveryTimeout ?? defaultSettings.recoveryTimeout,
-  recoveryInterval: config.recoveryInterval ?? defaultSettings.recoveryInterval
+  recoveryTimeout: config.recoveryTimeout ?? defaultSettings.recoveryTimeout
 })
