@@ -2,14 +2,14 @@
 
 ## Status
 
-Status: `pending`
+Status: `in-progress`
 
 ## Phases
 
 | Phase | Status | Goal | Exit criteria |
 | --- | --- | --- | --- |
-| P0 Workspace | pending | Make the root a Bun workspace with `store` and `ui` as members. Library build, `effect-open-protocol` path alias and scripts unchanged. Its own commit. | `bunx tsc --noEmit`, `bun run test`, `bun run build` green with the same outcome as before. |
-| P1 Gate | pending | Scaffold `ui/` (Next.js App Router, Tailwind) and a stub `store/` with one migration and one query. A server component renders a row read through `@effect/sql-sqlite-bun`, with `bun:sqlite` kept out of the bundle. | The page renders under `bun --bun next dev` and after `next build`. Or the fallback topology (Bun `HttpApi` server plus `AtomHttpApi`) is chosen and recorded in `SPEC.md`. |
+| P0 Workspace | complete | Make the root a Bun workspace with `store` and `ui` as members. Library build, `effect-open-protocol` path alias and scripts unchanged. Its own commit. | `bunx tsc --noEmit`, `bun run test`, `bun run build` green with the same outcome as before. |
+| P1 Gate | complete | Scaffold `ui/` (Next.js App Router, Tailwind) and a stub `store/` with one migration and one query. A server component renders a row read through `@effect/sql-sqlite-bun`, with `bun:sqlite` kept out of the bundle. | The page renders under `bun --bun next dev` and after `next build`. Or the fallback topology (Bun `HttpApi` server plus `AtomHttpApi`) is chosen and recorded in `SPEC.md`. |
 | P2 Store | pending | `runs` and `events` schemas, both migrations via `Migrator.fromRecord`, and the four queries: insert batch, list runs, page events after an id, run by id. | Tests against a temp file: round trip, migrations applied twice harmless, concurrent first-open migrations both succeed. |
 | P3 Sink | pending | SQLite `WireSink` in `cli/Wire.ts`: mint the run, enqueue, drain in batches with `Queue.takeBetween`, flush and stamp end on scope close. `--trace-db` defaulting to `.wire-trace/traces.sqlite`; per-connection numbering; `.gitignore`. | First vertical slice: both CLIs, one result, Ctrl-C both, and the file holds two ended runs with every event through the last pre-exit one. A failing sink never fails `send`, under test. |
 | P4 Views | pending | `/` run list, `/runs/[id]` packet list with the chunks toggle and direction and MID filters, detail pane with raw string and `decodeHeader` fields. State in atoms, first page hydrated. | The recorded runs from P3 browse correctly after a UI restart. |
@@ -23,6 +23,23 @@ Phase ids must match ops/manifest.json `phases[]`. A packet may use its own
 scheme (milestones, sub-phases, prose), but its plan must never contradict its
 own manifest.
 -->
+
+## Gate Result
+
+P1 passed on 2026-09-18. A server component read `sqlite_version()` (3.53.0)
+through `@effect/sql-sqlite-bun` under both `bun --bun next dev` and
+`bun --bun next build` plus `next start`, Next.js 16.3.5 on Turbopack. The
+fallback topology is not needed.
+
+Two findings for later phases:
+
+- `serverExternalPackages` must name `bun:sqlite`, not
+  `@effect/sql-sqlite-bun`. Next adds every `@effect/*` package to
+  `optimizePackageImports`, which Turbopack treats as transpiled, and a
+  package cannot be both. `transpilePackages` is not needed for the store.
+- `next dev` writes `AGENTS.md` and `CLAUDE.md` into `ui/` when it detects an
+  agent; `agentRules: false` turns that off. Its own docs for this version
+  live in `ui/node_modules/next/dist/docs/` and outrank training data.
 
 ## Sequencing Rationale
 
