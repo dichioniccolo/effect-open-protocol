@@ -29,7 +29,11 @@
     "demo": "bun run demo/chaos.ts",
     "controller": "bun run cli/controller.ts",
     "client": "bun run cli/client.ts",
-    "ui": "bun run --cwd ui dev"
+    "ui": "bun run --cwd ui dev",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-rc.115",
@@ -39,6 +43,8 @@
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/vitest": "4.0.0-rc.115",
     "@types/bun": "latest",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
     "tsdown": "0.23.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
