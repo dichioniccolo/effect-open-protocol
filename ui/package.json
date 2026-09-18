@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@effect/atom-react": "4.0.0-rc.115",
+    "@effect/platform-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@wire-trace/store": "workspace:*",
     "effect": "4.0.0-rc.115",
