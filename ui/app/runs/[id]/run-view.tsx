@@ -233,7 +233,8 @@ function PacketTable(
             ),
         onNonEmpty: (rows) => (
           <Table className="table-fixed font-mono text-xs">
-            <TableHeader className="sticky top-0 bg-background">
+            {/* Rows are positioned (for the stretched row button), so the header needs its own layer to stay on top. */}
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead className="w-32 ps-6">Time (UTC)</TableHead>
                 <TableHead className="w-12">Conn</TableHead>
