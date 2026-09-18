@@ -2,7 +2,7 @@
 
 ## Status
 
-Lifecycle: `active`
+Lifecycle: `completed-retained`
 
 Source: [`ops/manifest.json`](./ops/manifest.json)
 
@@ -34,9 +34,8 @@ follow the instructions in goals/wire-trace-cli/GOAL.md
 
 ## Current Phase
 
-P6 PR to mergeable. P0 through P5 are complete, including the listener rebind,
-which was the designated cut and did not need taking. Next action: open the
-pull request and drive it to mergeable.
+Complete. Every phase landed, including the listener rebind, which was the
+designated cut and did not need taking.
 
 ## Latest Evidence
 
@@ -45,6 +44,10 @@ pull request and drive it to mergeable.
 each other over a real socket: 14 results generated, 14 delivered, zero
 duplicates, trace files written on both sides. The outage loop has a runnable
 proof in `test/integration/TcpOutage.test.ts`.
+
+Shipped as [PR #2](https://github.com/dichioniccolo/effect-open-protocol/pull/2),
+`mergeStateStatus: CLEAN` with no unresolved review threads. Closeout
+reflection: [`history/reflections/2026-09-18-claude.md`](./history/reflections/2026-09-18-claude.md).
 
 ## Notes
 
