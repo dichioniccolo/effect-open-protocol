@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "initiative-manifest/v2",
+  "initiative": {
+    "id": "wire-trace-cli",
+    "title": "Wire-trace CLI",
+    "status": "active",
+    "created": "2026-09-18",
+    "updated": "2026-09-18",
+    "packetAnchorDocument": "SPEC.md"
+  },
+  "packetPath": "goals/wire-trace-cli",
+  "lifecycle": "active",
+  "mission": "Two runnable commands that make Open Protocol observable by hand: a simulated controller on a TCP port and a client that connects and receives results, both printing every raw byte chunk and reassembled frame, both able to inject seeded latency.",
+  "executionCapable": true,
+  "reflectionRequired": true,
+  "provenance": {
+    "exploration": "explorations/wire-trace-cli",
+    "graduated": "2026-09-18",
+    "explorationDecisions": "explorations/wire-trace-cli/DECISIONS.md",
+    "explorationBrief": "explorations/wire-trace-cli/BRIEF.md",
+    "explorationMap": "explorations/wire-trace-cli/MAP.md"
+  },
+  "completionGate": {
+    "requiresPullRequest": true,
+    "requiresMergeable": true,
+    "statement": "Not achieved until this goal's work ships as a PR driven to mergeable: required checks green and every review thread answered."
+  },
+  "currentSourceOfTruth": [
+    "CLAUDE.md",
+    "goals/wire-trace-cli/README.md",
+    "goals/wire-trace-cli/SPEC.md",
+    "goals/wire-trace-cli/PLAN.md",
+    "goals/wire-trace-cli/GOAL.md",
+    "goals/wire-trace-cli/research/SOURCES.md"
+  ],
+  "researchReports": [
+    "research/SOURCES.md"
+  ],
+  "agentLaunchers": [
+    {
+      "kind": "goal-launcher",
+      "path": "GOAL.md",
+      "targetChars": 3500,
+      "maxChars": 4000,
+      "command": "follow the instructions in goals/wire-trace-cli/GOAL.md"
+    }
+  ],
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Tracer",
+      "status": "complete"
+    },
+    {
+      "id": "P1",
+      "name": "Commands",
+      "status": "complete"
+    },
+    {
+      "id": "P2",
+      "name": "Latency",
+      "status": "complete"
+    },
+    {
+      "id": "P3",
+      "name": "Controller knobs",
+      "status": "complete"
+    },
+    {
+      "id": "P4",
+      "name": "Listener rebind",
+      "status": "complete"
+    },
+    {
+      "id": "P5",
+      "name": "Docs",
+      "status": "complete"
+    },
+    {
+      "id": "P6",
+      "name": "PR to mergeable",
+      "status": "in-progress"
+    },
+    {
+      "id": "P7",
+      "name": "Close",
+      "status": "pending"
+    }
+  ],
+  "verificationCommands": [
+    "bunx tsc --noEmit",
+    "bun run test",
+    "bun run build",
+    "test \"$(wc -m < goals/wire-trace-cli/GOAL.md)\" -le 4000",
+    "jq . goals/wire-trace-cli/ops/manifest.json",
+    "rg -n \"wire-trace-cli|GOAL.md|agentLaunchers|packetAnchorDocument\" goals/wire-trace-cli",
+    "git diff --check -- goals/wire-trace-cli"
+  ],
+  "stopConditions": [
+    "Required source files are missing or materially contradictory.",
+    "The implementation would exceed named scope.",
+    "Verification requires unnamed credentials, cost, destructive side effects, or policy approval.",
+    "The same blocker repeats after reasonable investigation.",
+    "The P4 listener rebind resists: take the cut, revert makeTcp to the documented no-op, record the reason, and ship the rest."
+  ]
+}

@@ -9,6 +9,8 @@ application exactly once, or tells you when it cannot.
 bun install
 bun run test
 bun run demo
+bun run controller
+bun run client
 ```
 
 ## The problem
@@ -102,6 +104,62 @@ means "I have taken responsibility for this result", and only then is the
 acknowledgement sent to the controller. Failing means the result is not
 acknowledged.
 
+### Watching the protocol
+
+Two commands put a controller and a client in separate terminals and print
+every byte that crosses between them.
+
+```sh
+bun run controller -- --port 4545 --result-interval 2000
+bun run client     -- --port 4545 --latency 40 --jitter 15
+```
+
+The controller binds the port and behaves like a real one: it answers the
+handshake, accepts the subscription, pushes results and waits for MID 0062,
+serves stored results on MID 0064, and misbehaves when asked. The client is the
+library itself, so what you watch is the same code an application would run.
+Both stay up until Ctrl-C, then print what they saw.
+
+Every line carries the direction, the byte count, the MID, and the raw wire
+string with the NUL terminator and the field padding left visible.
+
+```text
+[10:14:16.312] INFO wire frame { source: "client", dir: "send", bytes: 21,
+  mid: "0001", raw: "00200001001001010000\0" }
+[10:14:16.498] INFO wire frame { source: "client", dir: "recv", bytes: 58,
+  mid: "0002", raw: "00570002001001010000010001020103Simulator                \0" }
+```
+
+A frame is one complete message; a chunk is what a single socket read or write
+carried. They are not the same thing once frames get split or coalesced, so
+frames log at info and chunks at debug. Add `--log-level debug` to see the
+socket itself.
+
+| Flag | Commands | Meaning |
+| --- | --- | --- |
+| `--host`, `--port` | both | Where to bind or connect. Defaults to `127.0.0.1:4545`. |
+| `--latency`, `--jitter` | both | Milliseconds of delay on this side's writes, drawn per write from `latency ± jitter`. |
+| `--seed` | both | Seeds every random decision, so a run replays. |
+| `--trace-file` | both | Appends every traced line to a file as JSONL. |
+| `--device-id` | client | Identifier stamped on received results. Defaults to `tool-1`. |
+| `--fault-rate` | controller | Probability that a frame the controller sends triggers a fault. |
+| `--result-interval` | controller | Milliseconds between generated results. `0` produces none on a timer. |
+| `--controller-name` | controller | Name reported in the handshake reply. |
+
+Pressing Enter in the controller's terminal produces one result immediately.
+That is how you demonstrate gap recovery by hand: raise `--fault-rate` until
+the link breaks, press Enter while it is down, and watch the client come back
+and fetch the result with MID 0064 and 0065.
+
+Two runs with the same `--seed` and `--trace-file` produce trace files that
+`diff` clean, which is what makes a trace usable as evidence. Every `raw` value
+round-trips: unescaping it returns the exact bytes the socket carried.
+
+One thing to expect in a side-by-side trace: the simulator stamps its results
+with the device id `simulator`, while the client stamps what it decodes with
+its own `--device-id`. The same tightening therefore shows two different device
+ids, one per side.
+
 ### Running the demo
 
 ```sh
@@ -176,6 +234,7 @@ connection code.
 | `src/results` | Duplicate detection, delivery, gap recovery |
 | `src/pool` | Many devices in one process |
 | `simulator` | A simulated controller with seeded faults |
+| `cli` | The controller and client commands, for watching the protocol |
 | `demo` | The chaos demo CLI |
 
 ## The protocol subset

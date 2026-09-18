@@ -11,17 +11,15 @@
  *
  * @since 0.0.0
  */
-import { NodeSocketServer } from "@effect/platform-node"
 import { Deferred, Duration, Effect, Fiber, pipe, Queue, Ref, Scope, Stream } from "effect"
 import * as A from "effect/Array"
 import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
-import * as S from "effect/Schema"
 import { frames } from "../src/protocol/Framer.ts"
 import { decodeMessage, LastResult } from "../src/protocol/Messages.ts"
 import { type TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork, type ServerSide } from "../src/transport/InMemoryTransport.ts"
-import { ConnectionLost, type Endpoint } from "../src/transport/Transport.ts"
+import type { Endpoint } from "../src/transport/Transport.ts"
 import {
   type ControllerIdentity,
   observe,
@@ -30,19 +28,11 @@ import {
   simulatorDevice
 } from "./ControllerBehaviour.ts"
 import type * as Faults from "./Faults.ts"
-import { encoder, sendWithFaults } from "./FaultyWire.ts"
+import { sendWithFaults } from "./FaultyWire.ts"
 import { forget, initialSessionState, latestOf, type SessionState } from "./SessionState.ts"
+import { makeTcpListener } from "./TcpListener.ts"
 
-/**
- * The simulated controller could not take its TCP port.
- *
- * @category errors
- * @since 0.0.0
- */
-export class SimulatorListenFailed extends S.TaggedError<SimulatorListenFailed>()("SimulatorListenFailed", {
-  endpoint: S.String,
-  reason: S.String
-}) {}
+export { SimulatorListenFailed } from "./TcpListener.ts"
 
 /**
  * How a simulated controller should behave.
@@ -60,6 +50,11 @@ export interface SimulatorOptions extends ControllerIdentity {
   readonly ackAttempts?: number | undefined
   /** Seeded misbehaviour injected while the session runs. */
   readonly faults?: Faults.FaultConfig | undefined
+  /**
+   * Wraps every accepted connection before the simulator serves it. The CLI
+   * uses it to trace and delay the bytes this controller writes.
+   */
+  readonly decorate?: ((side: ServerSide) => Effect.Effect<ServerSide>) | undefined
 }
 
 /**
@@ -321,48 +316,6 @@ export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
  * @since 0.0.0
  */
 export const makeTcp = Effect.fnUntraced(function* (options: SimulatorOptions) {
-  const server = yield* Effect.mapError(
-    NodeSocketServer.make({ host: options.endpoint.host, port: options.endpoint.port }),
-    (error) => new SimulatorListenFailed({ endpoint: `${options.endpoint.host}:${options.endpoint.port}`, reason: `${error}` })
-  )
-  const queue = yield* Queue.bounded<ServerSide>(64)
-  const openSockets = yield* Ref.make<ReadonlyArray<Deferred.Deferred<void>>>([])
-
-  // Node keeps a listening server alive until its sockets are gone, so the
-  // scope finalizer releases every accepted connection first.
-  yield* Effect.addFinalizer(() =>
-    pipe(
-      Ref.getAndSet(openSockets, []),
-      Effect.flatMap((pending) =>
-        Effect.forEach(pending, (closed) => Deferred.succeed(closed, undefined), { discard: true })
-      )
-    )
-  )
-
-  yield* Effect.forkChild(
-    server.run((socket) =>
-      Effect.gen(function* () {
-        const reader = yield* socket.reader
-        const writer = yield* socket.writer
-        const closed = yield* Deferred.make<void>()
-        yield* Ref.update(openSockets, (current) => A.append(current, closed))
-        const side: ServerSide = {
-          incoming: pipe(
-            Stream.fromPull(Effect.succeed(reader.pull)),
-            Stream.map((chunk) => typeof chunk === "string" ? encoder.encode(chunk) : chunk),
-            Stream.mapError((error) => new ConnectionLost({ reason: `${error}` }))
-          ),
-          send: (bytes) =>
-            Effect.mapError(writer.write(bytes), (error) => new ConnectionLost({ reason: `${error}` })),
-          close: () => Effect.asVoid(Deferred.succeed(closed, undefined))
-        }
-        yield* Queue.offer(queue, side)
-        return yield* Deferred.await(closed)
-      }).pipe(Effect.scoped, Effect.catchCause((cause) => Effect.logDebug("simulator socket ended", cause)))
-    )
-  )
-
-  // A listening TCP socket cannot stop accepting without being torn down, so
-  // the refuse-connections fault is a no-op on this path.
-  return yield* makeWith(options, Effect.succeed(queue), () => Effect.void)
+  const listener = yield* makeTcpListener({ endpoint: options.endpoint, decorate: options.decorate })
+  return yield* makeWith(options, Effect.succeed(listener.accept), listener.refuse)
 })
