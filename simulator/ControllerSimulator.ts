@@ -173,7 +173,9 @@ export const makeWith = Effect.fnUntraced(function* (
   const refuseFor = (duration: Duration.Duration): Effect.Effect<void> =>
     Effect.asVoid(Queue.offer(outages, duration))
 
-  yield* Effect.addFinalizer(() => refuse(false))
+  // No finalizer clearing the outage here: with a real listener, "accept again"
+  // at shutdown would rebind the port the scope is about to release. An outage
+  // in flight dies with the simulator either way.
 
   const acceptLoop = yield* pipe(
     Queue.take(accepted),
