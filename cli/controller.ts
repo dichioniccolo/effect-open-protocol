@@ -15,7 +15,7 @@
  * @since 0.0.0
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Duration, Effect, pipe, Random, Terminal } from "effect"
+import { Duration, Effect, pipe, Random, Stdio, Stream } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { Command, Flag } from "effect/unstable/cli"
@@ -49,30 +49,40 @@ const controllerName = Flag.String("controller-name").pipe(
   Flag.withDefault("Simulator")
 )
 
+/** How many lines a chunk of stdin completed. */
+const newlines = (bytes: Uint8Array): number =>
+  A.length(A.filter(A.fromIterable(bytes), (byte) => byte === 10))
+
 /**
- * Produces one result every time a line arrives on stdin.
+ * Produces one result per line on stdin.
  *
- * Lines, not keypresses: raw mode would have to fight `runMain` for Ctrl-C.
+ * Lines, not keypresses: reading keys would put the terminal in raw mode, and a
+ * raw terminal turns Ctrl-C into a keystroke instead of a signal. Keeping the
+ * terminal cooked leaves `runMain` owning Ctrl-C, which is the only thing that
+ * stops this command.
+ *
+ * Stdin that is closed or not a terminal simply never produces anything.
  */
-const onEnter = (simulator: Simulator): Effect.Effect<never, never, Terminal.Terminal> =>
-  pipe(
-    Terminal.Terminal,
-    Effect.flatMap((terminal) =>
-      Effect.forever(
-        pipe(
-          terminal.readLine,
-          Effect.flatMap(() => simulator.produce),
-          Effect.flatMap((result) =>
-            Effect.logInfo("produced a result on request").pipe(
-              Effect.annotateLogs({ tighteningId: result.tighteningId })
-            )
-          ),
-          // No terminal attached (a pipe, a CI run) simply means no trigger.
-          Effect.catchCause(() => Effect.never)
+const onEnter = (simulator: Simulator): Effect.Effect<void, never, Stdio.Stdio> =>
+  Effect.gen(function* () {
+    const stdio = yield* Stdio.Stdio
+    const produceOne = pipe(
+      simulator.produce,
+      Effect.flatMap((result) =>
+        Effect.logInfo("produced a result on request").pipe(
+          Effect.annotateLogs({ tighteningId: result.tighteningId })
         )
       )
     )
-  )
+    return yield* pipe(
+      Stream.runForEach(stdio.stdin, (chunk) =>
+        // `A.range(1, 0)` is `[1]`, so an empty count has to be handled here.
+        newlines(chunk) === 0
+          ? Effect.void
+          : Effect.forEach(A.range(1, newlines(chunk)), () => produceOne, { discard: true })),
+      Effect.catchCause((cause) => Effect.logDebug("stdin closed, no result trigger", cause))
+    )
+  })
 
 const summary = (simulator: Simulator): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -133,8 +143,8 @@ const run = Effect.fnUntraced(function* (config: {
     })
   )
 
-  // The Enter trigger runs on its own fiber: a blocking read on stdin must not
-  // be what Ctrl-C has to interrupt, or the summary never gets printed.
+  // The line reader runs on its own fiber, so the main fiber is parked on an
+  // interruptible hold and Ctrl-C reaches it.
   yield* Effect.forkChild(onEnter(simulator))
   return yield* Effect.onExit(Effect.never, () => summary(simulator))
 })
