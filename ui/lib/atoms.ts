@@ -6,7 +6,7 @@
  * Filters and the selected packet are plain writable atoms, and what the
  * packet list shows is derived from them, so no component keeps its own copy.
  */
-import { Duration, Effect, pipe, Schedule, Stream } from "effect"
+import { Duration, Effect, pipe, Queue, Schedule, Stream } from "effect"
 import * as A from "effect/Array"
 import * as DateTime from "effect/DateTime"
 import * as O from "effect/Option"
@@ -14,7 +14,7 @@ import * as S from "effect/Schema"
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import type { EventId, Run, RunId, StoredEvent } from "@wire-trace/store"
-import { Filters, midsOf, noFilters, RunListJson, visible } from "./wire"
+import { EventPageJson, Filters, midsOf, noFilters, RunListJson, visible } from "./wire"
 
 const runtime = Atom.runtime(FetchHttpClient.layer)
 
@@ -64,11 +64,71 @@ const fetchRuns = pipe(
   Effect.retry(Schedule.spaced(pollEvery))
 )
 
-/** Every recorded run, refreshed every couple of seconds. */
-export const runsAtom = runtime.atom(Stream.fromEffectSchedule(fetchRuns, Schedule.spaced(pollEvery)))
+/**
+ * Every recorded run, refreshed every couple of seconds.
+ *
+ * On the server it stays initial: the page renders the list it loaded itself,
+ * and polling starts in the browser.
+ */
+export const runsAtom = runtime.atom(Stream.fromEffectSchedule(fetchRuns, Schedule.spaced(pollEvery))).pipe(
+  Atom.withServerValueInitial
+)
 
 /** Every event of a run the browser has, oldest first. */
 export const eventsAtom = Atom.family((_: RunId) => Atom.make<ReadonlyArray<StoredEvent>>([]).pipe(Atom.keepAlive))
+
+/** The newest event id the browser holds for a run, or 0 before the first. */
+const cursorOf = (events: ReadonlyArray<StoredEvent>): number =>
+  O.getOrElse(O.map(A.last(events), (event) => event.id), () => 0)
+
+/**
+ * The pages of a run's events the server pushes, past `after`, as JSON text.
+ * The connection opening arrives as `None`, so a quiet run still shows as
+ * connected.
+ */
+const serverEvents = (runId: RunId, after: number): Stream.Stream<O.Option<string>> =>
+  Stream.callback<O.Option<string>>((queue) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        const source = new EventSource(`/api/runs/${runId}/live?after=${after}`)
+        source.addEventListener("open", () => Queue.offerUnsafe(queue, O.none()))
+        source.addEventListener("events", (message) => Queue.offerUnsafe(queue, O.some(message.data)))
+        return source
+      }),
+      (source) => Effect.sync(() => source.close())
+    )
+  )
+
+/**
+ * The live feed of a run: while mounted, every event the server pushes is
+ * appended to the run's events. Its own value is the size of the last page,
+ * which is enough to show that the feed is connected.
+ *
+ * The feed resumes after the newest event already held, so the page the server
+ * rendered is never fetched twice, and a reconnecting `EventSource` resumes
+ * from the last id it saw.
+ */
+export const liveAtom = Atom.family((runId: RunId) =>
+  Atom.make((get) => {
+    const events = eventsAtom(runId)
+    return pipe(
+      serverEvents(runId, cursorOf(get.once(events))),
+      Stream.mapEffect(O.match({
+        onNone: () => Effect.succeed<ReadonlyArray<StoredEvent>>([]),
+        onSome: (data) => S.decodeEffect(EventPageJson)(data)
+      })),
+      Stream.tap((page) =>
+        Effect.sync(() =>
+          get.registry.update(events, (held) => {
+            const after = cursorOf(held)
+            return A.appendAll(held, A.filter(page, (event) => event.id > after))
+          })
+        )
+      ),
+      Stream.map((page) => page.length)
+    )
+  }).pipe(Atom.withServerValueInitial)
+)
 
 /** The packet list filters. */
 export const filtersAtom = Atom.make<Filters>(noFilters)
