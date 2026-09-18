@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 120,
+  "semi": false,
+  "singleQuote": false,
+  "trailingComma": "none",
+  "arrowParens": "always",
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    ".agents/**",
+    ".claude/**",
+    ".patterns/**",
+    ".repos/**",
+    "standards/**",
+    "explorations/**",
+    "goals/**",
+    "**/*.md",
+    "bun.lock",
+    "ui/.next/**",
+    "ui/next-env.d.ts"
+  ]
+}

@@ -107,5 +107,8 @@ Validate Effect v4 APIs against real source, not training-data priors. Run
 ### Verification
 
 - Type check: `bunx tsc --noEmit`.
+- Lint: `bun run lint` (oxlint, config in `.oxlintrc.json`).
+- Format: `bun run format` (oxfmt, config in `.oxfmtrc.json`); CI-style
+  check with `bun run format:check`.
 - Tests: `bun run test` (see Testing above); target files with
   `bun run test <path>`.

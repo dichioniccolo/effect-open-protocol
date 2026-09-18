@@ -1,0 +1,81 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "env": {
+    "builtin": true
+  },
+  "ignorePatterns": [".agents/**", ".claude/**", ".repos/**", "dist/**", "ui/.next/**", "ui/next-env.d.ts"],
+  "rules": {
+    "no-underscore-dangle": "off",
+    "vitest/no-standalone-expect": [
+      "error",
+      {
+        "additionalTestBlockFunctions": [
+          "it.effect",
+          "it.live",
+          "it.scoped",
+          "it.scopedLive",
+          "it.prop",
+          "it.effect.prop",
+          "it.layer"
+        ]
+      }
+    ],
+    "vitest/expect-expect": [
+      "error",
+      {
+        "assertFunctionNames": ["expect", "assert*", "expect*"],
+        "additionalTestBlockFunctions": [
+          "it.effect",
+          "it.live",
+          "it.scoped",
+          "it.scopedLive",
+          "it.prop",
+          "it.effect.prop"
+        ]
+      }
+    ],
+    "import/no-unassigned-import": [
+      "warn",
+      {
+        "allow": ["**/*.css"]
+      }
+    ],
+    "require-yield": "off",
+    "no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["ui/**/*.ts", "ui/**/*.tsx"],
+      "plugins": ["typescript", "unicorn", "oxc", "import", "react", "nextjs", "jsx-a11y"],
+      "rules": {
+        "react/react-in-jsx-scope": "off",
+        "react/no-unstable-nested-components": "off"
+      }
+    },
+    {
+      "files": ["test/**/*.ts", "store/test/**/*.ts"],
+      "rules": {
+        "no-useless-concat": "off"
+      }
+    },
+    {
+      "files": ["ui/components/ui/**/*.tsx"],
+      "plugins": ["typescript", "unicorn", "oxc", "import", "react", "nextjs", "jsx-a11y"],
+      "rules": {
+        "jsx-a11y/label-has-associated-control": "off",
+        "jsx-a11y/prefer-tag-over-role": "off"
+      }
+    }
+  ]
+}
