@@ -11,7 +11,7 @@ import Link from "next/link"
 import { useMemo } from "react"
 import { type ListedRun, listRuns, type RunStatus, runsAtom } from "@/lib/atoms"
 import { RunListJson } from "@/lib/wire"
-import { SideBadge, timeOf } from "./ui"
+import { dateOf, SideBadge, timeOf } from "./ui"
 
 const statusLabel = Match.type<RunStatus>().pipe(
   Match.when("recording", () => (
@@ -71,7 +71,7 @@ export function RunList({ initial, renderedAt }: { readonly initial: string; rea
                   </td>
                   <td className="py-2 pr-4"><SideBadge side={run.side} /></td>
                   <td className="py-2 pr-4 text-zinc-400">
-                    {run.startedAt.slice(0, 10)} {timeOf(run.startedAt)}
+                    {dateOf(run.startedAt)} {timeOf(run.startedAt)}
                   </td>
                   <td className="py-2 pr-4 text-zinc-400">{run.port}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{run.eventCount}</td>

@@ -24,7 +24,19 @@ import { WireDirection, WireEventKind } from "../../src/transport/WireTrace.ts"
 import { migrations } from "./migrations.ts"
 
 /**
- * Identity of one recorded CLI run.
+ * Identity of one recorded CLI run, the row id the store assigned when the run
+ * started.
+ *
+ * **Example** (Reading a run id from a URL segment)
+ *
+ * ```ts
+ * import * as S from "effect/Schema"
+ * import { RunId } from "@wire-trace/store"
+ *
+ * const fromUrl = S.decodeUnknownOption(S.FiniteFromString.pipe(S.decodeTo(RunId)))
+ *
+ * const id = fromUrl("12")
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -41,7 +53,16 @@ export const RunId = S.Int.check(S.isGreaterThan(0)).pipe(S.brand("RunId")).anno
 export type RunId = typeof RunId.Type
 
 /**
- * Identity of one recorded event, and the cursor a reader pages from.
+ * Identity of one recorded event, and the cursor a reader pages from: ids only
+ * grow, so "after id N" is always "everything newer than what I have".
+ *
+ * **Example** (Starting a reader at the beginning of a run)
+ *
+ * ```ts
+ * import { EventId } from "@wire-trace/store"
+ *
+ * const fromTheStart = EventId.make(0)
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -58,7 +79,18 @@ export const EventId = S.Int.check(S.isGreaterThanOrEqualTo(0)).pipe(S.brand("Ev
 export type EventId = typeof EventId.Type
 
 /**
- * Which CLI recorded a run.
+ * Which CLI recorded a run: the simulated controller or the library's client.
+ *
+ * **Example** (Checking a side read from elsewhere)
+ *
+ * ```ts
+ * import * as S from "effect/Schema"
+ * import { RunSide } from "@wire-trace/store"
+ *
+ * const isSide = S.is(RunSide)
+ *
+ * console.log(isSide("controller")) // true
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -77,7 +109,24 @@ export type RunSide = typeof RunSide.Type
 const Count = S.Int.check(S.isGreaterThanOrEqualTo(0))
 
 /**
- * What a CLI knows about itself when it starts recording.
+ * What a CLI knows about itself when it starts recording: its side and the
+ * launch flags that shape the traffic it will record.
+ *
+ * **Example** (Describing a client launch)
+ *
+ * ```ts
+ * import { RunStart } from "@wire-trace/store"
+ *
+ * const start = new RunStart({
+ *   side: "client",
+ *   startedAt: "2026-09-18T10:00:00.000Z",
+ *   host: "127.0.0.1",
+ *   port: 4545,
+ *   seed: 1,
+ *   latency: 40,
+ *   jitter: 15
+ * })
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -93,7 +142,24 @@ export class RunStart extends S.Class<RunStart>("RunStart")({
 }, { description: "The launch settings a run is recorded with" }) {}
 
 /**
- * A recorded run, with what the UI needs to list it.
+ * A recorded run with what a run list needs: its event count, its newest
+ * event's time, and its end time once the CLI has stopped.
+ *
+ * **Details**
+ *
+ * `endedAt` stays empty for a run that is still recording, and also for one
+ * whose process was killed before it could stamp an end, so a caller telling
+ * them apart looks at `lastEventAt` too.
+ *
+ * **Example** (Finding the runs that are still open)
+ *
+ * ```ts
+ * import * as A from "effect/Array"
+ * import * as O from "effect/Option"
+ * import type { Run } from "@wire-trace/store"
+ *
+ * const open = (runs: ReadonlyArray<Run>) => A.filter(runs, (run) => O.isNone(run.endedAt))
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -111,6 +177,24 @@ export class Run extends RunStart.extend<Run>("Run")({
  * The fields after `connection` are a `WireEvent` as the tracer emitted it;
  * `raw` stays escaped, so `unescapeWire` still recovers the bytes.
  *
+ * **Example** (Recording a handshake frame)
+ *
+ * ```ts
+ * import * as O from "effect/Option"
+ * import { NewEvent, RunId } from "@wire-trace/store"
+ *
+ * const event = new NewEvent({
+ *   runId: RunId.make(1),
+ *   connection: 1,
+ *   at: "2026-09-18T10:00:00.100Z",
+ *   direction: "send",
+ *   kind: "frame",
+ *   bytes: 21,
+ *   mid: O.some("0001"),
+ *   raw: "00200001001001010000\\0"
+ * })
+ * ```
+ *
  * @category models
  * @since 0.0.0
  */
@@ -126,7 +210,19 @@ export class NewEvent extends S.Class<NewEvent>("NewEvent")({
 }, { description: "A traced wire event tagged with its run and connection" }) {}
 
 /**
- * A recorded event as it is read back.
+ * A recorded event as it is read back, carrying the row id a reader uses as
+ * its next cursor.
+ *
+ * **Example** (Taking the cursor after a page)
+ *
+ * ```ts
+ * import * as A from "effect/Array"
+ * import * as O from "effect/Option"
+ * import { EventId, type StoredEvent } from "@wire-trace/store"
+ *
+ * const cursorAfter = (page: ReadonlyArray<StoredEvent>) =>
+ *   O.getOrElse(O.map(A.last(page), (event) => event.id), () => EventId.make(0))
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -136,7 +232,26 @@ export class StoredEvent extends NewEvent.extend<StoredEvent>("StoredEvent")({
 }, { description: "A recorded wire event with its row id" }) {}
 
 /**
- * Which events of a run to read: those after a cursor, optionally narrowed.
+ * Which events of a run to read: a page after a cursor, oldest first,
+ * optionally narrowed to one kind, direction or MID.
+ *
+ * **Details**
+ *
+ * `after` defaults to 0, the start of the run, and `limit` to 500 events.
+ *
+ * **Example** (The frames a controller sent, from the start)
+ *
+ * ```ts
+ * import * as O from "effect/Option"
+ * import { EventQuery, RunId } from "@wire-trace/store"
+ *
+ * const query = new EventQuery({
+ *   runId: RunId.make(1),
+ *   kind: O.some("frame"),
+ *   direction: O.some("send"),
+ *   mid: O.none()
+ * })
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -153,7 +268,8 @@ export class EventQuery extends S.Class<EventQuery>("EventQuery")({
 }, { description: "A page of one run's events after a cursor, with optional filters" }) {}
 
 /**
- * Reads and writes the recorded trace.
+ * What the trace store can do: open and close runs, write events in batches,
+ * and read runs and pages of events back.
  *
  * @category services
  * @since 0.0.0
@@ -184,6 +300,20 @@ const runColumns = `r.id, r.side, r.startedAt, r.endedAt, r.host, r.port, r.seed
  * Two processes may open a new file at once. Writable SQLite transactions
  * start with `BEGIN IMMEDIATE`, so the second migrator waits for the first and
  * then finds nothing left to apply.
+ *
+ * **Example** (Opening the store inside a scope you already have)
+ *
+ * ```ts
+ * import { SqliteClient } from "@effect/sql-sqlite-bun"
+ * import { Effect } from "effect"
+ * import { make } from "@wire-trace/store"
+ *
+ * const runCount = Effect.gen(function* () {
+ *   const store = yield* make
+ *   const runs = yield* store.listRuns
+ *   return runs.length
+ * }).pipe(Effect.provide(SqliteClient.layer({ filename: "traces.sqlite" })))
+ * ```
  *
  * @category constructors
  * @since 0.0.0
@@ -253,7 +383,8 @@ export const make = Effect.gen(function* () {
 }).pipe(Effect.withSpan("WireStore.make"))
 
 /**
- * The recorded wire trace.
+ * The recorded wire trace as a service, built by `WireStore.layer` over
+ * whichever `SqlClient` the caller provides.
  *
  * **Example** (Listing recorded runs)
  *

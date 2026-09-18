@@ -141,6 +141,7 @@ socket itself.
 | `--latency`, `--jitter` | both | Milliseconds of delay on this side's writes, drawn per write from `latency ± jitter`. |
 | `--seed` | both | Seeds every random decision, so a run replays. |
 | `--trace-file` | both | Appends every traced line to a file as JSONL. |
+| `--trace-db` | both | SQLite file every traced event is recorded into. Defaults to `.wire-trace/traces.sqlite`. |
 | `--device-id` | client | Identifier stamped on received results. Defaults to `tool-1`. |
 | `--recovery-interval` | client | Milliseconds between MID 0064 reconciliations. `0`, the default, asks only on session start and on a detected gap. |
 | `--fault-rate` | controller | Probability that a frame the controller sends triggers a fault. |
@@ -160,6 +161,38 @@ One thing to expect in a side-by-side trace: the simulator stamps its results
 with the device id `simulator`, while the client stamps what it decodes with
 its own `--device-id`. The same tightening therefore shows two different device
 ids, one per side.
+
+### Browsing recorded traffic
+
+Both commands also record every chunk and frame into a SQLite file,
+`.wire-trace/traces.sqlite` by default, one run per launch. A small web UI reads
+it, so a run can be looked at again after the terminals are gone.
+
+```sh
+bun run ui          # Next.js on Bun, http://localhost:3000
+```
+
+The first page lists every run, newest first, with its side, port, event count
+and whether it is still recording. A run's page lists its frames with the time,
+direction, MID and raw string; a toggle adds the socket chunks, and filters
+narrow by direction and MID. Selecting a packet shows the full escaped string
+and its decoded header. While a run is still going, new packets appear on their
+own.
+
+Start the UI from anywhere, before or after the commands: whichever opens the
+file first creates it. To look at another file, pass `--trace-db <path>` to the
+commands and set `WIRE_TRACE_DB=<path>` for the UI. Nothing is ever deleted;
+removing the file starts the history over.
+
+Recording never gets in the way of the link. The commands queue events and a
+background fiber writes them in batches, so a slow or locked file cannot delay
+a send, and a file that cannot be opened or written costs a warning, not the
+run. Ctrl-C writes whatever is still queued before the command exits.
+
+The pieces live in three places. `store/` holds the tables, migrations and
+queries, and both sides use it. `cli/Recording.ts` is the sink the commands
+write through. `ui/` is the Next.js app, which runs on Bun because the SQLite
+driver is `bun:sqlite`.
 
 ### Running the demo
 

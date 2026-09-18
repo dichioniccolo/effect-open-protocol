@@ -44,6 +44,15 @@ const createEvents = Effect.gen(function* () {
 /**
  * Every migration, keyed `<id>_<name>` as `Migrator.fromRecord` expects.
  *
+ * **Example** (Applying the migrations by hand)
+ *
+ * ```ts
+ * import * as Migrator from "effect/unstable/sql/Migrator"
+ * import { migrations } from "./migrations.ts"
+ *
+ * const migrate = Migrator.make({})({ loader: Migrator.fromRecord(migrations) })
+ * ```
+ *
  * @category migrations
  * @since 0.0.0
  */
