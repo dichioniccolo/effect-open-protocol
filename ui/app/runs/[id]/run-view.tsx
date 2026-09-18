@@ -7,10 +7,12 @@ import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import { useMemo } from "react"
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import {
   eventsAtom,
   Filters,
   filtersAtom,
+  liveAtom,
   midsAtom,
   selectedAtom,
   selectedEventAtom,
@@ -39,6 +41,7 @@ function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: Read
   useAtomInitialValues([[eventsAtom(run.id), initial]])
   const all = useAtomValue(eventsAtom(run.id))
   const shown = useAtomValue(visibleAtom(run.id))
+  const live = useAtomValue(liveAtom(run.id))
 
   return (
     <main className="flex h-[calc(100vh-49px)] flex-col">
@@ -46,6 +49,7 @@ function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: Read
         <div className="flex items-center gap-2">
           <span className="font-mono text-zinc-100">run #{run.id}</span>
           <SideBadge side={run.side} />
+          <LiveBadge live={live} ended={O.isSome(run.endedAt)} />
         </div>
         <span className="font-mono text-xs text-zinc-500">
           {run.host}:{run.port} · seed {run.seed} · latency {run.latency}±{run.jitter} ms · started{" "}
@@ -59,6 +63,21 @@ function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: Read
       </div>
     </main>
   )
+}
+
+/** Whether new packets are still flowing in. */
+function LiveBadge({ live, ended }: { readonly live: AsyncResult.AsyncResult<number, unknown>; readonly ended: boolean }) {
+  return ended
+    ? <span className="text-xs text-zinc-500">ended</span>
+    : AsyncResult.match(live, {
+      onInitial: () => <span className="text-xs text-zinc-500">connecting…</span>,
+      onSuccess: () => (
+        <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400">
+          <span className="size-1.5 animate-pulse rounded-full bg-emerald-400" /> live
+        </span>
+      ),
+      onFailure: () => <span className="text-xs text-red-400">live feed lost, reload to retry</span>
+    })
 }
 
 const directions: ReadonlyArray<DirectionFilter> = ["all", "send", "recv"]

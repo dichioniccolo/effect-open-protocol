@@ -122,6 +122,8 @@ Full rationale and rejected options live in the exploration's
 | DB location | On by default at `.wire-trace/traces.sqlite`; `--trace-db` and `WIRE_TRACE_DB` override |
 | Schema ownership | Shared `store/` package; every opener runs migrations |
 | Storage engine | SQLite via `@effect/sql-sqlite-bun` (user direction, confirmed over JSONL-per-run, Postgres and DuckDB) |
+| SSE lifetime (2026-09-18, found in P5) | Each live connection ends after 20 s and `EventSource` resumes from `Last-Event-ID`. Next 16 on Bun fires neither the request abort signal nor the body stream's cancel when a browser disconnects, in dev and in `next start`, so an unbounded feed would poll forever after a tab closed |
+| First-page handoff (2026-09-18, found in P4) | Server components render the first page and pass it as encoded JSON; client components show it until their atoms produce values (run list) or seed the run's events atom with it (`useAtomInitialValues`). `HydrationBoundary` was not needed: the polling and live atoms must run in the browser anyway, and seeding a registry value would stop a stream atom from starting |
 
 Every alignment answer was the recommended one. The Frontend section of
 `CLAUDE.md` was rewritten on 2026-09-18 to name Next.js, Tailwind and Effect
@@ -151,9 +153,11 @@ atoms, so the stack is repo policy, not a packet exception.
 - [ ] Selecting a packet shows the full escaped raw string and the decoded
       header (length, MID, revision, ack flag, station, spindle).
 - [ ] With a run open, new packets appear without a reload while the CLIs
-      run; closing the tab ends the server's poll loop.
+      run; closing the tab ends the server's poll loop within one connection
+      lifetime (20 s), since Next on Bun does not report disconnects.
 - [ ] UI state (runs, events, filters, selection, live feed) lives in Effect
-      atoms; the first page is server-rendered and hydrated.
+      atoms; the first page is server-rendered and the atoms take over in the
+      browser.
 - [ ] Either P1 passed, or the fallback topology is in place and the switch is
       recorded in this spec's decision log.
 - [ ] `README.md` documents recording, `--trace-db`, `WIRE_TRACE_DB`, and how
