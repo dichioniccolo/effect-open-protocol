@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "exploration-manifest/v1",
+  "exploration": {
+    "slug": "wire-trace-ui",
+    "title": "Wire-trace UI: packet viewer with SQLite history",
+    "status": "graduated",
+    "stage": "graduate",
+    "openQuestions": [],
+    "sources": [
+      "research/SOURCES.md"
+    ],
+    "links": {
+      "goals": [
+        "goals/wire-trace-ui"
+      ],
+      "docs": [],
+      "supersededBy": null
+    },
+    "created": "2026-09-18",
+    "updated": "2026-09-18"
+  }
+}

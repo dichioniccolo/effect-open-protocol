@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "initiative-manifest/v2",
+  "initiative": {
+    "id": "wire-trace-ui",
+    "title": "Wire-trace UI",
+    "status": "active",
+    "created": "2026-09-18",
+    "updated": "2026-09-18",
+    "packetAnchorDocument": "SPEC.md"
+  },
+  "packetPath": "goals/wire-trace-ui",
+  "lifecycle": "active",
+  "mission": "Record every wire event the controller and client CLIs trace into a shared SQLite file, and ship a Next.js UI (Bun, Tailwind, Effect atoms) that lists runs, pages and filters their packets, shows raw plus decoded header, and tails live runs over SSE.",
+  "executionCapable": true,
+  "reflectionRequired": true,
+  "provenance": {
+    "exploration": "explorations/wire-trace-ui",
+    "graduated": "2026-09-18",
+    "explorationDecisions": "explorations/wire-trace-ui/DECISIONS.md",
+    "explorationBrief": "explorations/wire-trace-ui/BRIEF.md",
+    "explorationMap": "explorations/wire-trace-ui/MAP.md",
+    "explorationSources": "explorations/wire-trace-ui/research/SOURCES.md"
+  },
+  "completionGate": {
+    "requiresPullRequest": true,
+    "requiresMergeable": true,
+    "statement": "Not achieved until this goal's work ships as a PR driven to mergeable: required checks green and every review thread answered."
+  },
+  "currentSourceOfTruth": [
+    "CLAUDE.md",
+    "goals/wire-trace-ui/README.md",
+    "goals/wire-trace-ui/SPEC.md",
+    "goals/wire-trace-ui/PLAN.md",
+    "goals/wire-trace-ui/GOAL.md",
+    "goals/wire-trace-ui/research/SOURCES.md"
+  ],
+  "researchReports": [
+    "research/SOURCES.md"
+  ],
+  "agentLaunchers": [
+    {
+      "kind": "goal-launcher",
+      "path": "GOAL.md",
+      "targetChars": 3500,
+      "maxChars": 4000,
+      "command": "follow the instructions in goals/wire-trace-ui/GOAL.md"
+    }
+  ],
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Workspace",
+      "status": "pending"
+    },
+    {
+      "id": "P1",
+      "name": "Gate",
+      "status": "pending"
+    },
+    {
+      "id": "P2",
+      "name": "Store",
+      "status": "pending"
+    },
+    {
+      "id": "P3",
+      "name": "Sink",
+      "status": "pending"
+    },
+    {
+      "id": "P4",
+      "name": "Views",
+      "status": "pending"
+    },
+    {
+      "id": "P5",
+      "name": "Live",
+      "status": "pending"
+    },
+    {
+      "id": "P6",
+      "name": "Docs",
+      "status": "pending"
+    },
+    {
+      "id": "P7",
+      "name": "PR to mergeable",
+      "status": "pending"
+    },
+    {
+      "id": "P8",
+      "name": "Close",
+      "status": "pending"
+    }
+  ],
+  "verificationCommands": [
+    "bunx tsc --noEmit",
+    "bun run test",
+    "bun run build",
+    "(cd ui && bun run build)",
+    "test \"$(wc -m < goals/wire-trace-ui/GOAL.md)\" -le 4000",
+    "jq . goals/wire-trace-ui/ops/manifest.json",
+    "rg -n \"wire-trace-ui|GOAL.md|agentLaunchers|packetAnchorDocument\" goals/wire-trace-ui",
+    "git diff --check -- goals/wire-trace-ui"
+  ],
+  "stopConditions": [
+    "Required source files are missing or materially contradictory.",
+    "The implementation would exceed named scope.",
+    "Verification requires unnamed credentials, cost, destructive side effects, or policy approval.",
+    "The same blocker repeats after reasonable investigation.",
+    "The P1 gate fails: switch to the fallback topology (Bun HttpApi server plus AtomHttpApi), record it in SPEC.md, and continue.",
+    "The P0 workspace conversion breaks the library build or tests without an obvious fix: stop and report before touching src/."
+  ]
+}
