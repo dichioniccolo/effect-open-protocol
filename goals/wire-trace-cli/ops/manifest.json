@@ -3,13 +3,13 @@
   "initiative": {
     "id": "wire-trace-cli",
     "title": "Wire-trace CLI",
-    "status": "active",
+    "status": "completed-retained",
     "created": "2026-09-18",
     "updated": "2026-09-18",
     "packetAnchorDocument": "SPEC.md"
   },
   "packetPath": "goals/wire-trace-cli",
-  "lifecycle": "active",
+  "lifecycle": "completed-retained",
   "mission": "Two runnable commands that make Open Protocol observable by hand: a simulated controller on a TCP port and a client that connects and receives results, both printing every raw byte chunk and reassembled frame, both able to inject seeded latency.",
   "executionCapable": true,
   "reflectionRequired": true,
@@ -79,12 +79,12 @@
     {
       "id": "P6",
       "name": "PR to mergeable",
-      "status": "in-progress"
+      "status": "complete"
     },
     {
       "id": "P7",
       "name": "Close",
-      "status": "pending"
+      "status": "complete"
     }
   ],
   "verificationCommands": [
@@ -102,5 +102,10 @@
     "Verification requires unnamed credentials, cost, destructive side effects, or policy approval.",
     "The same blocker repeats after reasonable investigation.",
     "The P4 listener rebind resists: take the cut, revert makeTcp to the documented no-op, record the reason, and ship the rest."
-  ]
+  ],
+  "evidence": {
+    "pullRequest": "https://github.com/dichioniccolo/effect-open-protocol/pull/2",
+    "mergeStateStatus": "CLEAN",
+    "reflection": "history/reflections/2026-09-18-claude.md"
+  }
 }
