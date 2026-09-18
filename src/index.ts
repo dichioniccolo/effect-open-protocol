@@ -113,3 +113,18 @@ export * as TcpTransport from "./transport/TcpTransport.ts"
  * @since 0.0.0
  */
 export * from "./transport/Transport.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * from "./transport/WireEscape.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * from "./transport/WireLatency.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * from "./transport/WireTrace.ts"

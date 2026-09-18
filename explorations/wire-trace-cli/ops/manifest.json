@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "exploration-manifest/v1",
+  "exploration": {
+    "slug": "wire-trace-cli",
+    "title": "Wire-trace CLI: controller and client commands",
+    "status": "graduated",
+    "stage": "graduate",
+    "openQuestions": [],
+    "sources": [
+      "research/SOURCES.md"
+    ],
+    "links": {
+      "goals": [
+        "goals/wire-trace-cli"
+      ],
+      "docs": [],
+      "supersededBy": null
+    },
+    "created": "2026-09-18",
+    "updated": "2026-09-18"
+  }
+}
