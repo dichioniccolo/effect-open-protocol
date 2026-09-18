@@ -9,6 +9,7 @@
         "effect": "4.0.0-rc.115",
       },
       "devDependencies": {
+        "@effect/sql-sqlite-bun": "4.0.0-rc.115",
         "@effect/vitest": "4.0.0-rc.115",
         "@types/bun": "latest",
         "tsdown": "0.23.0",
