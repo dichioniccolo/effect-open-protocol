@@ -6,11 +6,12 @@
  * Filters and the selected packet are plain writable atoms, and what the
  * packet list shows is derived from them, so no component keeps its own copy.
  */
-import { Duration, Effect, pipe, Queue, Schedule, Stream } from "effect"
+import { Duration, Effect, pipe, Schedule, Stream } from "effect"
 import * as A from "effect/Array"
 import * as DateTime from "effect/DateTime"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
+import * as Sse from "effect/unstable/encoding/Sse"
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import type { EventId, Run, RunId, StoredEvent } from "@wire-trace/store"
@@ -81,51 +82,64 @@ export const eventsAtom = Atom.family((_: RunId) => Atom.make<ReadonlyArray<Stor
 const cursorOf = (events: ReadonlyArray<StoredEvent>): number =>
   O.getOrElse(O.map(A.last(events), (event) => event.id), () => 0)
 
+/** How long to wait before opening the next live connection. */
+const reconnectEvery = Duration.seconds(1)
+
+/** Where the live feed stands: receiving, or waiting to reconnect after a failed request. */
+export const LiveStatus = S.Literals(["live", "reconnecting"]).annotate({
+  identifier: "LiveStatus",
+  description: "Connected to the live feed, or retrying after it failed"
+})
+
+export type LiveStatus = typeof LiveStatus.Type
+
 /**
- * The pages of a run's events the server pushes, past `after`, as JSON text.
- * The connection opening arrives as `None`, so a quiet run still shows as
- * connected.
+ * One live connection: the pages of a run's events the server pushes after
+ * `after`, read as Server-Sent Events off the response body. It emits `[]`
+ * once the response arrives, so a quiet run still shows as connected.
  */
-const serverEvents = (runId: RunId, after: number): Stream.Stream<O.Option<string>> =>
-  Stream.callback<O.Option<string>>((queue) =>
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        const source = new EventSource(`/api/runs/${runId}/live?after=${after}`)
-        source.addEventListener("open", () => Queue.offerUnsafe(queue, O.none()))
-        source.addEventListener("events", (message) => Queue.offerUnsafe(queue, O.some(message.data)))
-        return source
-      }),
-      (source) => Effect.sync(() => source.close())
+const connection = (runId: RunId, after: number) =>
+  Stream.unwrap(
+    Effect.map(
+      Effect.flatMap(HttpClient.get(`/api/runs/${runId}/live?after=${after}`), HttpClientResponse.filterStatusOk),
+      (response) =>
+        pipe(
+          response.stream,
+          Stream.decodeText(),
+          Stream.pipeThroughChannel(Sse.decode()),
+          Stream.filter((event) => event.event === "events"),
+          Stream.mapEffect((event) => S.decodeEffect(EventPageJson)(event.data)),
+          Stream.prepend<ReadonlyArray<StoredEvent>>([[]])
+        )
     )
   )
 
 /**
  * The live feed of a run: while mounted, every event the server pushes is
- * appended to the run's events. Its own value is the size of the last page,
- * which is enough to show that the feed is connected.
+ * appended to the run's events.
  *
- * The feed resumes after the newest event already held, so the page the server
- * rendered is never fetched twice, and a reconnecting `EventSource` resumes
- * from the last id it saw.
+ * The server ends each connection after a while, so the feed opens the next
+ * one when the last ends, each time resuming after the newest event already
+ * held. The page the server rendered is never fetched twice. A failed request
+ * shows as `reconnecting` and is retried on the same beat, never fatal.
  */
 export const liveAtom = Atom.family((runId: RunId) =>
-  Atom.make((get) => {
+  runtime.atom((get) => {
     const events = eventsAtom(runId)
+    const append = (page: ReadonlyArray<StoredEvent>) =>
+      Effect.sync(() =>
+        get.registry.update(events, (held) => {
+          const after = cursorOf(held)
+          return A.appendAll(held, A.filter(page, (event) => event.id > after))
+        })
+      )
     return pipe(
-      serverEvents(runId, cursorOf(get.once(events))),
-      Stream.mapEffect(O.match({
-        onNone: () => Effect.succeed<ReadonlyArray<StoredEvent>>([]),
-        onSome: (data) => S.decodeEffect(EventPageJson)(data)
-      })),
-      Stream.tap((page) =>
-        Effect.sync(() =>
-          get.registry.update(events, (held) => {
-            const after = cursorOf(held)
-            return A.appendAll(held, A.filter(page, (event) => event.id > after))
-          })
-        )
-      ),
-      Stream.map((page) => page.length)
+      // Read the cursor when each connection opens, not once for the atom.
+      Stream.unwrap(Effect.sync(() => connection(runId, cursorOf(get.once(events))))),
+      Stream.tap(append),
+      Stream.map((): LiveStatus => "live"),
+      Stream.catchCause(() => Stream.succeed<LiveStatus>("reconnecting")),
+      Stream.repeat(Schedule.spaced(reconnectEvery))
     )
   }).pipe(Atom.withServerValueInitial)
 )

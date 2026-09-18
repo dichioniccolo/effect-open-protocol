@@ -124,7 +124,7 @@ Full rationale and rejected options live in the exploration's
 | DB location | On by default at `.wire-trace/traces.sqlite`; `--trace-db` and `WIRE_TRACE_DB` override |
 | Schema ownership | Shared `store/` package; every opener runs migrations |
 | Storage engine | SQLite via `@effect/sql-sqlite-bun` (user direction, confirmed over JSONL-per-run, Postgres and DuckDB) |
-| SSE lifetime (2026-09-18, found in P5) | Each live connection ends after 20 s and `EventSource` resumes from `Last-Event-ID`. Next 16 on Bun fires neither the request abort signal nor the body stream's cancel when a browser disconnects, in dev and in `next start`, so an unbounded feed would poll forever after a tab closed |
+| SSE lifetime (2026-09-18, found in P5) | Each live connection ends after 20 s and the browser's live atom (Effect `HttpClient` + `Sse.decode`, not `EventSource`) reconnects after the newest event it holds; a failed request shows "Reconnecting…" and retries every second. Next 16 on Bun fires neither the request abort signal nor the body stream's cancel when a browser disconnects, in dev and in `next start`, so an unbounded feed would poll forever after a tab closed |
 | First-page handoff (2026-09-18, found in P4) | Server components render the first page and pass it as encoded JSON; client components show it until their atoms produce values (run list) or seed the run's events atom with it (`useAtomInitialValues`). `HydrationBoundary` was not needed: the polling and live atoms must run in the browser anyway, and seeding a registry value would stop a stream atom from starting |
 
 Every alignment answer was the recommended one. The Frontend section of

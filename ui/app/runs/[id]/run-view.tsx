@@ -22,6 +22,7 @@ import {
   Filters,
   filtersAtom,
   liveAtom,
+  type LiveStatus,
   midsAtom,
   selectedAtom,
   selectedEventAtom,
@@ -80,16 +81,19 @@ function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: Read
 }
 
 /** Whether new events are still arriving. The label carries the state; the dot only decorates it. */
-function LiveBadge({ live, ended }: { readonly live: AsyncResult.AsyncResult<number, unknown>; readonly ended: boolean }) {
+function LiveBadge({ live, ended }: { readonly live: AsyncResult.AsyncResult<LiveStatus, unknown>; readonly ended: boolean }) {
   return ended
     ? <span className="text-xs text-muted-foreground">Ended</span>
     : AsyncResult.match(live, {
       onInitial: () => <span className="text-xs text-muted-foreground">Connecting…</span>,
-      onSuccess: () => (
-        <span className="inline-flex items-center gap-1.5 text-xs text-live">
-          <LiveDot /> Live
-        </span>
-      ),
+      onSuccess: ({ value }) =>
+        value === "live"
+          ? (
+            <span className="inline-flex items-center gap-1.5 text-xs text-live">
+              <LiveDot /> Live
+            </span>
+          )
+          : <span className="text-xs text-warning">Reconnecting…</span>,
       onFailure: () => <span className="text-xs text-destructive">Live updates stopped. Reload to reconnect.</span>
     })
 }
