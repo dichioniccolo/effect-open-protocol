@@ -32,5 +32,5 @@ const holder = globalThis as typeof globalThis & {
   wireTraceRuntime?: ManagedRuntime.ManagedRuntime<WireStore, unknown>
 }
 
-export const runtime: ManagedRuntime.ManagedRuntime<WireStore, unknown> = holder.wireTraceRuntime ??=
-  ManagedRuntime.make(StoreLive)
+export const runtime: ManagedRuntime.ManagedRuntime<WireStore, unknown> = (holder.wireTraceRuntime ??=
+  ManagedRuntime.make(StoreLive))

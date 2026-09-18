@@ -55,14 +55,17 @@ const feed = (runId: RunId, after: EventId) =>
           new EventQuery({ runId, after: from, limit: pageSize, kind: O.none(), direction: O.none(), mid: O.none() })
         )
       ),
-      Effect.tap((page) => O.match(A.last(page), { onNone: () => Effect.void, onSome: (last) => Ref.set(cursor, last.id) }))
+      Effect.tap((page) =>
+        O.match(A.last(page), { onNone: () => Effect.void, onSome: (last) => Ref.set(cursor, last.id) })
+      )
     )
     return pipe(
       Stream.fromEffectSchedule(nextPage, Schedule.spaced(pollEvery)),
       Stream.filter(A.isReadonlyArrayNonEmpty),
       Stream.mapEffect((page) =>
         Effect.map(S.encodeEffect(EventPageJson)(page), (data) =>
-          Sse.encoder.write({ _tag: "Event", id: `${A.lastNonEmpty(page).id}`, event: "events", data }))
+          Sse.encoder.write({ _tag: "Event", id: `${A.lastNonEmpty(page).id}`, event: "events", data })
+        )
       ),
       Stream.encodeText
     )
@@ -88,14 +91,15 @@ export async function GET(request: NextRequest, context: { readonly params: Prom
             )
           ),
           Effect.flatMap(Stream.toReadableStreamEffect()),
-          Effect.map((body) =>
-            new Response(body, {
-              headers: {
-                "content-type": "text/event-stream",
-                "cache-control": "no-cache, no-transform",
-                connection: "keep-alive"
-              }
-            })
+          Effect.map(
+            (body) =>
+              new Response(body, {
+                headers: {
+                  "content-type": "text/event-stream",
+                  "cache-control": "no-cache, no-transform",
+                  connection: "keep-alive"
+                }
+              })
           )
         )
       )

@@ -103,70 +103,82 @@ export const makeTcpListener = Effect.fnUntraced(function* (options: {
    * keeps a listening server alive until its sockets are gone.
    */
   const binding = (ready: Deferred.Deferred<void, SimulatorListenFailed>) =>
-    Effect.scoped(Effect.gen(function* () {
-      const server = yield* Effect.mapError(
-        NodeSocketServer.make({ host: options.endpoint.host, port: options.endpoint.port }),
-        (error) => new SimulatorListenFailed({ endpoint: address, reason: `${error}` })
-      )
-      const openSockets = yield* Ref.make<ReadonlyArray<Deferred.Deferred<void>>>([])
-      yield* Effect.addFinalizer(() =>
-        pipe(
-          Ref.getAndSet(openSockets, []),
-          Effect.flatMap((pending) =>
-            Effect.forEach(pending, (closed) => Deferred.succeed(closed, undefined), { discard: true })
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* Effect.mapError(
+          NodeSocketServer.make({ host: options.endpoint.host, port: options.endpoint.port }),
+          (error) => new SimulatorListenFailed({ endpoint: address, reason: `${error}` })
+        )
+        const openSockets = yield* Ref.make<ReadonlyArray<Deferred.Deferred<void>>>([])
+        yield* Effect.addFinalizer(() =>
+          pipe(
+            Ref.getAndSet(openSockets, []),
+            Effect.flatMap((pending) =>
+              Effect.forEach(pending, (closed) => Deferred.succeed(closed, undefined), { discard: true })
+            )
           )
         )
-      )
-      yield* Deferred.succeed(ready, undefined)
-      return yield* Effect.mapError(
-        server.run((socket) =>
-          Effect.gen(function* () {
-            const reader = yield* socket.reader
-            const writer = yield* socket.writer
-            const closed = yield* Deferred.make<void>()
-            yield* Ref.update(openSockets, (current) => A.append(current, closed))
-            const side: ServerSide = {
-              incoming: pipe(
-                Stream.fromPull(Effect.succeed(reader.pull)),
-                Stream.map((chunk) => typeof chunk === "string" ? encoder.encode(chunk) : chunk),
-                Stream.mapError((error) => new ConnectionLost({ reason: `${error}` }))
-              ),
-              send: (bytes) =>
-                Effect.mapError(writer.write(bytes), (error) => new ConnectionLost({ reason: `${error}` })),
-              close: () => Effect.asVoid(Deferred.succeed(closed, undefined))
-            }
-            yield* handOver(side)
-            return yield* Deferred.await(closed)
-          }).pipe(Effect.scoped, Effect.catchCause((cause) => Effect.logDebug("simulator socket ended", cause)))
-        ),
-        (error) => new SimulatorListenFailed({ endpoint: address, reason: `${error}` })
-      )
-    }))
+        yield* Deferred.succeed(ready, undefined)
+        return yield* Effect.mapError(
+          server.run((socket) =>
+            Effect.gen(function* () {
+              const reader = yield* socket.reader
+              const writer = yield* socket.writer
+              const closed = yield* Deferred.make<void>()
+              yield* Ref.update(openSockets, (current) => A.append(current, closed))
+              const side: ServerSide = {
+                incoming: pipe(
+                  Stream.fromPull(Effect.succeed(reader.pull)),
+                  Stream.map((chunk) => (typeof chunk === "string" ? encoder.encode(chunk) : chunk)),
+                  Stream.mapError((error) => new ConnectionLost({ reason: `${error}` }))
+                ),
+                send: (bytes) =>
+                  Effect.mapError(writer.write(bytes), (error) => new ConnectionLost({ reason: `${error}` })),
+                close: () => Effect.asVoid(Deferred.succeed(closed, undefined))
+              }
+              yield* handOver(side)
+              return yield* Deferred.await(closed)
+            }).pipe(
+              Effect.scoped,
+              Effect.catchCause((cause) => Effect.logDebug("simulator socket ended", cause))
+            )
+          ),
+          (error) => new SimulatorListenFailed({ endpoint: address, reason: `${error}` })
+        )
+      })
+    )
 
   const bind: Effect.Effect<void, SimulatorListenFailed> = Effect.gen(function* () {
     const done = yield* Ref.get(retired)
     const current = yield* Ref.get(running)
-    return yield* done ? Effect.void : O.match(current, {
-      onSome: () => Effect.void,
-      onNone: () =>
-        Effect.gen(function* () {
-          const ready = yield* Deferred.make<void, SimulatorListenFailed>()
-          const fiber = yield* Effect.forkChild(
-            pipe(binding(ready), Effect.tapError((error) => Deferred.fail(ready, error)))
-          )
-          // Fails here, not in the background, when the port is taken.
-          yield* Deferred.await(ready)
-          yield* Ref.set(running, O.some(fiber))
+    return yield* done
+      ? Effect.void
+      : O.match(current, {
+          onSome: () => Effect.void,
+          onNone: () =>
+            Effect.gen(function* () {
+              const ready = yield* Deferred.make<void, SimulatorListenFailed>()
+              const fiber = yield* Effect.forkChild(
+                pipe(
+                  binding(ready),
+                  Effect.tapError((error) => Deferred.fail(ready, error))
+                )
+              )
+              // Fails here, not in the background, when the port is taken.
+              yield* Deferred.await(ready)
+              yield* Ref.set(running, O.some(fiber))
+            })
         })
-    })
   })
 
   const unbind: Effect.Effect<void> = pipe(
     Ref.getAndSet(running, O.none()),
-    Effect.flatMap(O.match({
-      onNone: () => Effect.void,
-      onSome: (fiber) => Effect.asVoid(Fiber.interrupt(fiber))
-    }))
+    Effect.flatMap(
+      O.match({
+        onNone: () => Effect.void,
+        onSome: (fiber) => Effect.asVoid(Fiber.interrupt(fiber))
+      })
+    )
   )
 
   yield* bind
@@ -175,19 +187,24 @@ export const makeTcpListener = Effect.fnUntraced(function* (options: {
   const refuse = (refused: boolean): Effect.Effect<void> =>
     refused
       ? pipe(
-        unbind,
-        Effect.andThen(Effect.logInfo("the controller stopped listening").pipe(Effect.annotateLogs({ endpoint: address })))
-      )
+          unbind,
+          Effect.andThen(
+            Effect.logInfo("the controller stopped listening").pipe(Effect.annotateLogs({ endpoint: address }))
+          )
+        )
       : pipe(
-        bind,
-        Effect.tap(() => Effect.logInfo("the controller is listening again").pipe(Effect.annotateLogs({ endpoint: address }))),
-        // A port that is still in TIME_WAIT leaves the controller dark rather
-        // than killing the run; the next outage window tries again.
-        Effect.catchTag("SimulatorListenFailed", (error) =>
-          Effect.logWarning("the controller could not take its port back").pipe(
-            Effect.annotateLogs({ endpoint: address, reason: error.reason })
-          ))
-      )
+          bind,
+          Effect.tap(() =>
+            Effect.logInfo("the controller is listening again").pipe(Effect.annotateLogs({ endpoint: address }))
+          ),
+          // A port that is still in TIME_WAIT leaves the controller dark rather
+          // than killing the run; the next outage window tries again.
+          Effect.catchTag("SimulatorListenFailed", (error) =>
+            Effect.logWarning("the controller could not take its port back").pipe(
+              Effect.annotateLogs({ endpoint: address, reason: error.reason })
+            )
+          )
+        )
 
   return { accept: accepted, refuse } satisfies TcpListener
 })

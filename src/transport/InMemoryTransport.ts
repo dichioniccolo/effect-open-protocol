@@ -56,8 +56,7 @@ const make = Effect.gen(function* () {
 
   const connect = Effect.fnUntraced(function* (endpoint: Endpoint) {
     const open = yield* O.match(MutableHashMap.get(listeners, key(endpoint)), {
-      onNone: () =>
-        Effect.fail(new ConnectionFailed({ endpoint, reason: "nothing is listening on this endpoint" })),
+      onNone: () => Effect.fail(new ConnectionFailed({ endpoint, reason: "nothing is listening on this endpoint" })),
       onSome: (found) =>
         found.refused
           ? Effect.fail(new ConnectionFailed({ endpoint, reason: "connection refused" }))
@@ -66,10 +65,10 @@ const make = Effect.gen(function* () {
     const toClient = yield* Queue.bounded<Uint8Array, ConnectionLost>(capacity)
     const toServer = yield* Queue.bounded<Uint8Array, ConnectionLost>(capacity)
     const closeBoth = (reason: string): Effect.Effect<void> =>
-      Effect.all([
-        Queue.fail(toClient, new ConnectionLost({ reason })),
-        Queue.fail(toServer, new ConnectionLost({ reason }))
-      ], { discard: true })
+      Effect.all(
+        [Queue.fail(toClient, new ConnectionLost({ reason })), Queue.fail(toServer, new ConnectionLost({ reason }))],
+        { discard: true }
+      )
     const serverSide: ServerSide = {
       incoming: pipeOf(toServer).incoming,
       send: pipeOf(toClient).send,
@@ -92,14 +91,17 @@ const make = Effect.gen(function* () {
  * @category services
  * @since 0.0.0
  */
-export class InMemoryNetwork extends Context.Service<InMemoryNetwork, {
-  /** Accepts connections on an endpoint until the caller's scope closes. */
-  readonly bind: (endpoint: Endpoint) => Effect.Effect<Queue.Dequeue<ServerSide>, never, Scope.Scope>
-  /** Opens a connection, failing when nothing is bound to the endpoint. */
-  readonly connect: (endpoint: Endpoint) => Effect.Effect<Duplex, ConnectionFailed, Scope.Scope>
-  /** Stops accepting new connections without touching the established ones. */
-  readonly refuse: (endpoint: Endpoint, refused: boolean) => Effect.Effect<void>
-}>()("effect-open-protocol/InMemoryNetwork") {
+export class InMemoryNetwork extends Context.Service<
+  InMemoryNetwork,
+  {
+    /** Accepts connections on an endpoint until the caller's scope closes. */
+    readonly bind: (endpoint: Endpoint) => Effect.Effect<Queue.Dequeue<ServerSide>, never, Scope.Scope>
+    /** Opens a connection, failing when nothing is bound to the endpoint. */
+    readonly connect: (endpoint: Endpoint) => Effect.Effect<Duplex, ConnectionFailed, Scope.Scope>
+    /** Stops accepting new connections without touching the established ones. */
+    readonly refuse: (endpoint: Endpoint, refused: boolean) => Effect.Effect<void>
+  }
+>()("effect-open-protocol/InMemoryNetwork") {
   /**
    * Provides an isolated in-process network for the lifetime of the layer.
    *
@@ -147,7 +149,4 @@ export const layer: Layer.Layer<Transport, never, InMemoryNetwork> = Layer.effec
  * @category layers
  * @since 0.0.0
  */
-export const layerComplete: Layer.Layer<Transport | InMemoryNetwork> = Layer.provideMerge(
-  layer,
-  InMemoryNetwork.layer
-)
+export const layerComplete: Layer.Layer<Transport | InMemoryNetwork> = Layer.provideMerge(layer, InMemoryNetwork.layer)

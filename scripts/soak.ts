@@ -71,7 +71,8 @@ const runOnce = (options: {
             Ref.update(delivered, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
         })
         return simulator
-      }))
+      })
+    )
 
     yield* Effect.sleep(options.duration)
     yield* Effect.forEach(simulators, (simulator: Simulator) => simulator.quiesce, { discard: true })
@@ -84,13 +85,11 @@ const runOnce = (options: {
     const settleFor = (remaining: number): Effect.Effect<void> =>
       remaining <= 0
         ? Effect.void
-        : Effect.flatMap(
-          Effect.all({ generated, delivered: Ref.get(delivered) }),
-          (current) =>
+        : Effect.flatMap(Effect.all({ generated, delivered: Ref.get(delivered) }), (current) =>
             A.length(A.dedupe(current.delivered)) >= current.generated
               ? Effect.void
               : Effect.andThen(Effect.sleep(Duration.millis(100)), settleFor(remaining - 1))
-        )
+          )
     yield* settleFor(Math.ceil(Duration.toMillis(options.settle) / 100))
 
     const abandoned = yield* Effect.map(
@@ -109,18 +108,11 @@ const runOnce = (options: {
       unique: A.length(A.dedupe(finalDelivered)),
       abandoned
     } satisfies Outcome
-  }).pipe(
-    Random.withSeed(options.seed),
-    Effect.scoped,
-    Effect.provide(DevicePool.layer),
-    Effect.provide(layerComplete)
-  )
+  }).pipe(Random.withSeed(options.seed), Effect.scoped, Effect.provide(DevicePool.layer), Effect.provide(layerComplete))
 
 const flag = (name: string, fallback: number): number => {
   const index = A.findFirstIndex(process.argv, (value) => value === `--${name}`)
-  return index._tag === "Some"
-    ? Number(process.argv[index.value + 1] ?? fallback)
-    : fallback
+  return index._tag === "Some" ? Number(process.argv[index.value + 1] ?? fallback) : fallback
 }
 
 const program = Effect.gen(function* () {
@@ -143,14 +135,15 @@ const program = Effect.gen(function* () {
       (outcome) =>
         Effect.sync(() =>
           console.log(
-            `seed ${`${outcome.seed}`.padStart(4)}  devices ${outcome.devices}  faults ${
-              outcome.faultRate.toFixed(2)
-            }  generated ${`${outcome.generated}`.padStart(4)}  delivered ${
-              `${outcome.unique}`.padStart(4)
-            }  abandoned ${`${outcome.abandoned}`.padStart(3)}  ${passed(outcome) ? "ok" : "FAILED"}`
+            `seed ${`${outcome.seed}`.padStart(4)}  devices ${outcome.devices}  faults ${outcome.faultRate.toFixed(
+              2
+            )}  generated ${`${outcome.generated}`.padStart(4)}  delivered ${`${outcome.unique}`.padStart(
+              4
+            )}  abandoned ${`${outcome.abandoned}`.padStart(3)}  ${passed(outcome) ? "ok" : "FAILED"}`
           )
         )
-    ))
+    )
+  )
 
   const failures = A.filter(outcomes, (outcome) => !passed(outcome))
   const totalGenerated = A.reduce(outcomes, 0, (sum, outcome) => sum + outcome.generated)
@@ -166,13 +159,14 @@ const program = Effect.gen(function* () {
       console.log(
         `  seed ${failure.seed}: lost ${lost(failure)}, duplicated ${duplicated(failure)} ` +
           `(devices ${failure.devices}, fault rate ${failure.faultRate.toFixed(2)})`
-      ))
+      )
+    )
     console.log("")
   })
 
   return A.length(failures)
 }).pipe(
-  Effect.flatMap((failures) => failures === 0 ? Effect.void : Effect.die(`${failures} seeds broke the invariant`))
+  Effect.flatMap((failures) => (failures === 0 ? Effect.void : Effect.die(`${failures} seeds broke the invariant`)))
 )
 
 program.pipe(NodeRuntime.runMain)

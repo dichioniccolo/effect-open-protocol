@@ -67,7 +67,7 @@ export const readLoop = (
         Effect.flatMap((message) =>
           pipe(
             session.replies.offer(message),
-            Effect.flatMap((consumed) => consumed ? Effect.void : onUnsolicited(message))
+            Effect.flatMap((consumed) => (consumed ? Effect.void : onUnsolicited(message)))
           )
         )
       )
@@ -104,11 +104,15 @@ export const keepAliveLoop = (
           Duration.toMillis(interval) > now - sent
             ? Effect.void
             : pipe(
-              session.replies.request(new KeepAlive(), 9999, expectReply(9999, "KeepAlive")),
-              Effect.andThen(Ref.set(lastSent, now)),
-              Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" }))),
-              Effect.catchTag("CommandRejected", () => Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" })))
-            )
+                session.replies.request(new KeepAlive(), 9999, expectReply(9999, "KeepAlive")),
+                Effect.andThen(Ref.set(lastSent, now)),
+                Effect.catchTag("RequestTimeout", () =>
+                  Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" }))
+                ),
+                Effect.catchTag("CommandRejected", () =>
+                  Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" }))
+                )
+              )
         )
       )
     ),

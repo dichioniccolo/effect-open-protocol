@@ -82,7 +82,8 @@ const make = Effect.fnUntraced(function* () {
       const claimed = yield* Ref.modify(slots, (current) =>
         HashMap.has(current, config.id)
           ? [false, current]
-          : [true, HashMap.set(current, config.id, { started, connection: O.none() })])
+          : [true, HashMap.set(current, config.id, { started, connection: O.none() })]
+      )
 
       if (!claimed) {
         return yield* Effect.fail(new DeviceAlreadyAdded({ deviceId: config.id }))
@@ -95,7 +96,8 @@ const make = Effect.fnUntraced(function* () {
           Effect.gen(function* () {
             const connection = yield* Effect.provideService(makeDeviceConnection(config), Transport, transport)
             yield* Ref.update(slots, (current) =>
-              HashMap.set(current, config.id, { started, connection: O.some(connection) }))
+              HashMap.set(current, config.id, { started, connection: O.some(connection) })
+            )
             yield* Effect.addFinalizer(() => Ref.update(slots, (current) => HashMap.remove(current, config.id)))
             yield* Deferred.succeed(started, connection)
             // Hold the scope open until the device is removed or the pool closes.
@@ -106,9 +108,7 @@ const make = Effect.fnUntraced(function* () {
             pipe(
               Ref.update(slots, (current) => HashMap.remove(current, config.id)),
               Effect.andThen(
-                Effect.logError("a device connection stopped", cause).pipe(
-                  Effect.annotateLogs({ deviceId: config.id })
-                )
+                Effect.logError("a device connection stopped", cause).pipe(Effect.annotateLogs({ deviceId: config.id }))
               )
             )
           )
@@ -132,7 +132,8 @@ const make = Effect.fnUntraced(function* () {
           delivered: connection.delivered,
           duplicates: connection.duplicates
         })
-    ))
+    )
+  )
 
   return { add, remove, get, status } satisfies DevicePoolShape
 })
@@ -168,9 +169,7 @@ const make = Effect.fnUntraced(function* () {
  * @category services
  * @since 0.0.0
  */
-export class DevicePool extends Context.Service<DevicePool, DevicePoolShape>()(
-  "effect-open-protocol/DevicePool"
-) {
+export class DevicePool extends Context.Service<DevicePool, DevicePoolShape>()("effect-open-protocol/DevicePool") {
   /**
    * Provides a pool that supervises its devices for the lifetime of the layer.
    *

@@ -22,18 +22,7 @@ import { Command, Flag } from "effect/unstable/cli"
 import { makeWith, type Simulator } from "../simulator/ControllerSimulator.ts"
 import { makeTcpListener } from "../simulator/TcpListener.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
-import {
-  host,
-  instrument,
-  jitter,
-  latency,
-  latencyOf,
-  port,
-  seed,
-  traceDb,
-  traceFile,
-  traceSink
-} from "./Wire.ts"
+import { host, instrument, jitter, latency, latencyOf, port, seed, traceDb, traceFile, traceSink } from "./Wire.ts"
 import { makeRecording } from "./Recording.ts"
 
 const faultRate = Flag.Finite("fault-rate").pipe(
@@ -52,8 +41,7 @@ const controllerName = Flag.String("controller-name").pipe(
 )
 
 /** How many lines a chunk of stdin completed. */
-const newlines = (bytes: Uint8Array): number =>
-  A.length(A.filter(A.fromIterable(bytes), (byte) => byte === 10))
+const newlines = (bytes: Uint8Array): number => A.length(A.filter(A.fromIterable(bytes), (byte) => byte === 10))
 
 /**
  * Produces one result per line on stdin.
@@ -71,9 +59,7 @@ const onEnter = (simulator: Simulator): Effect.Effect<void, never, Stdio.Stdio> 
     const produceOne = pipe(
       simulator.produce,
       Effect.flatMap((result) =>
-        Effect.logInfo("produced a result on request").pipe(
-          Effect.annotateLogs({ tighteningId: result.tighteningId })
-        )
+        Effect.logInfo("produced a result on request").pipe(Effect.annotateLogs({ tighteningId: result.tighteningId }))
       )
     )
     return yield* pipe(
@@ -81,7 +67,8 @@ const onEnter = (simulator: Simulator): Effect.Effect<void, never, Stdio.Stdio> 
         // `A.range(1, 0)` is `[1]`, so an empty count has to be handled here.
         newlines(chunk) === 0
           ? Effect.void
-          : Effect.forEach(A.range(1, newlines(chunk)), () => produceOne, { discard: true })),
+          : Effect.forEach(A.range(1, newlines(chunk)), () => produceOne, { discard: true })
+      ),
       Effect.catchCause((cause) => Effect.logDebug("stdin closed, no result trigger", cause))
     )
   })
@@ -95,7 +82,10 @@ const summary = (simulator: Simulator): Effect.Effect<void> =>
       Effect.annotateLogs({
         generated,
         abandoned: A.length(abandoned),
-        abandonedIds: A.join(A.map(abandoned, (id) => `${id}`), ","),
+        abandonedIds: A.join(
+          A.map(abandoned, (id) => `${id}`),
+          ","
+        ),
         backlog
       })
     )
@@ -131,10 +121,10 @@ const run = Effect.fnUntraced(function* (config: {
   const listener = yield* makeTcpListener({
     endpoint,
     decorate: (side) =>
-      Effect.map(
-        instrument(side, { source: "controller", recording, latency: link }),
-        (wrapped) => ({ ...wrapped, close: side.close })
-      )
+      Effect.map(instrument(side, { source: "controller", recording, latency: link }), (wrapped) => ({
+        ...wrapped,
+        close: side.close
+      }))
   })
 
   const simulator = yield* makeWith(
@@ -167,18 +157,7 @@ const run = Effect.fnUntraced(function* (config: {
 const command = Command.make(
   "controller",
   { host, port, seed, latency, jitter, traceFile, traceDb, faultRate, resultInterval, controllerName },
-  (config) =>
-    pipe(
-      run(config),
-      Random.withSeed(config.seed),
-      Effect.scoped,
-      Effect.asVoid
-    )
-).pipe(
-  Command.withDescription("Serve a simulated Open Protocol controller and trace every byte it exchanges")
-)
+  (config) => pipe(run(config), Random.withSeed(config.seed), Effect.scoped, Effect.asVoid)
+).pipe(Command.withDescription("Serve a simulated Open Protocol controller and trace every byte it exchanges"))
 
-Command.run(command, { version: "0.0.0" }).pipe(
-  Effect.provide(NodeServices.layer),
-  NodeRuntime.runMain
-)
+Command.run(command, { version: "0.0.0" }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

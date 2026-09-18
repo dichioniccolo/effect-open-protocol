@@ -63,7 +63,7 @@ export const initialSessionState: SessionState = {
 export const forget = (current: SessionState, connection: ServerSide): SessionState =>
   O.match(current.connection, {
     onNone: () => current,
-    onSome: (open) => open === connection ? { ...current, subscribed: false, connection: O.none() } : current
+    onSome: (open) => (open === connection ? { ...current, subscribed: false, connection: O.none() } : current)
   })
 
 /**

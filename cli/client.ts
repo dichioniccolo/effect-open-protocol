@@ -89,19 +89,13 @@ const run = Effect.fnUntraced(function* (config: {
   const connection = yield* makeDeviceConnection({
     id,
     endpoint: new Endpoint({ host: config.host, port: config.port }),
-    ...(config.recoveryInterval > 0
-      ? { recoveryInterval: Duration.millis(config.recoveryInterval) }
-      : {}),
+    ...(config.recoveryInterval > 0 ? { recoveryInterval: Duration.millis(config.recoveryInterval) } : {}),
     onResult: (result) =>
       pipe(
         Ref.update(received, (current) => A.append(current, `${result.tighteningId}`)),
         Effect.andThen(report(result))
       )
-  }).pipe(
-    Effect.provide(
-      instrumentedTransport({ source: "client", recording, latency: latencyOf(config) })
-    )
-  )
+  }).pipe(Effect.provide(instrumentedTransport({ source: "client", recording, latency: latencyOf(config) })))
 
   yield* Effect.logInfo("client started").pipe(
     Effect.annotateLogs({
@@ -116,9 +110,8 @@ const run = Effect.fnUntraced(function* (config: {
   // Every state change is worth seeing: this is where backoff, re-handshake
   // and recovery become visible without reading the frames.
   const watch = Effect.forkChild(
-    Stream.runForEach(
-      SubscriptionRef.changes(connection.state),
-      (state) => Effect.logInfo("connection state").pipe(Effect.annotateLogs({ state: state._tag }))
+    Stream.runForEach(SubscriptionRef.changes(connection.state), (state) =>
+      Effect.logInfo("connection state").pipe(Effect.annotateLogs({ state: state._tag }))
     )
   )
 
@@ -144,19 +137,7 @@ const run = Effect.fnUntraced(function* (config: {
 const command = Command.make(
   "client",
   { host, port, seed, latency, jitter, traceFile, traceDb, deviceId, recoveryInterval },
-  (config) =>
-    pipe(
-      run(config),
-      Random.withSeed(config.seed),
-      Effect.scoped,
-      Effect.provide(tcpLayer),
-      Effect.asVoid
-    )
-).pipe(
-  Command.withDescription("Connect to an Open Protocol controller and trace every byte it exchanges")
-)
+  (config) => pipe(run(config), Random.withSeed(config.seed), Effect.scoped, Effect.provide(tcpLayer), Effect.asVoid)
+).pipe(Command.withDescription("Connect to an Open Protocol controller and trace every byte it exchanges"))
 
-Command.run(command, { version: "0.0.0" }).pipe(
-  Effect.provide(NodeServices.layer),
-  NodeRuntime.runMain
-)
+Command.run(command, { version: "0.0.0" }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

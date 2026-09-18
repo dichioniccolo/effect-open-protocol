@@ -1,19 +1,13 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "lib": [
-      "DOM",
-      "DOM.Iterable",
-      "ESNext"
-    ],
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": false,
-    "types": [
-      "bun"
-    ],
+    "types": ["bun"],
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
@@ -31,23 +25,11 @@
       }
     ],
     "paths": {
-      "@/*": [
-        "./*"
-      ],
-      "effect-open-protocol": [
-        "../src/index.ts"
-      ]
+      "@/*": ["./*"],
+      "effect-open-protocol": ["../src/index.ts"]
     },
     "esModuleInterop": true
   },
-  "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"],
+  "exclude": ["node_modules"]
 }

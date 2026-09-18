@@ -76,37 +76,26 @@ const none: Fault = { _tag: "None" }
 const allKinds: ReadonlyArray<FaultKind> = FaultKind.literals
 
 const pickDuration = (max: Duration.Duration): Effect.Effect<Duration.Duration> =>
-  Effect.map(
-    Random.nextIntBetween(1, Math.max(2, Duration.toMillis(max))),
-    (millis) => Duration.millis(millis)
-  )
+  Effect.map(Random.nextIntBetween(1, Math.max(2, Duration.toMillis(max))), (millis) => Duration.millis(millis))
 
 const faultOf = (kind: FaultKind, config: FaultConfig): Effect.Effect<Fault> => {
   const maxDelay = config.maxDelay ?? Duration.seconds(8)
   const maxOutage = config.maxOutage ?? Duration.seconds(5)
   return Match.value(kind).pipe(
     Match.when("dropConnection", (): Effect.Effect<Fault> => Effect.succeed({ _tag: "DropConnection" })),
-    Match.when(
-      "goSilent",
-      (): Effect.Effect<Fault> =>
-        Effect.map(pickDuration(maxOutage), (duration) => ({ _tag: "GoSilent", duration }))
+    Match.when("goSilent", (): Effect.Effect<Fault> =>
+      Effect.map(pickDuration(maxOutage), (duration) => ({ _tag: "GoSilent", duration }))
     ),
-    Match.when(
-      "delayReply",
-      (): Effect.Effect<Fault> =>
-        Effect.map(pickDuration(maxDelay), (duration) => ({ _tag: "DelayReply", duration }))
+    Match.when("delayReply", (): Effect.Effect<Fault> =>
+      Effect.map(pickDuration(maxDelay), (duration) => ({ _tag: "DelayReply", duration }))
     ),
-    Match.when(
-      "splitFrame",
-      (): Effect.Effect<Fault> =>
-        Effect.map(Random.nextIntBetween(2, 5), (pieces) => ({ _tag: "SplitFrame", pieces }))
+    Match.when("splitFrame", (): Effect.Effect<Fault> =>
+      Effect.map(Random.nextIntBetween(2, 5), (pieces) => ({ _tag: "SplitFrame", pieces }))
     ),
     Match.when("coalesceFrames", (): Effect.Effect<Fault> => Effect.succeed({ _tag: "CoalesceFrames" })),
     Match.when("rejectCommand", (): Effect.Effect<Fault> => Effect.succeed({ _tag: "RejectCommand", code: 79 })),
-    Match.when(
-      "refuseConnections",
-      (): Effect.Effect<Fault> =>
-        Effect.map(pickDuration(maxOutage), (duration) => ({ _tag: "RefuseConnections", duration }))
+    Match.when("refuseConnections", (): Effect.Effect<Fault> =>
+      Effect.map(pickDuration(maxOutage), (duration) => ({ _tag: "RefuseConnections", duration }))
     ),
     Match.exhaustive
   )
@@ -147,8 +136,7 @@ export const next = (config: FaultConfig): Effect.Effect<Fault> =>
  */
 export const split = (bytes: Uint8Array, pieces: number): ReadonlyArray<Uint8Array> => {
   const size = Math.max(1, Math.ceil(bytes.length / pieces))
-  return A.map(
-    A.range(0, Math.max(0, Math.ceil(bytes.length / size) - 1)),
-    (index) => bytes.slice(index * size, Math.min(bytes.length, (index + 1) * size))
+  return A.map(A.range(0, Math.max(0, Math.ceil(bytes.length / size) - 1)), (index) =>
+    bytes.slice(index * size, Math.min(bytes.length, (index + 1) * size))
   )
 }

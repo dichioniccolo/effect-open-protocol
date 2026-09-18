@@ -52,9 +52,7 @@ export const isDigits = (value: string): boolean =>
  * @since 0.0.0
  */
 export const parseDigits = <E>(raw: string, onError: () => E): Result.Result<number, E> =>
-  isDigits(raw)
-    ? pipe(decodeNumber(raw), Result.mapError(onError))
-    : Result.fail(onError())
+  isDigits(raw) ? pipe(decodeNumber(raw), Result.mapError(onError)) : Result.fail(onError())
 
 /**
  * Renders a number as `width` ASCII digits, left-padded with zeroes.

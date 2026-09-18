@@ -9,13 +9,7 @@ import * as S from "effect/Schema"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import Link from "next/link"
 import { useMemo } from "react"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle
-} from "@/components/ui/empty"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { type ListedRun, listRuns, type RunStatus, runsAtom } from "@/lib/atoms"
 import { RunListJson } from "@/lib/wire"
@@ -42,8 +36,7 @@ export function RunList({ initial, renderedAt }: { readonly initial: string; rea
   const rendered = useMemo(
     () =>
       O.getOrElse(
-        O.map(S.decodeOption(RunListJson)(initial), (runs) =>
-          listRuns(runs, DateTime.makeUnsafe(renderedAt))),
+        O.map(S.decodeOption(RunListJson)(initial), (runs) => listRuns(runs, DateTime.makeUnsafe(renderedAt))),
         (): ReadonlyArray<ListedRun> => []
       ),
     [initial, renderedAt]
@@ -100,7 +93,9 @@ export function RunList({ initial, renderedAt }: { readonly initial: string; rea
                       #{run.id}
                     </Link>
                   </TableCell>
-                  <TableCell className="font-sans"><SideBadge side={run.side} /></TableCell>
+                  <TableCell className="font-sans">
+                    <SideBadge side={run.side} />
+                  </TableCell>
                   <TableCell className="text-subtle-foreground tabular-nums">
                     {dateOf(run.startedAt)} {timeOf(run.startedAt)}
                   </TableCell>

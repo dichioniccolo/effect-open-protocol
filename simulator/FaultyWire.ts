@@ -42,7 +42,9 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
  */
 const rejectionFor = (message: Message, code: number): O.Option<Message> =>
   Match.value(message).pipe(
-    Match.tag("CommandAccepted", (accepted): O.Option<Message> => O.some(new CommandError({ mid: accepted.mid, code }))),
+    Match.tag("CommandAccepted", (accepted): O.Option<Message> =>
+      O.some(new CommandError({ mid: accepted.mid, code }))
+    ),
     Match.tag("CommunicationStartAccepted", (): O.Option<Message> => O.some(new CommandError({ mid: 1, code }))),
     Match.tag("OldResult", (): O.Option<Message> => O.some(new CommandError({ mid: 64, code }))),
     Match.tag("KeepAlive", (): O.Option<Message> => O.some(new CommandError({ mid: 9999, code }))),
@@ -77,9 +79,7 @@ export const sendWithFaults = (
       pipe(
         Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }]),
         Effect.flatMap((pending) =>
-          Effect.ignore(
-            connection.send(A.length(pending) === 0 ? frame : concat(A.append(pending, frame)))
-          )
+          Effect.ignore(connection.send(A.length(pending) === 0 ? frame : concat(A.append(pending, frame))))
         )
       )
 
@@ -89,7 +89,8 @@ export const sendWithFaults = (
         pipe(
           Ref.update(state, (current) => forget(current, connection)),
           Effect.andThen(connection.close("the controller dropped the connection"))
-        )),
+        )
+      ),
       Match.tag("GoSilent", (silent) => Effect.sleep(silent.duration)),
       Match.tag("DelayReply", (delayed) => Effect.andThen(Effect.sleep(delayed.duration), flush(bytes))),
       Match.tag("SplitFrame", (split) =>
@@ -102,7 +103,8 @@ export const sendWithFaults = (
               { discard: true }
             )
           )
-        )),
+        )
+      ),
       // The frame is held back so it rides along with the next one and the
       // client sees two messages inside a single read. A short timer flushes it
       // anyway: coalescing delays frames, it does not eat them, and a quiet
@@ -124,12 +126,14 @@ export const sendWithFaults = (
             )
           ),
           Effect.asVoid
-        )),
+        )
+      ),
       Match.tag("RejectCommand", (rejected) =>
         O.match(rejectionFor(message, rejected.code), {
           onNone: () => flush(bytes),
           onSome: (refusal) => flush(encoder.encode(encodeMessage(refusal)))
-        })),
+        })
+      ),
       // The controller stops accepting new sessions for a while, the way one
       // does while it reboots. Established traffic is untouched, and the
       // window is owned by the simulator: a session that dies mid-outage must

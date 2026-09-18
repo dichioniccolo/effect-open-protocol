@@ -42,22 +42,16 @@ export type Expectation = (message: Message) => O.Option<Effect.Effect<Message, 
  * @category constructors
  * @since 0.0.0
  */
-export const expectReply = (
-  mid: number,
-  direct?: Message["_tag"] | undefined
-): Expectation =>
-(message) =>
-  Match.value(message).pipe(
-    Match.tag("CommandAccepted", (accepted) => accepted.mid === mid ? O.some(Effect.succeed(message)) : O.none()),
-    Match.tag(
-      "CommandError",
-      (error) =>
-        error.mid === mid
-          ? O.some(Effect.fail(new CommandRejected({ mid, code: error.code })))
-          : O.none()
-    ),
-    Match.orElse(() => direct !== undefined && message._tag === direct ? O.some(Effect.succeed(message)) : O.none())
-  )
+export const expectReply =
+  (mid: number, direct?: Message["_tag"] | undefined): Expectation =>
+  (message) =>
+    Match.value(message).pipe(
+      Match.tag("CommandAccepted", (accepted) => (accepted.mid === mid ? O.some(Effect.succeed(message)) : O.none())),
+      Match.tag("CommandError", (error) =>
+        error.mid === mid ? O.some(Effect.fail(new CommandRejected({ mid, code: error.code }))) : O.none()
+      ),
+      Match.orElse(() => (direct !== undefined && message._tag === direct ? O.some(Effect.succeed(message)) : O.none()))
+    )
 
 interface Pending {
   readonly mid: number

@@ -39,13 +39,12 @@ export type DeviceId = typeof DeviceId.Type
  * @category models
  * @since 0.0.0
  */
-export const TighteningId = S.Number.check(
-  S.isInt(),
-  S.isBetween({ minimum: 0, maximum: 4294967295 })
-).pipe(S.brand("TighteningId")).annotate({
-  identifier: "TighteningId",
-  description: "Unique incrementing identifier of a tightening result"
-})
+export const TighteningId = S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 4294967295 }))
+  .pipe(S.brand("TighteningId"))
+  .annotate({
+    identifier: "TighteningId",
+    description: "Unique incrementing identifier of a tightening result"
+  })
 
 /**
  * @category models
@@ -63,10 +62,8 @@ export const ControllerTimestamp = S.String.check(
   S.makeFilter(
     (value) =>
       Str.length(value) === 19 &&
-      A.every(
-        [...value],
-        (char, index) =>
-          A.contains([4, 7, 10, 13, 16], index) ? char === "-" || char === ":" : char >= "0" && char <= "9"
+      A.every([...value], (char, index) =>
+        A.contains([4, 7, 10, 13, 16], index) ? char === "-" || char === ":" : char >= "0" && char <= "9"
       ),
     {
       identifier: "ControllerTimestamp",
@@ -74,10 +71,12 @@ export const ControllerTimestamp = S.String.check(
       description: "a controller local timestamp formatted as YYYY-MM-DD:HH:MM:SS"
     }
   )
-).pipe(S.brand("ControllerTimestamp")).annotate({
-  identifier: "ControllerTimestamp",
-  description: "Controller local timestamp without time zone"
-})
+)
+  .pipe(S.brand("ControllerTimestamp"))
+  .annotate({
+    identifier: "ControllerTimestamp",
+    description: "Controller local timestamp without time zone"
+  })
 
 /**
  * @category models
@@ -144,18 +143,21 @@ export type LimitStatus = typeof LimitStatus.Type
  * @category models
  * @since 0.0.0
  */
-export class TighteningResult extends S.Class<TighteningResult>("TighteningResult")({
-  deviceId: DeviceId,
-  tighteningId: TighteningId,
-  vin: S.String,
-  parameterSetId: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 999 })),
-  status: TighteningStatus,
-  torqueStatus: LimitStatus,
-  angleStatus: LimitStatus,
-  torque: S.Number,
-  angle: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99999 })),
-  timestamp: ControllerTimestamp
-}, { description: "One tightening reported by a controller" }) {}
+export class TighteningResult extends S.Class<TighteningResult>("TighteningResult")(
+  {
+    deviceId: DeviceId,
+    tighteningId: TighteningId,
+    vin: S.String,
+    parameterSetId: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 999 })),
+    status: TighteningStatus,
+    torqueStatus: LimitStatus,
+    angleStatus: LimitStatus,
+    torque: S.Number,
+    angle: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99999 })),
+    timestamp: ControllerTimestamp
+  },
+  { description: "One tightening reported by a controller" }
+) {}
 
 interface Scan {
   readonly offset: number
@@ -228,41 +230,37 @@ const readSlots = (
   slots: ReadonlyArray<Slot>
 ): Result.Result<ReadonlyArray<string>, PayloadDecodeError> =>
   pipe(
-    A.reduce(
-      slots,
-      emptyScan,
-      (accumulated, current) =>
-        Result.flatMap(accumulated, ({ offset, values }) => {
-          const id = Str.substring(offset, offset + 2)(data)
-          const value = Str.substring(offset + 2, offset + 2 + current.width)(data)
-          return id !== current.id
-            ? Result.fail(
+    A.reduce(slots, emptyScan, (accumulated, current) =>
+      Result.flatMap(accumulated, ({ offset, values }) => {
+        const id = Str.substring(offset, offset + 2)(data)
+        const value = Str.substring(offset + 2, offset + 2 + current.width)(data)
+        return id !== current.id
+          ? Result.fail(
               new PayloadDecodeError({
                 mid,
                 reason: `expected parameter ${current.id} at offset ${offset}, found "${id}"`
               })
             )
-            : Str.length(value) !== current.width
-            ? Result.fail(
-              new PayloadDecodeError({ mid, reason: `parameter ${current.id} is truncated` })
-            )
+          : Str.length(value) !== current.width
+            ? Result.fail(new PayloadDecodeError({ mid, reason: `parameter ${current.id} is truncated` }))
             : Result.succeed({
-              offset: offset + 2 + current.width,
-              values: A.append(values, value)
-            })
-        })
+                offset: offset + 2 + current.width,
+                values: A.append(values, value)
+              })
+      })
     ),
     Result.map(({ values }) => values)
   )
 
-const renderSlots = (slots: ReadonlyArray<Slot>) => (result: TighteningResult): string =>
-  A.join(A.map(slots, (slot) => slot.id + slot.render(result)), "")
+const renderSlots =
+  (slots: ReadonlyArray<Slot>) =>
+  (result: TighteningResult): string =>
+    A.join(
+      A.map(slots, (slot) => slot.id + slot.render(result)),
+      ""
+    )
 
-const digitsValue = (
-  mid: number,
-  parameter: string,
-  raw: string
-): Result.Result<number, PayloadDecodeError> =>
+const digitsValue = (mid: number, parameter: string, raw: string): Result.Result<number, PayloadDecodeError> =>
   parseDigits(raw, () => new PayloadDecodeError({ mid, reason: `parameter ${parameter} is not numeric` }))
 
 const enumValue = <A>(
@@ -276,9 +274,7 @@ const enumValue = <A>(
     Result.flatMap((index) =>
       pipe(
         A.get(values, index),
-        Result.fromOption(
-          () => new PayloadDecodeError({ mid, reason: `parameter ${parameter} has value ${raw}` })
-        )
+        Result.fromOption(() => new PayloadDecodeError({ mid, reason: `parameter ${parameter} has value ${raw}` }))
       )
     )
   )
@@ -322,7 +318,10 @@ const decodeWith = (mid: number, slots: ReadonlyArray<Slot>) => {
 }
 
 const statusIndex = <A extends string>(values: ReadonlyArray<A>, value: A): number =>
-  pipe(A.findFirstIndex(values, (candidate) => candidate === value), O.getOrElse(() => 0))
+  pipe(
+    A.findFirstIndex(values, (candidate) => candidate === value),
+    O.getOrElse(() => 0)
+  )
 
 const tighteningResultSlots: ReadonlyArray<Slot> = [
   unused("01", 4, () => padNumber(1, 4)),

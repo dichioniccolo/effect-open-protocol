@@ -81,21 +81,29 @@ function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: Read
 }
 
 /** Whether new events are still arriving. The label carries the state; the dot only decorates it. */
-function LiveBadge({ live, ended }: { readonly live: AsyncResult.AsyncResult<LiveStatus, unknown>; readonly ended: boolean }) {
-  return ended
-    ? <span className="text-xs text-muted-foreground">Ended</span>
-    : AsyncResult.match(live, {
+function LiveBadge({
+  live,
+  ended
+}: {
+  readonly live: AsyncResult.AsyncResult<LiveStatus, unknown>
+  readonly ended: boolean
+}) {
+  return ended ? (
+    <span className="text-xs text-muted-foreground">Ended</span>
+  ) : (
+    AsyncResult.match(live, {
       onInitial: () => <span className="text-xs text-muted-foreground">Connecting…</span>,
       onSuccess: ({ value }) =>
-        value === "live"
-          ? (
-            <span className="inline-flex items-center gap-1.5 text-xs text-live">
-              <LiveDot /> Live
-            </span>
-          )
-          : <span className="text-xs text-warning">Reconnecting…</span>,
+        value === "live" ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-live">
+            <LiveDot /> Live
+          </span>
+        ) : (
+          <span className="text-xs text-warning">Reconnecting…</span>
+        ),
       onFailure: () => <span className="text-xs text-destructive">Live updates stopped. Reload to reconnect.</span>
     })
+  )
 }
 
 const directions: ReadonlyArray<readonly [DirectionFilter, string]> = [
@@ -112,7 +120,15 @@ interface MidItem {
   readonly value: string | null
 }
 
-function FilterBar({ runId, shown, total }: { readonly runId: Run["id"]; readonly shown: number; readonly total: number }) {
+function FilterBar({
+  runId,
+  shown,
+  total
+}: {
+  readonly runId: Run["id"]
+  readonly shown: number
+  readonly total: number
+}) {
   const [filters, setFilters] = useAtom(filtersAtom)
   const mids = useAtomValue(midsAtom(runId))
   const set = (change: Partial<Filters>) => setFilters(new Filters({ ...filters, ...change }))
@@ -186,7 +202,10 @@ const moveWithArrows = (event: KeyboardEvent<HTMLTableSectionElement>) => {
   const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0
   if (step === 0) return
   const rows = A.fromIterable(event.currentTarget.querySelectorAll<HTMLButtonElement>("button[data-row]"))
-  const at = O.getOrElse(A.findFirstIndex(rows, (row) => row === document.activeElement), () => -1)
+  const at = O.getOrElse(
+    A.findFirstIndex(rows, (row) => row === document.activeElement),
+    () => -1
+  )
   O.map(A.get(rows, Num.clamp(at + step, { minimum: 0, maximum: rows.length - 1 })), (next) => {
     event.preventDefault()
     next.focus()
@@ -194,13 +213,15 @@ const moveWithArrows = (event: KeyboardEvent<HTMLTableSectionElement>) => {
   })
 }
 
-function PacketTable(
-  { runId, events, total }: {
-    readonly runId: Run["id"]
-    readonly events: ReadonlyArray<StoredEvent>
-    readonly total: number
-  }
-) {
+function PacketTable({
+  runId,
+  events,
+  total
+}: {
+  readonly runId: Run["id"]
+  readonly events: ReadonlyArray<StoredEvent>
+  readonly total: number
+}) {
   const setSelected = useAtomSet(selectedAtom)
   const setFilters = useAtomSet(filtersAtom)
   const open = useAtomValue(selectedEventAtom(runId))
@@ -211,30 +232,28 @@ function PacketTable(
     <div className="min-h-0 overflow-hidden lg:border-e [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-auto">
       {A.match(events, {
         onEmpty: () =>
-          total === 0
-            ? (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>No events recorded yet</EmptyTitle>
-                  <EmptyDescription>Events appear here as soon as this run exchanges a frame.</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            )
-            : (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>No events match these filters</EmptyTitle>
-                  <EmptyDescription>
-                    {total} events in this run are hidden by the direction, MID or chunk filters.
-                  </EmptyDescription>
-                </EmptyHeader>
-                <EmptyContent>
-                  <Button variant="outline" size="sm" onClick={() => setFilters(noFilters)}>
-                    Clear filters
-                  </Button>
-                </EmptyContent>
-              </Empty>
-            ),
+          total === 0 ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyTitle>No events recorded yet</EmptyTitle>
+                <EmptyDescription>Events appear here as soon as this run exchanges a frame.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <Empty>
+              <EmptyHeader>
+                <EmptyTitle>No events match these filters</EmptyTitle>
+                <EmptyDescription>
+                  {total} events in this run are hidden by the direction, MID or chunk filters.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button variant="outline" size="sm" onClick={() => setFilters(noFilters)}>
+                  Clear filters
+                </Button>
+              </EmptyContent>
+            </Empty>
+          ),
         onNonEmpty: (rows) => (
           <Table className="table-fixed font-mono text-xs">
             {/* Rows are positioned (for the stretched row button), so the header needs its own layer to stay on top. */}
@@ -242,7 +261,9 @@ function PacketTable(
               <TableRow>
                 <TableHead className="w-32 ps-6">Time (UTC)</TableHead>
                 <TableHead className="w-12">Conn</TableHead>
-                <TableHead className="w-8"><span className="sr-only">Direction</span></TableHead>
+                <TableHead className="w-8">
+                  <span className="sr-only">Direction</span>
+                </TableHead>
                 <TableHead className="w-14">MID</TableHead>
                 <TableHead className="w-16 text-end">Bytes</TableHead>
                 <TableHead className="pe-6">Raw</TableHead>
@@ -264,9 +285,10 @@ function PacketTable(
                         type="button"
                         data-row
                         aria-current={isOpen ? "true" : undefined}
-                        aria-label={`${event.direction === "send" ? "Sent" : "Received"} ${event.kind} ${
-                          O.getOrElse(event.mid, () => "")
-                        } at ${timeOf(event.at)}`}
+                        aria-label={`${event.direction === "send" ? "Sent" : "Received"} ${event.kind} ${O.getOrElse(
+                          event.mid,
+                          () => ""
+                        )} at ${timeOf(event.at)}`}
                         onClick={() => setSelected(isOpen ? O.none() : O.some(event.id))}
                         className="text-start outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-inset"
                       >
@@ -297,9 +319,14 @@ const escapes = /(\\x[0-9a-f]{2}|\\[0tnr\\])/g
 const Raw = ({ raw }: { readonly raw: string }) => (
   <pre className="rounded-md border bg-background p-3 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
     {A.map(Str.split(raw, escapes), (part, index) =>
-      index % 2 === 1
-        ? <span key={index} className="text-escape">{part}</span>
-        : <span key={index}>{part}</span>)}
+      index % 2 === 1 ? (
+        <span key={index} className="text-escape">
+          {part}
+        </span>
+      ) : (
+        <span key={index}>{part}</span>
+      )
+    )}
   </pre>
 )
 
@@ -315,8 +342,12 @@ const headerRows = (header: Header): ReadonlyArray<readonly [string, string]> =>
 const Fields = ({ rows }: { readonly rows: ReadonlyArray<readonly [string, string]> }) => (
   <dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-xs">
     {A.flatMap(rows, ([label, value]) => [
-      <dt key={`${label}-t`} className="text-muted-foreground">{label}</dt>,
-      <dd key={`${label}-d`} className="font-mono tabular-nums">{value}</dd>
+      <dt key={`${label}-t`} className="text-muted-foreground">
+        {label}
+      </dt>,
+      <dd key={`${label}-d`} className="font-mono tabular-nums">
+        {value}
+      </dd>
     ])}
   </dl>
 )

@@ -36,10 +36,9 @@ export const nextDelay = (options: LatencyOptions): Effect.Effect<Duration.Durat
   const spread = Duration.toMillis(options.jitter)
   return spread <= 0
     ? Effect.succeed(Duration.millis(Math.max(0, centre)))
-    : Effect.map(
-      Random.nextIntBetween(0, spread * 2 + 1),
-      (offset) => Duration.millis(Math.max(0, centre - spread + offset))
-    )
+    : Effect.map(Random.nextIntBetween(0, spread * 2 + 1), (offset) =>
+        Duration.millis(Math.max(0, centre - spread + offset))
+      )
 }
 
 /**
@@ -71,11 +70,6 @@ export const delayedDuplex = (duplex: Duplex, options: LatencyOptions): Duplex =
   Duration.toMillis(options.latency) <= 0 && Duration.toMillis(options.jitter) <= 0
     ? duplex
     : {
-      incoming: duplex.incoming,
-      send: (bytes) =>
-        pipe(
-          nextDelay(options),
-          Effect.flatMap(Effect.sleep),
-          Effect.andThen(duplex.send(bytes))
-        )
-    }
+        incoming: duplex.incoming,
+        send: (bytes) => pipe(nextDelay(options), Effect.flatMap(Effect.sleep), Effect.andThen(duplex.send(bytes)))
+      }

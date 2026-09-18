@@ -30,11 +30,7 @@ export interface GapRecovery {
   /** Fetches everything between the last contiguously delivered result and the newest one. */
   readonly recoverGap: (session: Session, pipeline: ResultDelivery) => Effect.Effect<void>
   /** Submits a pushed result, starting a recovery pass first when it reveals a gap. */
-  readonly submitResult: (
-    session: Session,
-    pipeline: ResultDelivery,
-    result: TighteningResult
-  ) => Effect.Effect<void>
+  readonly submitResult: (session: Session, pipeline: ResultDelivery, result: TighteningResult) => Effect.Effect<void>
 }
 
 /**
@@ -63,18 +59,17 @@ export const makeGapRecovery = Effect.fnUntraced(function* (options: {
           limit: settings.recoveryLimit
         }),
         Effect.tap((recovery) =>
-          A.length(recovery.recovered) === 0 && A.length(recovery.missing) === 0 &&
-            A.length(recovery.pending) === 0
+          A.length(recovery.recovered) === 0 && A.length(recovery.missing) === 0 && A.length(recovery.pending) === 0
             ? Effect.void
             : Effect.logInfo("recovered results missed during the outage").pipe(
-              Effect.annotateLogs({
-                deviceId: settings.id,
-                recovered: A.length(recovery.recovered),
-                missing: A.length(recovery.missing),
-                pending: A.length(recovery.pending),
-                skipped: recovery.skipped
-              })
-            )
+                Effect.annotateLogs({
+                  deviceId: settings.id,
+                  recovered: A.length(recovery.recovered),
+                  missing: A.length(recovery.missing),
+                  pending: A.length(recovery.pending),
+                  skipped: recovery.skipped
+                })
+              )
         ),
         Effect.flatMap((recovery) =>
           // A pending identifier is one the controller may still have: the
@@ -95,11 +90,7 @@ export const makeGapRecovery = Effect.fnUntraced(function* (options: {
     )
   }
 
-  const submitResult = (
-    session: Session,
-    pipeline: ResultDelivery,
-    result: TighteningResult
-  ): Effect.Effect<void> =>
+  const submitResult = (session: Session, pipeline: ResultDelivery, result: TighteningResult): Effect.Effect<void> =>
     pipe(
       dedup.lastDelivered,
       Effect.flatMap((watermark) =>

@@ -85,15 +85,18 @@ export type WireEventKind = typeof WireEventKind.Type
  * @category models
  * @since 0.0.0
  */
-export class WireEvent extends S.Class<WireEvent>("WireEvent")({
-  at: S.String,
-  source: S.String,
-  direction: WireDirection,
-  kind: WireEventKind,
-  bytes: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(0)),
-  mid: S.OptionFromNullOr(S.String),
-  raw: S.String
-}, { description: "One traced socket operation or reassembled frame" }) {}
+export class WireEvent extends S.Class<WireEvent>("WireEvent")(
+  {
+    at: S.String,
+    source: S.String,
+    direction: WireDirection,
+    kind: WireEventKind,
+    bytes: S.Number.check(S.isInt(), S.isGreaterThanOrEqualTo(0)),
+    mid: S.OptionFromNullOr(S.String),
+    raw: S.String
+  },
+  { description: "One traced socket operation or reassembled frame" }
+) {}
 
 /**
  * Where traced lines go besides the log, when a caller wants them kept.
@@ -130,9 +133,7 @@ const now = Effect.map(DateTime.now, DateTime.formatIso)
  */
 const record = (event: WireEvent): Effect.Effect<void> =>
   pipe(
-    event.kind === "frame"
-      ? Effect.logInfo("wire frame")
-      : Effect.logDebug("wire chunk"),
+    event.kind === "frame" ? Effect.logInfo("wire frame") : Effect.logDebug("wire chunk"),
     Effect.annotateLogs({
       source: event.source,
       dir: event.direction,
@@ -160,10 +161,12 @@ const observe = (
     const emit = (event: WireEvent) =>
       pipe(
         record(event),
-        Effect.andThen(O.match(O.fromNullishOr(options.sink), {
-          onNone: () => Effect.void,
-          onSome: (sink) => sink(event)
-        }))
+        Effect.andThen(
+          O.match(O.fromNullishOr(options.sink), {
+            onNone: () => Effect.void,
+            onSome: (sink) => sink(event)
+          })
+        )
       )
 
     yield* emit(
@@ -186,20 +189,26 @@ const observe = (
       Effect.flatMap((next) =>
         pipe(
           Ref.set(buffer, next.buffer),
-          Effect.andThen(Effect.forEach(next.frames, (frame) =>
-            emit(
-              new WireEvent({
-                at,
-                source: options.source,
-                direction,
-                kind: "frame",
-                bytes: Str.length(frame) + 1,
-                mid: midOf(frame),
-                // The terminator is part of the frame on the wire, so a trace
-                // that hides it would not round trip to what the socket saw.
-                raw: escapeWire(encoder.encode(frame + terminator))
-              })
-            ), { discard: true }))
+          Effect.andThen(
+            Effect.forEach(
+              next.frames,
+              (frame) =>
+                emit(
+                  new WireEvent({
+                    at,
+                    source: options.source,
+                    direction,
+                    kind: "frame",
+                    bytes: Str.length(frame) + 1,
+                    mid: midOf(frame),
+                    // The terminator is part of the frame on the wire, so a trace
+                    // that hides it would not round trip to what the socket saw.
+                    raw: escapeWire(encoder.encode(frame + terminator))
+                  })
+                ),
+              { discard: true }
+            )
+          )
         )
       ),
       // A stream the framer cannot follow is still worth seeing as chunks, and
@@ -236,8 +245,7 @@ export const tracedDuplex = Effect.fnUntraced(function* (duplex: Duplex, options
   const outgoing = yield* Ref.make("")
   return {
     incoming: Stream.tap(duplex.incoming, (bytes) => observe(options, incoming, "recv", bytes)),
-    send: (bytes: Uint8Array) =>
-      Effect.andThen(observe(options, outgoing, "send", bytes), duplex.send(bytes))
+    send: (bytes: Uint8Array) => Effect.andThen(observe(options, outgoing, "send", bytes), duplex.send(bytes))
   } satisfies Duplex
 })
 

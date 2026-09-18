@@ -52,9 +52,8 @@ const settle = (
     remaining <= 0
       ? Effect.void
       : Effect.flatMap(counts, ({ delivered, generated }) =>
-        delivered >= generated
-          ? Effect.void
-          : Effect.andThen(Effect.sleep(Duration.millis(200)), loop(remaining - 1)))
+          delivered >= generated ? Effect.void : Effect.andThen(Effect.sleep(Duration.millis(200)), loop(remaining - 1))
+        )
   return loop(Math.max(1, Math.ceil(Duration.toMillis(within) / 200)))
 }
 
@@ -92,7 +91,8 @@ const runChaos = Effect.fnUntraced(function* (options: {
         reconnect: Schedule.spaced(Duration.millis(250))
       })
       return simulator
-    }))
+    })
+  )
 
   yield* Effect.logInfo("chaos run started").pipe(
     Effect.annotateLogs({
@@ -113,7 +113,8 @@ const runChaos = Effect.fnUntraced(function* (options: {
 
   const status = yield* pool.status
   const totals = yield* Effect.forEach(simulators, (simulator: Simulator) =>
-    Effect.all({ generated: simulator.generated, abandoned: simulator.abandoned }))
+    Effect.all({ generated: simulator.generated, abandoned: simulator.abandoned })
+  )
   const generated = A.reduce(totals, 0, (sum, device) => sum + device.generated)
   const abandoned = A.reduce(totals, 0, (sum, device) => sum + A.length(device.abandoned))
   const current = yield* Ref.get(tally)
@@ -155,10 +156,7 @@ const seed = Flag.Int("seed").pipe(
   Flag.withDefault(1)
 )
 
-const duration = Flag.Int("duration").pipe(
-  Flag.withDescription("How many seconds to run"),
-  Flag.withDefault(20)
-)
+const duration = Flag.Int("duration").pipe(Flag.withDescription("How many seconds to run"), Flag.withDefault(20))
 
 const devices = Flag.Int("devices").pipe(
   Flag.withDescription("How many simulated controllers to run"),
@@ -186,15 +184,11 @@ const command = Command.make("chaos", { seed, duration, devices, faultRate, sett
       settleTimeout: Duration.seconds(config.settle)
     }),
     Random.withSeed(config.seed),
-    Effect.flatMap((passed) => passed ? Effect.void : Effect.die("the chaos run lost or duplicated a result")),
+    Effect.flatMap((passed) => (passed ? Effect.void : Effect.die("the chaos run lost or duplicated a result"))),
     Effect.scoped,
     Effect.provide(DevicePool.layer),
     Effect.provide(layerComplete)
-  )).pipe(
-    Command.withDescription("Run N simulated controllers under random faults and check the invariant")
   )
+).pipe(Command.withDescription("Run N simulated controllers under random faults and check the invariant"))
 
-Command.run(command, { version: "0.0.0" }).pipe(
-  Effect.provide(NodeServices.layer),
-  NodeRuntime.runMain
-)
+Command.run(command, { version: "0.0.0" }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

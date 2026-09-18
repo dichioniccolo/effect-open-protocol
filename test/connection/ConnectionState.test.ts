@@ -33,10 +33,8 @@ const run = (
   state: ConnectionState,
   events: ReadonlyArray<ConnectionEvent>
 ): Result.Result<ConnectionState, InvalidTransition> =>
-  A.reduce(
-    events,
-    Result.succeed(state) as Result.Result<ConnectionState, InvalidTransition>,
-    (current, event) => Result.flatMap(current, (value) => transition(value, event))
+  A.reduce(events, Result.succeed(state) as Result.Result<ConnectionState, InvalidTransition>, (current, event) =>
+    Result.flatMap(current, (value) => transition(value, event))
   )
 
 const toReady: ReadonlyArray<ConnectionEvent> = [
@@ -122,19 +120,13 @@ describe("ConnectionState", () => {
     A.forEach(
       [new AttemptStarted(), new CloseRequested(), new Released()] as ReadonlyArray<ConnectionEvent>,
       (event) => {
-        assertFailure(
-          transition(closed, event),
-          new InvalidTransition({ state: "Closed", event: event._tag })
-        )
+        assertFailure(transition(closed, event), new InvalidTransition({ state: "Closed", event: event._tag }))
       }
     )
   })
 
   it("rejects out of order events", () => {
-    assertFailure(
-      transition(initial, new Opened()),
-      new InvalidTransition({ state: "Disconnected", event: "Opened" })
-    )
+    assertFailure(transition(initial, new Opened()), new InvalidTransition({ state: "Disconnected", event: "Opened" }))
     assertFailure(
       transition(new Connecting({ attempt: 1 }), new Subscribed()),
       new InvalidTransition({ state: "Connecting", event: "Subscribed" })

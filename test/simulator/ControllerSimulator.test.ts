@@ -38,53 +38,61 @@ const exchange = (connection: Duplex, outgoing: ReadonlyArray<Message>) =>
 
 describe("ControllerSimulator", () => {
   it.effect("answers the handshake, mirrors keep-alives and accepts subscriptions", () =>
-    Effect.scoped(Effect.gen(function* () {
-      const simulator = yield* make({ endpoint, controllerName: "Airbag1" })
-      const network = yield* InMemoryNetwork
-      const connection = yield* network.connect(endpoint)
+    Effect.scoped(
+      Effect.gen(function* () {
+        const simulator = yield* make({ endpoint, controllerName: "Airbag1" })
+        const network = yield* InMemoryNetwork
+        const connection = yield* network.connect(endpoint)
 
-      const replies = yield* exchange(connection, [
-        new CommunicationStart(),
-        new KeepAlive(),
-        new SubscribeResults()
-      ])
+        const replies = yield* exchange(connection, [new CommunicationStart(), new KeepAlive(), new SubscribeResults()])
 
-      expect(replies.length).toBe(3)
-      expect(replies[0]).toEqual(
-        new CommunicationStartAccepted({ cellId: 1, channelId: 1, controllerName: "Airbag1" })
-      )
-      expect(replies[1]).toEqual(new KeepAlive())
-      expect(yield* simulator.keepAlives).toBe(1)
-      expect(yield* simulator.isSubscribed).toBe(true)
-    })).pipe(Effect.provide(layerComplete)))
+        expect(replies.length).toBe(3)
+        expect(replies[0]).toEqual(
+          new CommunicationStartAccepted({ cellId: 1, channelId: 1, controllerName: "Airbag1" })
+        )
+        expect(replies[1]).toEqual(new KeepAlive())
+        expect(yield* simulator.keepAlives).toBe(1)
+        expect(yield* simulator.isSubscribed).toBe(true)
+      })
+    ).pipe(Effect.provide(layerComplete))
+  )
 
   it.effect("rejects the handshake when configured to", () =>
-    Effect.scoped(Effect.gen(function* () {
-      yield* make({ endpoint, rejectStartWith: 96 })
-      const network = yield* InMemoryNetwork
-      const connection = yield* network.connect(endpoint)
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* make({ endpoint, rejectStartWith: 96 })
+        const network = yield* InMemoryNetwork
+        const connection = yield* network.connect(endpoint)
 
-      const replies = yield* exchange(connection, [new CommunicationStart()])
+        const replies = yield* exchange(connection, [new CommunicationStart()])
 
-      expect(replies).toEqual([new CommandError({ mid: 1, code: 96 })])
-    })).pipe(Effect.provide(layerComplete)))
+        expect(replies).toEqual([new CommandError({ mid: 1, code: 96 })])
+      })
+    ).pipe(Effect.provide(layerComplete))
+  )
 
   it.effect("fails to connect when nothing is bound", () =>
-    Effect.scoped(Effect.gen(function* () {
-      const network = yield* InMemoryNetwork
-      const outcome = yield* Effect.result(network.connect(endpoint))
-      expect(outcome._tag).toBe("Failure")
-    })).pipe(Effect.provide(layerComplete)))
+    Effect.scoped(
+      Effect.gen(function* () {
+        const network = yield* InMemoryNetwork
+        const outcome = yield* Effect.result(network.connect(endpoint))
+        expect(outcome._tag).toBe("Failure")
+      })
+    ).pipe(Effect.provide(layerComplete))
+  )
 
   it.effect("refuses connections while the endpoint is closed off", () =>
-    Effect.scoped(Effect.gen(function* () {
-      yield* make({ endpoint })
-      const network = yield* InMemoryNetwork
-      yield* network.refuse(endpoint, true)
-      const refused = yield* Effect.result(network.connect(endpoint))
-      expect(refused._tag).toBe("Failure")
-      yield* network.refuse(endpoint, false)
-      const accepted = yield* Effect.result(network.connect(endpoint))
-      expect(accepted._tag).toBe("Success")
-    })).pipe(Effect.provide(layerComplete)))
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* make({ endpoint })
+        const network = yield* InMemoryNetwork
+        yield* network.refuse(endpoint, true)
+        const refused = yield* Effect.result(network.connect(endpoint))
+        expect(refused._tag).toBe("Failure")
+        yield* network.refuse(endpoint, false)
+        const accepted = yield* Effect.result(network.connect(endpoint))
+        expect(accepted._tag).toBe("Success")
+      })
+    ).pipe(Effect.provide(layerComplete))
+  )
 })

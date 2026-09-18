@@ -126,19 +126,23 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
                 onSome: (result) => options.submit(result)
               })
             ),
-            Effect.map((found) =>
-              (O.isSome(found)
-                ? { _tag: "Recovered", id: TighteningId.make(value) }
-                : { _tag: "Missing", id: TighteningId.make(value) }) as Attempt),
+            Effect.map(
+              (found) =>
+                (O.isSome(found)
+                  ? { _tag: "Recovered", id: TighteningId.make(value) }
+                  : { _tag: "Missing", id: TighteningId.make(value) }) as Attempt
+            ),
             Effect.catchCause((cause) =>
-              Effect.as(
-                Effect.logDebug(`could not recover tightening ${value} yet`, cause),
-                { _tag: "Pending", id: TighteningId.make(value) } as Attempt
-              ))
-          )),
+              Effect.as(Effect.logDebug(`could not recover tightening ${value} yet`, cause), {
+                _tag: "Pending",
+                id: TighteningId.make(value)
+              } as Attempt)
+            )
+          )
+        ),
         (attempts: ReadonlyArray<Attempt>) => {
           const of = (tag: Attempt["_tag"]): ReadonlyArray<TighteningId> =>
-            A.getSomes(A.map(attempts, (attempt) => attempt._tag === tag ? O.some(attempt.id) : O.none()))
+            A.getSomes(A.map(attempts, (attempt) => (attempt._tag === tag ? O.some(attempt.id) : O.none())))
           return {
             recovered: of("Recovered"),
             missing: of("Missing"),
@@ -166,9 +170,8 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
           // The controller was empty when we first looked, so everything it
           // holds now was produced while we were listening. None of it is
           // history, however little of it we managed to receive.
-          wasEmpty
-            ? fetchRange(Math.max(1, id - limit + 1), id)
-            : Effect.as(options.dedup.markBaseline(id), nothing))
+          wasEmpty ? fetchRange(Math.max(1, id - limit + 1), id) : Effect.as(options.dedup.markBaseline(id), nothing)
+        )
     })
 
   return yield* O.match(since, {

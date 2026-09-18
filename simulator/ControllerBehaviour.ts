@@ -18,12 +18,7 @@ import {
   type Message,
   OldResult
 } from "../src/protocol/Messages.ts"
-import {
-  ControllerTimestamp,
-  DeviceId,
-  TighteningId,
-  TighteningResult
-} from "../src/protocol/TighteningResult.ts"
+import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
 import type { SessionState } from "./SessionState.ts"
 
 /**
@@ -100,21 +95,22 @@ export const replyTo = (
             }),
           onSome: (code): Message => new CommandError({ mid: 1, code })
         })
-      )),
-    Match.tag(
-      "KeepAlive",
-      (): O.Option<Message> => identity.silent === true ? O.none() : O.some(new KeepAlive())
+      )
     ),
+    Match.tag("KeepAlive", (): O.Option<Message> => (identity.silent === true ? O.none() : O.some(new KeepAlive()))),
     Match.tag("SubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 60 }))),
     Match.tag("UnsubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 63 }))),
     Match.tag("CommunicationStop", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 3 }))),
     Match.tag("RequestOldResult", (request): O.Option<Message> => {
       const wanted = request.tighteningId === 0 ? latest : O.some(request.tighteningId as number)
       return O.some(
-        O.match(O.flatMap(wanted, (id) => MutableHashMap.get(store, id)), {
-          onNone: (): Message => new CommandError({ mid: 64, code: 15 }),
-          onSome: (result): Message => new OldResult({ result })
-        })
+        O.match(
+          O.flatMap(wanted, (id) => MutableHashMap.get(store, id)),
+          {
+            onNone: (): Message => new CommandError({ mid: 64, code: 15 }),
+            onSome: (result): Message => new OldResult({ result })
+          }
+        )
       )
     }),
     Match.orElse((): O.Option<Message> => O.none())

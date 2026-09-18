@@ -156,34 +156,28 @@ export const makeResultDelivery = Effect.fnUntraced(function* (options: {
 
   const handle = (result: TighteningResult): Effect.Effect<void> =>
     pipe(
-        options.delivery.handler(result),
-        Effect.retry(retry),
-        Effect.matchCauseEffect({
-          onFailure: (cause: Cause.Cause<unknown>) =>
-            Effect.logError("the result handler failed, not acknowledging", cause).pipe(
-              Effect.annotateLogs({ deviceId: result.deviceId, tighteningId: result.tighteningId })
-            ),
-          onSuccess: () =>
-            pipe(
-              options.dedup.remember(result.tighteningId),
-              Effect.andThen(Ref.update(counters, (current) => ({ ...current, delivered: current.delivered + 1 }))),
-              Effect.andThen(acknowledge(result))
-            )
-        })
+      options.delivery.handler(result),
+      Effect.retry(retry),
+      Effect.matchCauseEffect({
+        onFailure: (cause: Cause.Cause<unknown>) =>
+          Effect.logError("the result handler failed, not acknowledging", cause).pipe(
+            Effect.annotateLogs({ deviceId: result.deviceId, tighteningId: result.tighteningId })
+          ),
+        onSuccess: () =>
+          pipe(
+            options.dedup.remember(result.tighteningId),
+            Effect.andThen(Ref.update(counters, (current) => ({ ...current, delivered: current.delivered + 1 }))),
+            Effect.andThen(acknowledge(result))
+          )
+      })
     )
 
   const deliver = (result: TighteningResult): Effect.Effect<void> =>
-    Effect.flatMap(
-      options.dedup.seen(result.tighteningId),
-      (duplicate) => duplicate ? redeliver(result) : handle(result)
+    Effect.flatMap(options.dedup.seen(result.tighteningId), (duplicate) =>
+      duplicate ? redeliver(result) : handle(result)
     )
 
-  yield* pipe(
-    Queue.take(queue),
-    Effect.flatMap(deliver),
-    Effect.forever,
-    Effect.forkChild
-  )
+  yield* pipe(Queue.take(queue), Effect.flatMap(deliver), Effect.forever, Effect.forkChild)
 
   return {
     submit: (result) => Effect.orDie(Queue.offer(queue, result)),
