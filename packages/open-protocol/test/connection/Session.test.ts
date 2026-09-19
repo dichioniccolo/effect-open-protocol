@@ -49,8 +49,10 @@ const read = (frames: ReadonlyArray<string>) =>
           },
           replies
         },
-        () => Effect.succeed(false),
-        (message) => Ref.update(received, (current) => A.append(current, message))
+        {
+          subscribed: () => Effect.succeed(false),
+          unsolicited: (message) => Ref.update(received, (current) => A.append(current, message))
+        }
       )
     )
 

@@ -445,8 +445,10 @@ const watch = Effect.gen(function* () {
   subscription (`resultBuffer`, 16 by default); a slow consumer slows the
   reader.
 
-The full example runs as a test, `packages/open-protocol/test/example/ToolStatus.test.ts`,
-against a scripted controller on the in-memory transport.
+The full example runs as tests against a scripted controller on the in-memory
+transport: the definitions are in `packages/open-protocol/test/example/ToolStatus.ts`,
+the request in `ToolStatus.test.ts` and the subscription in
+`ToolStatusSubscription.test.ts`.
 
 ## Delivery semantics
 

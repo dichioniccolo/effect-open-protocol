@@ -48,6 +48,12 @@ import { startCommunication } from "./Handshake.ts"
 import * as RequestReply from "./RequestReply.ts"
 import { keepAliveLoop, readLoop, sendFrame, sendPayload, type Session } from "./Session.ts"
 import * as Subscriptions from "./Subscriptions.ts"
+import type { Pushed, SubscribeError } from "./Subscriptions.ts"
+
+/**
+ * @since 0.0.0
+ */
+export type { Pushed, SubscribeError } from "./Subscriptions.ts"
 
 /**
  * A live connection as the rest of the library sees it.
@@ -77,7 +83,7 @@ export interface DeviceConnectionService {
    */
   readonly subscribe: <Data extends Mid.AnyRevision>(
     subscription: Mid.Subscription<Data>
-  ) => Stream.Stream<Subscriptions.Pushed<Mid.Type<Data>>, Subscriptions.SubscribeError>
+  ) => Stream.Stream<Pushed<Mid.Type<Data>>, SubscribeError>
   /** Stops the connection and returns once every resource is released. */
   readonly close: Effect.Effect<void>
   /** Results handed to the handler, duplicates excluded. */
@@ -120,6 +126,7 @@ const collecting = Effect.fnUntraced(function* (options: {
   readonly settings: DeviceSettings
   readonly handler: ResultDelivery.ResultHandler
   readonly subscriptions: Subscriptions.Subscriptions
+  readonly send: Subscriptions.SendBare
 }) {
   const { settings, subscriptions } = options
   const dedup = yield* Dedup.make(settings.dedupCapacity)
@@ -130,10 +137,10 @@ const collecting = Effect.fnUntraced(function* (options: {
   const results = yield* Effect.orDie(subscriptions.open(subscription))
 
   // A result recovered with MID 0064 is acknowledged like a pushed one, as it
-  // always was: MID 0062 names no result, so every element's `ack` is this.
+  // always was.
   const acknowledge = (result: TighteningResult): Effect.Effect<void, ConnectionLost> =>
     Effect.andThen(
-      subscriptions.acknowledge(subscription),
+      Subscriptions.ackOf(options.send, subscription),
       Effect.logDebug("acknowledged a result").pipe(
         Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
       )
@@ -206,11 +213,29 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const state = yield* SubscriptionRef.make(initial)
   const session = yield* Ref.make(O.none<Session>())
 
-  const subscriptions = yield* Subscriptions.make({ deviceId: settings.id, session, bufferSize: settings.resultBuffer })
+  // Acknowledgements go out on whatever session is open, handshake included:
+  // results recovered before the subscription is restored are acknowledged too.
+  const sendBare = Effect.fnUntraced(function* (revision: Mid.AnyRevision) {
+    const open = yield* Ref.get(session)
+
+    if (O.isNone(open)) {
+      return yield* new ConnectionLost({ reason: "no session to acknowledge on" })
+    }
+
+    // A control MID carries no field (its definition checks it), so failing to
+    // encode it would be a bug here.
+    yield* Effect.catchTag(sendPayload(open.value.duplex, revision, {}), "PayloadEncodeError", Effect.die)
+  })
+
+  const subscriptions = yield* Subscriptions.make({
+    deviceId: settings.id,
+    send: sendBare,
+    bufferSize: settings.resultBuffer
+  })
 
   const results = yield* O.match(O.fromNullishOr(settings.onResult), {
     onNone: () => Effect.succeed(ignoring),
-    onSome: (handler) => collecting({ settings, handler, subscriptions })
+    onSome: (handler) => collecting({ settings, handler, subscriptions, send: sendBare })
   })
 
   /**
@@ -277,7 +302,9 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       )
     )
 
-    const reader = yield* Effect.forkChild(readLoop(current, subscriptions.offer, routeUnsolicited))
+    const reader = yield* Effect.forkChild(
+      readLoop(current, { subscribed: subscriptions.offer, unsolicited: routeUnsolicited })
+    )
 
     // A socket that dies during the handshake, the subscription or recovery
     // must fail the attempt immediately instead of waiting for a timeout.
