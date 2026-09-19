@@ -16,22 +16,12 @@ import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as R from "effect/Record"
 import * as S from "effect/Schema"
-import * as SchemaTransformation from "effect/SchemaTransformation"
 import * as Str from "effect/String"
 import * as Field from "./Field.ts"
-import { decodeHeader, encodeFrame, Header, headerLength } from "./Header.ts"
+import { decodeHeader, encodeFrame, Header, headerLength, MidNumber, RevisionNumber } from "./Header.ts"
 import * as Mid from "./Mid.ts"
-import type { MalformedHeader, PayloadEncodeError, UnsupportedFeature } from "./ProtocolError.ts"
-import {
-  type DeviceId,
-  fieldsOf,
-  LastResultBody,
-  OldResultBody,
-  type ResultFields,
-  resultOf,
-  TighteningId,
-  TighteningResult
-} from "./TighteningResult.ts"
+import { type MalformedHeader, PayloadEncodeError, type UnsupportedFeature } from "./ProtocolError.ts"
+import { LastResultBody, OldResultBody, ResultFields, TighteningId } from "./TighteningResult.ts"
 
 /**
  * Enables the communication with a controller (MID 0001).
@@ -88,7 +78,7 @@ export class CommandError extends S.TaggedClass<CommandError>()(
   "CommandError",
   {
     revision: S.tag(1),
-    mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
+    mid: MidNumber,
     code: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99 }))
   },
   { description: "MID 0004, negative acknowledge carrying the failed MID" }
@@ -104,7 +94,7 @@ export class CommandAccepted extends S.TaggedClass<CommandAccepted>()(
   "CommandAccepted",
   {
     revision: S.tag(1),
-    mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 }))
+    mid: MidNumber
   },
   { description: "MID 0005, positive acknowledge carrying the accepted MID" }
 ) {}
@@ -124,7 +114,9 @@ export class SubscribeResults extends S.TaggedClass<SubscribeResults>()(
 ) {}
 
 /**
- * A pushed tightening result (MID 0061).
+ * A pushed tightening result (MID 0061), as the controller reports it: the
+ * result's fields, without the device, plus when its parameter set last
+ * changed. `resultOf` stamps it with the device it came from.
  *
  * @category models
  * @since 0.0.0
@@ -133,7 +125,8 @@ export class LastResult extends S.TaggedClass<LastResult>()(
   "LastResult",
   {
     revision: S.tag(1),
-    result: TighteningResult
+    ...ResultFields,
+    parameterSetChangedAt: S.String
   },
   { description: "MID 0061, last tightening result" }
 ) {}
@@ -183,7 +176,8 @@ export class RequestOldResult extends S.TaggedClass<RequestOldResult>()(
 ) {}
 
 /**
- * A stored result returned by the controller (MID 0065).
+ * A stored result returned by the controller (MID 0065), as reported: the
+ * result's fields without the device. `resultOf` stamps it.
  *
  * @category models
  * @since 0.0.0
@@ -192,7 +186,7 @@ export class OldResult extends S.TaggedClass<OldResult>()(
   "OldResult",
   {
     revision: S.tag(1),
-    result: TighteningResult
+    ...ResultFields
   },
   { description: "MID 0065, old tightening result reply" }
 ) {}
@@ -220,8 +214,8 @@ export class KeepAlive extends S.TaggedClass<KeepAlive>()(
 export class UnknownMessage extends S.TaggedClass<UnknownMessage>()(
   "UnknownMessage",
   {
-    mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
-    revision: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
+    mid: MidNumber,
+    revision: RevisionNumber,
     data: S.String
   },
   { description: "A frame whose MID is outside the supported subset" }
@@ -281,6 +275,55 @@ export class Incoming extends S.Class<Incoming>("Incoming")(
   { description: "A decoded frame with the header and data field it came in" }
 ) {}
 
+const acknowledging =
+  <A extends { readonly mid: number }>(is: (message: unknown) => message is A) =>
+  (request: number, received: Mid.Received): O.Option<A> =>
+    O.filter(O.liftPredicate(received.message, is), (message) => message.mid === request)
+
+/**
+ * The `0004` rejecting a request for MID `request`, if `received` is it.
+ *
+ * **Example** (Recognising a rejection)
+ *
+ * ```ts
+ * import { type Incoming, rejectionOf } from "effect-open-protocol"
+ *
+ * declare const incoming: Incoming
+ *
+ * const refused = rejectionOf(60, incoming)
+ * ```
+ *
+ * @category replies
+ * @since 0.0.0
+ */
+export const rejectionOf: (request: number, received: Mid.Received) => O.Option<CommandError> = acknowledging(
+  S.is(CommandError)
+)
+
+const acceptanceOf = acknowledging(S.is(CommandAccepted))
+
+/**
+ * The reply of a request the generic `0005` answers: the acknowledgement that
+ * names the request's MID. A `0004` naming it is a rejection.
+ *
+ * **Example** (Declaring a request answered by 0005)
+ *
+ * ```ts
+ * import { commandAccepted, Field, Mid } from "effect-open-protocol"
+ *
+ * const Reset = Mid.request(Mid.define({ tag: "Reset", mid: 9200, revisions: { 1: Field.layout([]) } }), {
+ *   1: commandAccepted
+ * })
+ * ```
+ *
+ * @category replies
+ * @since 0.0.0
+ */
+export const commandAccepted: Mid.Reply<CommandAccepted> = {
+  settled: O.none(),
+  answer: (request, received) => O.map(acceptanceOf(request, received), Effect.succeed)
+}
+
 const mid = Field.digits({ width: 4 })
 
 /**
@@ -290,11 +333,11 @@ const mid = Field.digits({ width: 4 })
  *
  * ```ts
  * import * as Str from "effect/String"
- * import { CommunicationStartAcceptedMid, DeviceId, Mid } from "effect-open-protocol"
+ * import { CommunicationStartAcceptedMid, Mid } from "effect-open-protocol"
  *
  * const data = "010001" + "0201" + "03" + Str.padEnd(25, " ")("Airbag1")
  *
- * const accepted = Mid.decode(CommunicationStartAcceptedMid.rev(1), data, DeviceId.make("tool-1"))
+ * const accepted = Mid.decode(CommunicationStartAcceptedMid.rev(1), data)
  * ```
  *
  * @category definitions
@@ -355,7 +398,7 @@ export const CommunicationStartMid = Mid.request(
  */
 export const CommunicationStopMid = Mid.request(
   Mid.define({ tag: "CommunicationStop", mid: 3, revisions: { 1: Mid.as(CommunicationStop, Field.layout([])) } }),
-  { 1: Mid.accepted }
+  { 1: commandAccepted }
 )
 
 /**
@@ -425,36 +468,8 @@ export const CommandAcceptedMid = Mid.define({
  */
 export const SubscribeResultsMid = Mid.request(
   Mid.define({ tag: "SubscribeResults", mid: 60, revisions: { 1: Mid.as(SubscribeResults, Field.layout([])) } }),
-  { 1: Mid.accepted }
+  { 1: commandAccepted }
 )
-
-/**
- * A revision carrying a tightening result: the layout decodes into the result
- * (stamped with the device from the frame context) wrapped in `wrap`.
- */
-const resultRevision = <Self extends { readonly result: TighteningResult }, Fields extends ResultFields>(options: {
-  readonly body: S.Codec<Fields, string>
-  readonly message: S.Codec<Self>
-  readonly wrap: (result: TighteningResult) => Self
-  readonly fieldsOf: (result: TighteningResult) => Fields
-}) =>
-  Mid.custom(
-    options.body.pipe(
-      S.decodeTo(
-        options.message,
-        SchemaTransformation.transformEffect({
-          decode: (fields: Fields) =>
-            Effect.gen(function* () {
-              const frame = yield* Mid.FrameContext
-              const result = yield* resultOf(frame.deviceId, fields)
-
-              return options.wrap(result)
-            }),
-          encode: (message: Self) => Effect.succeed(options.fieldsOf(message.result))
-        })
-      )
-    )
-  )
 
 /**
  * MID 0061 revision 1: a pushed tightening result.
@@ -462,11 +477,11 @@ const resultRevision = <Self extends { readonly result: TighteningResult }, Fiel
  * **Example** (Reading a pushed result)
  *
  * ```ts
- * import { DeviceId, LastResultMid, Mid } from "effect-open-protocol"
+ * import { LastResultMid, Mid } from "effect-open-protocol"
  *
  * declare const data: string
  *
- * const pushed = Mid.decode(LastResultMid.rev(1), data, DeviceId.make("tool-1"))
+ * const pushed = Mid.decode(LastResultMid.rev(1), data)
  * ```
  *
  * @category definitions
@@ -475,14 +490,7 @@ const resultRevision = <Self extends { readonly result: TighteningResult }, Fiel
 export const LastResultMid = Mid.define({
   tag: "LastResult",
   mid: 61,
-  revisions: {
-    1: resultRevision({
-      body: LastResultBody,
-      message: S.toType(LastResult),
-      wrap: (result) => new LastResult({ result }),
-      fieldsOf: (result) => ({ ...fieldsOf(result), parameterSetChangedAt: result.timestamp })
-    })
-  }
+  revisions: { 1: Mid.as(LastResult, LastResultBody) }
 })
 
 /**
@@ -525,7 +533,7 @@ export const AcknowledgeResultMid = Mid.request(
  */
 export const UnsubscribeResultsMid = Mid.request(
   Mid.define({ tag: "UnsubscribeResults", mid: 63, revisions: { 1: Mid.as(UnsubscribeResults, Field.layout([])) } }),
-  { 1: Mid.accepted }
+  { 1: commandAccepted }
 )
 
 /**
@@ -534,11 +542,11 @@ export const UnsubscribeResultsMid = Mid.request(
  * **Example** (Reading a stored result)
  *
  * ```ts
- * import { DeviceId, Mid, OldResultMid } from "effect-open-protocol"
+ * import { Mid, OldResultMid } from "effect-open-protocol"
  *
  * declare const data: string
  *
- * const stored = Mid.decode(OldResultMid.rev(1), data, DeviceId.make("tool-1"))
+ * const stored = Mid.decode(OldResultMid.rev(1), data)
  * ```
  *
  * @category definitions
@@ -547,14 +555,7 @@ export const UnsubscribeResultsMid = Mid.request(
 export const OldResultMid = Mid.define({
   tag: "OldResult",
   mid: 65,
-  revisions: {
-    1: resultRevision({
-      body: OldResultBody,
-      message: S.toType(OldResult),
-      wrap: (result) => new OldResult({ result }),
-      fieldsOf
-    })
-  }
+  revisions: { 1: Mid.as(OldResult, OldResultBody) }
 })
 
 /**
@@ -607,6 +608,29 @@ const keepAlive = Mid.define({ tag: "KeepAlive", mid: 9999, revisions: { 1: Mid.
  */
 export const KeepAliveMid = Mid.request(keepAlive, { 1: keepAlive.rev(1) })
 
+type Modelled = Exclude<Message, UnknownMessage>
+
+// One definition per modelled message, keyed by its tag: a message without a
+// definition, or a definition under the wrong tag, fails to compile here.
+const byTag = {
+  CommunicationStart: CommunicationStartMid,
+  CommunicationStartAccepted: CommunicationStartAcceptedMid,
+  CommunicationStop: CommunicationStopMid,
+  CommandError: CommandErrorMid,
+  CommandAccepted: CommandAcceptedMid,
+  SubscribeResults: SubscribeResultsMid,
+  LastResult: LastResultMid,
+  AcknowledgeResult: AcknowledgeResultMid,
+  UnsubscribeResults: UnsubscribeResultsMid,
+  RequestOldResult: RequestOldResultMid,
+  OldResult: OldResultMid,
+  KeepAlive: KeepAliveMid
+} satisfies {
+  readonly [Tag in Modelled["_tag"]]: Mid.AnyDefinition<Message> & { readonly tag: Tag }
+}
+
+const definitionOf = (message: Modelled): Mid.AnyDefinition<Message> => byTag[message._tag]
+
 /**
  * The definition of every message this library models, one per MID. Each
  * decodes only to members of `Message`, which the element type checks.
@@ -623,20 +647,7 @@ export const KeepAliveMid = Mid.request(keepAlive, { 1: keepAlive.rev(1) })
  * @category definitions
  * @since 0.0.0
  */
-export const builtIns: ReadonlyArray<Mid.AnyDefinition<Message>> = [
-  CommunicationStartMid,
-  CommunicationStartAcceptedMid,
-  CommunicationStopMid,
-  CommandErrorMid,
-  CommandAcceptedMid,
-  SubscribeResultsMid,
-  LastResultMid,
-  AcknowledgeResultMid,
-  UnsubscribeResultsMid,
-  RequestOldResultMid,
-  OldResultMid,
-  KeepAliveMid
-]
+export const builtIns: ReadonlyArray<Mid.AnyDefinition<Message>> = R.values(byTag)
 
 const byMid: R.ReadonlyRecord<string, Mid.AnyDefinition<Message>> = R.fromEntries(
   A.map(builtIns, (definition) => [`${definition.mid}`, definition] as const)
@@ -672,14 +683,14 @@ const fallBack = (header: Header, data: string, reason: string): Effect.Effect<M
     return unknownOf(header, data)
   })
 
-const messageOf = (header: Header, data: string, deviceId: DeviceId): Effect.Effect<Message> =>
+const messageOf = (header: Header, data: string): Effect.Effect<Message> =>
   O.match(R.get(byMid, `${header.mid}`), {
     onNone: () => Effect.succeed(unknownOf(header, data)),
     onSome: (definition) =>
       O.match(definition.lookup(header.revision), {
         onNone: () => fallBack(header, data, `revision ${header.revision} is not defined`),
         onSome: (revision) =>
-          Effect.catchTag(Mid.decode(revision, data, deviceId), "PayloadDecodeError", (error) =>
+          Effect.catchTag(Mid.decode(revision, data), "PayloadDecodeError", (error) =>
             fallBack(header, data, error.reason)
           )
       })
@@ -691,7 +702,6 @@ const messageOf = (header: Header, data: string, deviceId: DeviceId): Effect.Eff
  *
  * **Details**
  *
- * `deviceId` is stamped onto decoded results; it never travels on the wire.
  * Only a malformed frame header fails. A MID the library does not model, a
  * revision it does not define, or a data field that does not decode all
  * become `UnknownMessage` (the last two with a warning), so one odd frame never
@@ -701,9 +711,9 @@ const messageOf = (header: Header, data: string, deviceId: DeviceId): Effect.Eff
  *
  * ```ts
  * import { Effect } from "effect"
- * import { decodeFrame, DeviceId } from "effect-open-protocol"
+ * import { decodeFrame } from "effect-open-protocol"
  *
- * const decoded = decodeFrame("00209999            ", DeviceId.make("tool-1"))
+ * const decoded = decodeFrame("00209999            ")
  *
  * Effect.runPromise(decoded).then((incoming) => console.log(incoming.header.mid, incoming.message._tag))
  * ```
@@ -711,14 +721,11 @@ const messageOf = (header: Header, data: string, deviceId: DeviceId): Effect.Eff
  * @category decoding
  * @since 0.0.0
  */
-export const decodeFrame = (
-  frame: string,
-  deviceId: DeviceId
-): Effect.Effect<Incoming, MalformedHeader | UnsupportedFeature> =>
+export const decodeFrame = (frame: string): Effect.Effect<Incoming, MalformedHeader | UnsupportedFeature> =>
   Effect.gen(function* () {
     const header = yield* Effect.fromResult(decodeHeader(frame))
     const data = Str.substring(headerLength, Str.length(frame))(frame)
-    const message = yield* messageOf(header, data, deviceId)
+    const message = yield* messageOf(header, data)
 
     return new Incoming({ header, data, message })
   })
@@ -731,9 +738,9 @@ export const decodeFrame = (
  *
  * ```ts
  * import { Effect } from "effect"
- * import { decodeMessage, DeviceId } from "effect-open-protocol"
+ * import { decodeMessage } from "effect-open-protocol"
  *
- * const decoded = decodeMessage("00209999            ", DeviceId.make("tool-1"))
+ * const decoded = decodeMessage("00209999            ")
  *
  * Effect.runPromise(decoded).then((message) => console.log(message._tag))
  * ```
@@ -741,29 +748,23 @@ export const decodeFrame = (
  * @category decoding
  * @since 0.0.0
  */
-export const decodeMessage = (
-  frame: string,
-  deviceId: DeviceId
-): Effect.Effect<Message, MalformedHeader | UnsupportedFeature> =>
-  Effect.map(decodeFrame(frame, deviceId), (incoming) => incoming.message)
+export const decodeMessage = (frame: string): Effect.Effect<Message, MalformedHeader | UnsupportedFeature> =>
+  Effect.map(decodeFrame(frame), (incoming) => incoming.message)
 
-const encodeModelled: (message: Message) => Result.Result<string, PayloadEncodeError> = Match.type<Message>().pipe(
-  Match.tagsExhaustive({
-    CommunicationStart: (message) => Mid.encode(CommunicationStartMid.rev(1), message),
-    CommunicationStartAccepted: (message) => Mid.encode(CommunicationStartAcceptedMid.rev(1), message),
-    CommunicationStop: (message) => Mid.encode(CommunicationStopMid.rev(1), message),
-    CommandError: (message) => Mid.encode(CommandErrorMid.rev(1), message),
-    CommandAccepted: (message) => Mid.encode(CommandAcceptedMid.rev(1), message),
-    SubscribeResults: (message) => Mid.encode(SubscribeResultsMid.rev(1), message),
-    LastResult: (message) => Mid.encode(LastResultMid.rev(1), message),
-    AcknowledgeResult: (message) => Mid.encode(AcknowledgeResultMid.rev(1), message),
-    UnsubscribeResults: (message) => Mid.encode(UnsubscribeResultsMid.rev(1), message),
-    RequestOldResult: (message) => Mid.encode(RequestOldResultMid.rev(1), message),
-    OldResult: (message) => Mid.encode(OldResultMid.rev(1), message),
-    KeepAlive: (message) => Mid.encode(KeepAliveMid.rev(1), message),
-    UnknownMessage: (message) => Result.succeed(encodeFrame(message.mid, message.revision, message.data))
-  })
-)
+const encodeModelled = (message: Modelled): string =>
+  Result.getOrThrowWith(
+    Result.gen(function* () {
+      const definition = definitionOf(message)
+
+      const revision = yield* Result.fromOption(
+        definition.lookup(message.revision),
+        () => new PayloadEncodeError({ mid: definition.mid, reason: `revision ${message.revision} is not defined` })
+      )
+
+      return yield* Mid.encode(revision, message)
+    }),
+    (error) => error
+  )
 
 /**
  * Renders a message as a complete frame, NUL terminator included.
@@ -788,5 +789,7 @@ const encodeModelled: (message: Message) => Result.Result<string, PayloadEncodeE
  * @category encoding
  * @since 0.0.0
  */
-export const encodeMessage = (message: Message): string =>
-  Result.getOrThrowWith(encodeModelled(message), (error) => error)
+export const encodeMessage: (message: Message) => string = Match.type<Message>().pipe(
+  Match.tag("UnknownMessage", (message) => encodeFrame(message.mid, message.revision, message.data)),
+  Match.orElse(encodeModelled)
+)

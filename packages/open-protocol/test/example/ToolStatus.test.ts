@@ -79,7 +79,7 @@ const answer = (frame: string) =>
 
     const request = yield* O.match(ToolStatusRequest.lookup(header.revision), {
       onNone: () => Effect.die("unsupported revision"),
-      onSome: (revision) => Mid.decode(revision, data, deviceId)
+      onSome: (revision) => Mid.decode(revision, data)
     })
 
     return yield* Effect.map(
@@ -153,8 +153,8 @@ describe("a user-defined MID", () => {
 
       expect(dataOf(first)).toBe("01007" + "020380")
       expect(dataOf(second)).toBe("01007" + "020380" + "03000099")
-      expect(yield* Mid.decode(ToolStatus.rev(1), dataOf(first), deviceId)).toEqual(values[0])
-      expect(yield* Mid.decode(ToolStatus.rev(2), dataOf(second), deviceId)).toEqual(values[1])
+      expect(yield* Mid.decode(ToolStatus.rev(1), dataOf(first))).toEqual(values[0])
+      expect(yield* Mid.decode(ToolStatus.rev(2), dataOf(second))).toEqual(values[1])
     })
   )
 

@@ -20,7 +20,7 @@ import * as O from "effect/Option"
 import { AcknowledgeResultMid, CommunicationStopMid, type Message } from "../protocol/Messages.ts"
 import type * as Mid from "../protocol/Mid.ts"
 import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
-import type { DeviceId, TighteningResult } from "../protocol/TighteningResult.ts"
+import { type DeviceId, resultOf, type TighteningResult } from "../protocol/TighteningResult.ts"
 import * as Dedup from "../results/Dedup.ts"
 import * as ResultDelivery from "../results/ResultDelivery.ts"
 import { type ConnectionFailed, ConnectionLost, Transport } from "../transport/Transport.ts"
@@ -224,8 +224,8 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
 
   const routeUnsolicited = (current: Session, message: Message): Effect.Effect<void> =>
     Match.value(message).pipe(
-      Match.tag("LastResult", (carrier) => results.pushed(current, carrier.result)),
-      Match.tag("OldResult", (carrier) => results.delivery.submit(carrier.result)),
+      Match.tag("LastResult", (pushed) => results.pushed(current, resultOf(settings.id, pushed))),
+      Match.tag("OldResult", (stored) => results.delivery.submit(resultOf(settings.id, stored))),
       Match.orElse((other) =>
         Effect.logWarning("unsolicited message dropped").pipe(
           Effect.annotateLogs({ deviceId: settings.id, message: other._tag })
@@ -244,7 +244,6 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     const lastSent = yield* Ref.make(0)
 
     const replies = yield* RequestReply.make({
-      deviceId: settings.id,
       send: (frame) =>
         pipe(
           sendFrame(duplex, frame),
@@ -266,9 +265,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       )
     )
 
-    const reader = yield* Effect.forkChild(
-      readLoop(current, settings.id, (message) => routeUnsolicited(current, message))
-    )
+    const reader = yield* Effect.forkChild(readLoop(current, (message) => routeUnsolicited(current, message)))
 
     // A socket that dies during the handshake, the subscription or recovery
     // must fail the attempt immediately instead of waiting for a timeout.

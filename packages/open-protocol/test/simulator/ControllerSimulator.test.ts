@@ -12,14 +12,11 @@ import {
   SubscribeResults,
   UnknownMessage
 } from "../../src/protocol/Messages.ts"
-import { DeviceId } from "../../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork } from "../../src/transport/InMemoryTransport.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { type Duplex, Endpoint } from "../../src/transport/Transport.ts"
 import * as ControllerBehaviour from "../../simulator/ControllerBehaviour.ts"
 import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
-
-const deviceId = DeviceId.make("test-client")
 
 const endpoint = new Endpoint({ host: "simulator", port: 4545 })
 
@@ -40,7 +37,7 @@ const exchange = (connection: Duplex, outgoing: ReadonlyArray<Message>) =>
     })
     const collected = yield* Fiber.join(replies)
 
-    return yield* Effect.forEach(collected, (frame) => decodeMessage(frame, deviceId))
+    return yield* Effect.forEach(collected, (frame) => decodeMessage(frame))
   })
 
 describe("ControllerSimulator", () => {

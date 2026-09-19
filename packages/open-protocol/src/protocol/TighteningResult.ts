@@ -7,10 +7,8 @@
  *
  * @since 0.0.0
  */
-import type { Effect } from "effect"
 import * as A from "effect/Array"
 import * as S from "effect/Schema"
-import type * as SchemaIssue from "effect/SchemaIssue"
 import * as SchemaTransformation from "effect/SchemaTransformation"
 import * as Str from "effect/String"
 import * as Struct from "effect/Struct"
@@ -262,50 +260,51 @@ export const OldResultBody = Field.layout([
 ])
 
 /**
- * What both layouts carry of a result: everything but the device, which never
- * travels on the wire.
+ * What a controller reports of a result: everything but the device, which
+ * never travels on the wire.
  *
+ * @category models
+ * @since 0.0.0
+ */
+export const ResultFields = Struct.omit(TighteningResult.fields, ["deviceId"])
+
+/**
  * @category models
  * @since 0.0.0
  */
 export type ResultFields = Omit<TighteningResult, "deviceId">
 
 /**
- * Builds the domain result from what a layout decoded, stamping the device it
- * came from. Fields of the layout that are not part of a result are dropped.
+ * Stamps a reported result with the device it came from. Anything the report
+ * carries beyond a result's fields (a message's `_tag`, say) is dropped.
  *
- * **Example** (Building a result from decoded fields)
+ * **Example** (Stamping a stored result)
  *
  * ```ts
- * import { Effect } from "effect"
- * import * as S from "effect/Schema"
- * import { DeviceId, OldResultBody, resultOf } from "effect-open-protocol"
+ * import { DeviceId, type OldResult, resultOf } from "effect-open-protocol"
  *
- * declare const data: string
+ * declare const reply: OldResult
  *
- * const result = Effect.flatMap(S.decodeEffect(OldResultBody)(data), (fields) => resultOf(DeviceId.make("tool-1"), fields))
+ * const result = resultOf(DeviceId.make("tool-1"), reply)
  * ```
  *
- * @category decoding
+ * @category constructors
  * @since 0.0.0
  */
-export const resultOf = (
-  deviceId: DeviceId,
-  fields: ResultFields
-): Effect.Effect<TighteningResult, SchemaIssue.Issue> => TighteningResult.makeEffect({ ...fields, deviceId })
+export const resultOf = (deviceId: DeviceId, reported: ResultFields): TighteningResult =>
+  new TighteningResult({ ...Struct.pick(reported, Struct.keys(ResultFields)), deviceId })
 
 /**
- * The layout fields of a domain result.
+ * The reported fields of a domain result: the result without its device.
  *
- * **Example** (Writing a result back as a MID 0065 data field)
+ * **Example** (Reporting a result back as MID 0065)
  *
  * ```ts
- * import * as S from "effect/Schema"
- * import { fieldsOf, OldResultBody, type TighteningResult } from "effect-open-protocol"
+ * import { fieldsOf, OldResult, type TighteningResult } from "effect-open-protocol"
  *
  * declare const result: TighteningResult
  *
- * const data = S.encodeEffect(OldResultBody)(fieldsOf(result))
+ * const reply = new OldResult(fieldsOf(result))
  * ```
  *
  * @category encoding

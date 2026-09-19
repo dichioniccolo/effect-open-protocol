@@ -10,23 +10,14 @@
  *
  * @since 0.0.0
  */
-import { Deferred, Effect, Predicate, Ref, Semaphore } from "effect"
+import { Deferred, Effect, Ref, Semaphore } from "effect"
 import * as O from "effect/Option"
 import type { Duration } from "effect"
-import type { Incoming } from "../protocol/Messages.ts"
+import { type Incoming, rejectionOf } from "../protocol/Messages.ts"
 import * as Mid from "../protocol/Mid.ts"
 import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
-import type { DeviceId } from "../protocol/TighteningResult.ts"
 import { ConnectionLost } from "../transport/Transport.ts"
 import { CommandRejected, RequestTimeout } from "./ConnectionError.ts"
-
-/**
- * How a reply can go wrong once the request is on the wire.
- *
- * @category models
- * @since 0.0.0
- */
-export type ReplyError = CommandRejected | Mid.ReplyError
 
 /**
  * Every way a request can fail.
@@ -34,7 +25,7 @@ export type ReplyError = CommandRejected | Mid.ReplyError
  * @category models
  * @since 0.0.0
  */
-export type RequestError = RequestTimeout | ConnectionLost | PayloadEncodeError | ReplyError
+export type RequestError = RequestTimeout | ConnectionLost | PayloadEncodeError | CommandRejected | Mid.ReplyError
 
 /**
  * A request revision whose reply resolves to `A`.
@@ -44,13 +35,8 @@ export type RequestError = RequestTimeout | ConnectionLost | PayloadEncodeError 
  */
 export type Expecting<Rev extends Mid.AnyRequestRevision, A> = Rev & { readonly reply: Mid.Reply<A> }
 
-const rejected = <A>(request: number, incoming: Incoming): O.Option<Effect.Effect<A, ReplyError, Mid.FrameContext>> => {
-  const message = incoming.message
-
-  return Predicate.isTagged(message, "CommandError") && message.mid === request
-    ? O.some(Effect.fail(new CommandRejected({ mid: request, code: message.code })))
-    : O.none()
-}
+const rejected = (request: number, incoming: Incoming): O.Option<Effect.Effect<never, CommandRejected>> =>
+  O.map(rejectionOf(request, incoming), (error) => Effect.fail(new CommandRejected({ mid: request, code: error.code })))
 
 /** The request in flight: settles itself from its reply, or fails with the session. */
 interface Pending {
@@ -87,12 +73,11 @@ export interface RequestReply {
  *
  * ```ts
  * import { Duration, Effect } from "effect"
- * import { DeviceId, RequestReply } from "effect-open-protocol"
+ * import { RequestReply } from "effect-open-protocol"
  *
  * const replies = RequestReply.make({
  *   send: () => Effect.void,
- *   responseTimeout: Duration.seconds(5),
- *   deviceId: DeviceId.make("tool-1")
+ *   responseTimeout: Duration.seconds(5)
  * })
  * ```
  *
@@ -102,7 +87,6 @@ export interface RequestReply {
 export const make = Effect.fnUntraced(function* (options: {
   readonly send: (frame: string) => Effect.Effect<void, ConnectionLost>
   readonly responseTimeout: Duration.Duration
-  readonly deviceId: DeviceId
 }) {
   const slot = yield* Ref.make(O.none<Pending>())
   const gate = yield* Semaphore.make(1)
@@ -110,20 +94,13 @@ export const make = Effect.fnUntraced(function* (options: {
   const exchange = <A>(mid: number, reply: Mid.Reply<A>, frame: string, timeout: Duration.Duration) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const deferred = yield* Deferred.make<A, ReplyError | ConnectionLost>()
+        const deferred = yield* Deferred.make<A, CommandRejected | Mid.ReplyError | ConnectionLost>()
 
         const pending: Pending = {
           settle: (incoming) =>
             O.map(
-              O.orElse(rejected<A>(mid, incoming), () => reply.answer(mid, incoming)),
-              (answer) =>
-                Effect.gen(function* () {
-                  const exit = yield* Effect.exit(
-                    Effect.provideService(answer, Mid.FrameContext, { deviceId: options.deviceId })
-                  )
-
-                  yield* Deferred.done(deferred, exit)
-                })
+              O.orElse(rejected(mid, incoming), () => reply.answer(mid, incoming)),
+              (answer) => Effect.asVoid(Deferred.complete(deferred, answer))
             ),
           fail: (error) => Effect.asVoid(Deferred.fail(deferred, error))
         }
@@ -204,7 +181,7 @@ export const lostOn = (step: string) => {
   const lost = (reason: string): Effect.Effect<never, ConnectionLost> =>
     Effect.fail(new ConnectionLost({ reason: `${step} ${reason}` }))
 
-  const failed = (error: ReplyError | PayloadEncodeError) => lost(`failed: ${error._tag}`)
+  const failed = (error: Mid.ReplyError | PayloadEncodeError) => lost(`failed: ${error._tag}`)
 
   return {
     RequestTimeout: () => lost("timed out"),
