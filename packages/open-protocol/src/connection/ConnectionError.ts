@@ -46,3 +46,29 @@ export class RequestTimeout extends S.TaggedError<RequestTimeout>()("RequestTime
 export class NotReady extends S.TaggedError<NotReady>()("NotReady", {
   state: S.String
 }) {}
+
+/**
+ * A subscription to this data MID is already active on the connection: the
+ * controller pushes each MID once, so it has one consumer at a time.
+ *
+ * **Example** (Telling a second consumer apart)
+ *
+ * ```ts
+ * import { Effect, Stream } from "effect"
+ * import { DeviceConnection, LastResults } from "effect-open-protocol"
+ *
+ * const second = Effect.gen(function* () {
+ *   const connection = yield* DeviceConnection.DeviceConnection
+ *
+ *   yield* Stream.runDrain(connection.subscribe(LastResults.rev(1))).pipe(
+ *     Effect.catchTag("AlreadySubscribed", (error) => Effect.log(`MID ${error.mid} already has a consumer`))
+ *   )
+ * })
+ * ```
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class AlreadySubscribed extends S.TaggedError<AlreadySubscribed>()("AlreadySubscribed", {
+  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 }))
+}) {}

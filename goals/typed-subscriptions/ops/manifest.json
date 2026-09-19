@@ -3,13 +3,13 @@
   "initiative": {
     "id": "typed-subscriptions",
     "title": "Typed Subscriptions",
-    "status": "paused",
+    "status": "active",
     "created": "2026-09-19",
     "updated": "2026-09-19",
     "packetAnchorDocument": "SPEC.md"
   },
   "packetPath": "goals/typed-subscriptions",
-  "lifecycle": "paused",
+  "lifecycle": "active",
   "mission": "Typed subscribe(Sub.rev(n)) returning a Stream of { value, ack } that survives reconnects, with ResultDelivery rebuilt on subscribe(LastResults) and dedup, gap recovery and ack-after-handler unchanged.",
   "executionCapable": true,
   "reflectionRequired": true,
@@ -49,32 +49,32 @@
     {
       "id": "P0",
       "name": "Re-baseline",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "P1",
       "name": "Subscribe primitive",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "P2",
       "name": "Survive reconnects",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "P3",
       "name": "Results on subscribe",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "P4",
       "name": "Docs",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "P5",
       "name": "PR to mergeable",
-      "status": "pending"
+      "status": "in-progress"
     },
     {
       "id": "P6",

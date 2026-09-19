@@ -3,7 +3,7 @@
  *
  * The connection owns the lifecycle the application should not have to think
  * about: opening the socket, the communication start handshake, restoring the
- * subscription, keep-alives, detecting a silent socket, backing off and
+ * subscriptions, keep-alives, detecting a silent socket, backing off and
  * reconnecting, and failing in-flight requests when the session dies. Every
  * attempt runs in its own `Scope`, so a lost connection releases its socket
  * and fibers before the next attempt begins.
@@ -14,10 +14,10 @@
  *
  * @since 0.0.0
  */
-import { Effect, Fiber, Layer, Match, pipe, Ref, SubscriptionRef } from "effect"
+import { Effect, Fiber, Layer, Match, pipe, Ref, Stream, SubscriptionRef } from "effect"
 import * as Context from "effect/Context"
 import * as O from "effect/Option"
-import { AcknowledgeResultMid, CommunicationStopMid, type Message } from "../protocol/Messages.ts"
+import { CommunicationStopMid, LastResults, type Message } from "../protocol/Messages.ts"
 import type * as Mid from "../protocol/Mid.ts"
 import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
 import { type DeviceId, resultOf, type TighteningResult } from "../protocol/TighteningResult.ts"
@@ -44,9 +44,10 @@ import {
 } from "./ConnectionState.ts"
 import { type DeviceConfig, type DeviceSettings, resolveSettings } from "./DeviceSettings.ts"
 import * as GapRecovery from "./GapRecovery.ts"
-import { startCommunication, subscribeResults } from "./Handshake.ts"
+import { startCommunication } from "./Handshake.ts"
 import * as RequestReply from "./RequestReply.ts"
 import { keepAliveLoop, readLoop, sendFrame, sendPayload, type Session } from "./Session.ts"
+import * as Subscriptions from "./Subscriptions.ts"
 
 /**
  * A live connection as the rest of the library sees it.
@@ -68,6 +69,15 @@ export interface DeviceConnectionService {
     revision: Rev,
     payload: Mid.Payload<Rev>
   ) => Effect.Effect<void, NotReady | ConnectionLost | PayloadEncodeError>
+  /**
+   * The values the controller pushes for a subscription, each with the `ack`
+   * to run once it is handled. Subscribed again after every reconnect; the
+   * stream ends when the consumer stops (which unsubscribes) or the connection
+   * closes.
+   */
+  readonly subscribe: <Data extends Mid.AnyRevision>(
+    subscription: Mid.Subscription<Data>
+  ) => Stream.Stream<Subscriptions.Pushed<Mid.Type<Data>>, Subscriptions.SubscribeError>
   /** Stops the connection and returns once every resource is released. */
   readonly close: Effect.Effect<void>
   /** Results handed to the handler, duplicates excluded. */
@@ -82,12 +92,10 @@ export interface DeviceConnectionService {
  */
 interface Results {
   readonly delivery: ResultDelivery.ResultDelivery
-  /** Takes a pushed result, which may reveal a gap. */
-  readonly pushed: (session: Session, result: TighteningResult) => Effect.Effect<void>
+  /** Takes the results pushed to this session, any of which may reveal a gap, for as long as it lives. */
+  readonly pushed: (session: Session) => Effect.Effect<void>
   /** Fetches what the controller produced while no session was listening. */
   readonly recover: (session: Session) => Effect.Effect<void>
-  /** Asks the controller to push its results on this session. */
-  readonly subscribe: (session: Session) => Effect.Effect<void, ConnectionLost>
   /** Background work that lasts as long as the session. */
   readonly reconcile: (session: Session) => Effect.Effect<never>
 }
@@ -98,36 +106,56 @@ interface Results {
  */
 const ignoring: Results = {
   delivery: ResultDelivery.dropping,
-  pushed: (_, result) => ResultDelivery.dropping.submit(result),
+  pushed: () => Effect.void,
   recover: () => Effect.void,
-  subscribe: () => Effect.void,
   reconcile: () => Effect.never
 }
 
-/** One dedup window, one delivery queue and one gap policy, all for this device only. */
+/**
+ * One dedup window, one delivery queue and one gap policy, all for this device
+ * only, fed by the `LastResults` subscription for as long as the connection
+ * lives.
+ */
 const collecting = Effect.fnUntraced(function* (options: {
   readonly settings: DeviceSettings
   readonly handler: ResultDelivery.ResultHandler
-  readonly acknowledge: (result: TighteningResult) => Effect.Effect<void, ConnectionLost>
+  readonly subscriptions: Subscriptions.Subscriptions
 }) {
-  const { settings } = options
+  const { settings, subscriptions } = options
   const dedup = yield* Dedup.make(settings.dedupCapacity)
+  const subscription = LastResults.rev(1)
+
+  // Registered before the first attempt, so the first handshake subscribes.
+  // Nothing is up yet to refuse it, and nothing else holds MID 0061.
+  const results = yield* Effect.orDie(subscriptions.open(subscription))
+
+  // A result recovered with MID 0064 is acknowledged like a pushed one, as it
+  // always was: MID 0062 names no result, so every element's `ack` is this.
+  const acknowledge = (result: TighteningResult): Effect.Effect<void, ConnectionLost> =>
+    Effect.andThen(
+      subscriptions.acknowledge(subscription),
+      Effect.logDebug("acknowledged a result").pipe(
+        Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
+      )
+    )
 
   const delivery = yield* ResultDelivery.make({
     handler: options.handler,
     handlerRetry: settings.handlerRetry,
     bufferSize: settings.resultBuffer,
     dedup,
-    acknowledge: options.acknowledge
+    acknowledge
   })
 
   const recovery = yield* GapRecovery.make({ settings, dedup, pipeline: delivery })
 
   return {
     delivery,
-    pushed: recovery.submitResult,
+    // Consumed by one session at a time, so a gap it reveals is recovered on
+    // that session and stops with it.
+    pushed: (session) =>
+      Stream.runForEach(results, (pushed) => recovery.submitResult(session, resultOf(settings.id, pushed.value))),
     recover: recovery.recoverGap,
-    subscribe: subscribeResults,
     // Recovery is driven by events: a session starting, and a pushed result
     // whose identifier sits above the watermark. A caller who also wants the
     // line polled asks for it with `recoveryInterval`, and pays one MID 0064
@@ -157,7 +185,7 @@ const reasonOf = (error: ConnectionFailed | ConnectionLost | HandshakeRejected):
  * **Example** (Watching a device come up)
  *
  * ```ts
- * import { Effect, Stream } from "effect"
+ * import { Effect, Stream, SubscriptionRef } from "effect"
  * import { DeviceConnection, DeviceId, Endpoint } from "effect-open-protocol"
  *
  * const program = Effect.gen(function* () {
@@ -165,7 +193,7 @@ const reasonOf = (error: ConnectionFailed | ConnectionLost | HandshakeRejected):
  *     id: DeviceId.make("line-1-tool-3"),
  *     endpoint: new Endpoint({ host: "10.0.0.31", port: 4545 })
  *   })
- *   return yield* Stream.runHead(connection.state.changes)
+ *   return yield* Stream.runHead(SubscriptionRef.changes(connection.state))
  * })
  * ```
  *
@@ -178,27 +206,11 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const state = yield* SubscriptionRef.make(initial)
   const session = yield* Ref.make(O.none<Session>())
 
-  const acknowledge = Effect.fnUntraced(function* (result: TighteningResult) {
-    const open = yield* Ref.get(session)
-
-    if (O.isNone(open)) {
-      return yield* Effect.fail(new ConnectionLost({ reason: "no session to acknowledge on" }))
-    }
-
-    // An empty payload always fits: failing to encode it would be a bug here.
-    yield* Effect.catchTag(
-      sendPayload(open.value.duplex, AcknowledgeResultMid.rev(1), {}),
-      "PayloadEncodeError",
-      Effect.die
-    )
-    yield* Effect.logDebug("acknowledged a result").pipe(
-      Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
-    )
-  })
+  const subscriptions = yield* Subscriptions.make({ deviceId: settings.id, session, bufferSize: settings.resultBuffer })
 
   const results = yield* O.match(O.fromNullishOr(settings.onResult), {
     onNone: () => Effect.succeed(ignoring),
-    onSome: (handler) => collecting({ settings, handler, acknowledge })
+    onSome: (handler) => collecting({ settings, handler, subscriptions })
   })
 
   /**
@@ -222,9 +234,8 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
 
   const emitIfLegal = emitWith(() => Effect.void)
 
-  const routeUnsolicited = (current: Session, message: Message): Effect.Effect<void> =>
+  const routeUnsolicited = (message: Message): Effect.Effect<void> =>
     Match.value(message).pipe(
-      Match.tag("LastResult", (pushed) => results.pushed(current, resultOf(settings.id, pushed))),
       Match.tag("OldResult", (stored) => results.delivery.submit(resultOf(settings.id, stored))),
       Match.orElse((other) =>
         Effect.logWarning("unsolicited message dropped").pipe(
@@ -261,11 +272,12 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
         // Whatever ended the session, nobody is left waiting on a reply that
         // can no longer arrive.
         replies.interruptAll(new ConnectionLost({ reason: "the session ended" })),
+        Effect.andThen(subscriptions.detach),
         Effect.andThen(Ref.set(session, O.none()))
       )
     )
 
-    const reader = yield* Effect.forkChild(readLoop(current, (message) => routeUnsolicited(current, message)))
+    const reader = yield* Effect.forkChild(readLoop(current, subscriptions.offer, routeUnsolicited))
 
     // A socket that dies during the handshake, the subscription or recovery
     // must fail the attempt immediately instead of waiting for a timeout.
@@ -283,13 +295,14 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
         yield* results.recover(current)
         yield* emit(new Recovered())
 
-        yield* results.subscribe(current)
+        yield* subscriptions.restore(current)
         yield* emit(new Subscribed())
       }),
       readerFailed
     )
 
     const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent, settings.keepAliveInterval))
+    const pushed = yield* Effect.forkChild(results.pushed(current))
     const reconcile = yield* Effect.forkChild(results.reconcile(current))
 
     return yield* readerFailed.pipe(
@@ -297,6 +310,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       Effect.onExit(
         Effect.fnUntraced(function* () {
           yield* Fiber.interrupt(reconcile)
+          yield* Fiber.interrupt(pushed)
           yield* Fiber.interrupt(keepAlive)
           yield* Fiber.interrupt(reader)
         })
@@ -349,6 +363,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     yield* emit(new CloseRequested())
     yield* sayGoodbye
     yield* Fiber.interrupt(fiber)
+    yield* subscriptions.close
     yield* emit(new Released())
   })
 
@@ -370,6 +385,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     state,
     request: (revision, payload) => withSession((current) => current.replies.request(revision, payload)),
     send: (revision, payload) => withSession((current) => sendPayload(current.duplex, revision, payload)),
+    subscribe: subscriptions.subscribe,
     close,
     delivered: results.delivery.delivered,
     duplicates: results.delivery.duplicates
@@ -387,7 +403,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
  * **Example** (A single controller as a dependency)
  *
  * ```ts
- * import { Effect } from "effect"
+ * import { Effect, SubscriptionRef } from "effect"
  * import { DeviceConnection, DeviceId, Endpoint, TcpTransport } from "effect-open-protocol"
  *
  * const layer = DeviceConnection.layer({
@@ -397,7 +413,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
  *
  * const program = Effect.gen(function* () {
  *   const connection = yield* DeviceConnection.DeviceConnection
- *   return yield* connection.state
+ *   return yield* SubscriptionRef.get(connection.state)
  * }).pipe(Effect.provide(layer), Effect.provide(TcpTransport.layer))
  * ```
  *

@@ -58,15 +58,18 @@ Higher sources outrank lower sources when they conflict.
 
 All paths are under `packages/open-protocol/`.
 
-- The definition module from `typed-mid-definitions` gains subscription
+- `src/protocol/Mid.ts` (the definition module from `typed-mid-definitions`)
+  and `src/protocol/Messages.ts` gain subscription
   definitions (subscribe, data, ack and unsubscribe MIDs).
 - `src/connection/DeviceConnection.ts`:
   - `subscribe` on the service;
   - a registry of active subscriptions;
-  - `routeUnsolicited` (`:215-224`) and the ack send (`:184`) replaced by it.
+  - `routeUnsolicited` (`:225-234`) and the ack send (`acknowledge`, `:181-197`)
+    replaced by it.
 - `src/connection/Handshake.ts`: re-subscribe every active subscription after
-  the handshake (today only 0060, at `:49`).
-- `src/connection/Session.ts`: keep offering to `RequestReply` first (`:66`),
+  the handshake (today only 0060, `subscribeResults` at `:47-48`, called from
+  `DeviceConnection.ts:286`).
+- `src/connection/Session.ts`: keep offering to `RequestReply` first (`:98`),
   then to subscriptions.
 - `src/results/ResultDelivery.ts` and `src/results/ResultRecovery.ts`: consume
   `subscribe(LastResults)`.

@@ -509,6 +509,129 @@ export function request(
   )
 }
 
+/**
+ * The control MIDs of one subscribed revision: the request that starts the
+ * pushes, the MID that acknowledges each one, and the request that stops
+ * them. `ack` and `unsubscribe` are left out where the protocol has none.
+ *
+ * **Details**
+ *
+ * Each is sent with nothing but its tag and revision, so each must be a
+ * revision whose value needs no field (see {@link subscription}).
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface Channels {
+  readonly subscribe: AnyRequestRevision
+  readonly ack?: AnyRevision | undefined
+  readonly unsubscribe?: AnyRequestRevision | undefined
+}
+
+/**
+ * One subscribed revision: the data revision the controller pushes, and the
+ * control MIDs around it.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface Subscription<Data extends Revision<string, number, S.Top>> {
+  readonly data: Data
+  readonly subscribe: AnyRequestRevision
+  readonly ack: O.Option<AnyRevision>
+  readonly unsubscribe: O.Option<AnyRequestRevision>
+}
+
+/**
+ * Any subscription, whatever it pushes.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export type AnySubscription = Subscription<AnyRevision>
+
+/**
+ * A subscription definition: a data definition whose every revision names
+ * the control MIDs that subscribe to it, acknowledge it and unsubscribe from
+ * it.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface SubscriptionDefinition<Tag extends string, E extends Entries> {
+  readonly tag: Tag
+  readonly mid: number
+  readonly revisions: ReadonlyArray<RevisionOf<E>>
+  readonly rev: <Number extends RevisionOf<E>>(
+    revision: Number
+  ) => Subscription<Revision<Tag, Number, CodecOf<Tag, Number, E[Number]>>>
+}
+
+// A control MID is sent as `{}`: one whose value needs a field is refused here.
+type Bare<Rev> = Rev extends AnyRevision ? ({} extends Payload<Rev> ? Rev : never) : Rev
+
+type CheckedChannels<C> = {
+  readonly [Number in keyof C]: { readonly [Key in keyof C[Number]]: Bare<C[Number][Key]> }
+}
+
+/**
+ * Makes a data definition subscribable: every revision names the control
+ * MIDs around its pushes.
+ *
+ * **Details**
+ *
+ * `channels` must cover exactly the declared revisions. `subscribe` is a
+ * request (MID 0060 is answered by `0005`); `ack` is sent as is, never as a
+ * request, so acknowledging never waits on a reply. Every control MID must be
+ * a revision whose value needs no field, which the type checks.
+ *
+ * **Example** (A pushed status with an acknowledgement)
+ *
+ * ```ts
+ * import { commandAccepted, Field, Mid } from "effect-open-protocol"
+ *
+ * const empty = (tag: string, mid: number) => Mid.define({ tag, mid, revisions: { 1: Field.layout([]) } })
+ *
+ * const ToolStatus = Mid.define({
+ *   tag: "ToolStatus",
+ *   mid: 9101,
+ *   revisions: { 1: Field.layout([["toolId", Field.digits({ width: 3 })]]) }
+ * })
+ *
+ * const ToolStatusSubscription = Mid.subscription(ToolStatus, {
+ *   1: {
+ *     subscribe: Mid.request(empty("SubscribeToolStatus", 9102), { 1: commandAccepted }).rev(1),
+ *     ack: empty("AcknowledgeToolStatus", 9103).rev(1)
+ *   }
+ * })
+ *
+ * const first = ToolStatusSubscription.rev(1)
+ * ```
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
+export function subscription<
+  const Tag extends string,
+  const E extends Entries,
+  const C extends { readonly [Number in RevisionOf<E>]: Channels }
+>(definition: Definition<Tag, E>, channels: C & CheckedChannels<C>): SubscriptionDefinition<Tag, E>
+export function subscription(
+  definition: Untyped<Revision<string, number, S.Top>>,
+  channels: { readonly [revision: number]: Channels }
+): Omit<Untyped<Subscription<Revision<string, number, S.Top>>>, "lookup"> {
+  return indexed(
+    definition.tag,
+    definition.mid,
+    R.map(channels, (channel, key) => ({
+      data: definition.rev(Number(key)),
+      subscribe: channel.subscribe,
+      ack: O.fromNullishOr(channel.ack),
+      unsubscribe: O.fromNullishOr(channel.unsubscribe)
+    }))
+  )
+}
+
 const encodeError =
   (mid: number) =>
   (issue: SchemaIssue.Issue): PayloadEncodeError =>

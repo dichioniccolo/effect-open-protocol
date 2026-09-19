@@ -2,19 +2,19 @@
 
 ## Status
 
-Status: `paused`. Resumes when `typed-mid-definitions` merges (its P6 Close
-flips this packet to `active`).
+Status: `active`. `typed-mid-definitions` merged (PR #7); P0 re-baselined
+the cites on 2026-09-19.
 
 ## Phases
 
 | Phase | Status | Goal | Exit criteria |
 | --- | --- | --- | --- |
-| P0 Re-baseline | pending | Read the merged `typed-mid-definitions` code: the definition module, codec, typed `request`, and where the push path sits now. Refresh the `SPEC.md` line cites, which were taken before that goal landed. | Cites in `SPEC.md` Target Surfaces match the merged code; blockers recorded. |
-| P1 Subscribe primitive | pending | Subscription definitions, the registry, and `subscribe` returning `Stream<{ value, ack }>`, proven on the example custom MID over the in-memory transport. | Typed values (`expectTypeOf`), ack sends, and stopping unsubscribes; tests green. |
-| P2 Survive reconnects | pending | Re-send active subscriptions after every handshake, and keep the stream alive across reconnects. | Reconnect test: the same stream emits before and after a dropped session. |
-| P3 Results on subscribe | pending | `ResultDelivery` consumes `subscribe(LastResults)`. Remove the `routeUnsolicited` `LastResult` branch and the direct ack send, keeping unsolicited 0065 behaviour. | Delivery, Chaos, GapRecovery and Shutdown suites green with assertions unchanged. |
-| P4 Docs | pending | README subscribing section and §Delivery semantics update; JSDoc rubric pass on new exports. | Full verification matrix in `SPEC.md` green. |
-| P5 PR to mergeable | pending | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
+| P0 Re-baseline | completed | Read the merged `typed-mid-definitions` code: the definition module, codec, typed `request`, and where the push path sits now. Refresh the `SPEC.md` line cites, which were taken before that goal landed. | Cites in `SPEC.md` Target Surfaces match the merged code; blockers recorded. |
+| P1 Subscribe primitive | completed | Subscription definitions, the registry, and `subscribe` returning `Stream<{ value, ack }>`, proven on the example custom MID over the in-memory transport. | Typed values (`expectTypeOf`), ack sends, and stopping unsubscribes; tests green. |
+| P2 Survive reconnects | completed | Re-send active subscriptions after every handshake, and keep the stream alive across reconnects. | Reconnect test: the same stream emits before and after a dropped session. |
+| P3 Results on subscribe | completed | `ResultDelivery` consumes `subscribe(LastResults)`. Remove the `routeUnsolicited` `LastResult` branch and the direct ack send, keeping unsolicited 0065 behaviour. | Delivery, Chaos, GapRecovery and Shutdown suites green with assertions unchanged. |
+| P4 Docs | completed | README subscribing section and §Delivery semantics update; JSDoc rubric pass on new exports. | Full verification matrix in `SPEC.md` green. |
+| P5 PR to mergeable | in-progress | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
 | P6 Close | pending | Write the closeout reflection and flip packet state. | Packet status and evidence are updated; a closeout reflection exists. |
 
 <!--

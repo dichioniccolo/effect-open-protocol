@@ -537,6 +537,36 @@ export const UnsubscribeResultsMid = Mid.request(
 )
 
 /**
+ * The tightening results a controller pushes: MID 0060 subscribes, MID 0061
+ * carries each result, MID 0062 acknowledges it and MID 0063 unsubscribes.
+ *
+ * **Example** (Taking pushed results by hand)
+ *
+ * ```ts
+ * import { Effect, Stream } from "effect"
+ * import { DeviceConnection, LastResults } from "effect-open-protocol"
+ *
+ * const results = Effect.gen(function* () {
+ *   const connection = yield* DeviceConnection.DeviceConnection
+ *
+ *   yield* Stream.runForEach(connection.subscribe(LastResults.rev(1)), (pushed) =>
+ *     Effect.andThen(Effect.log(pushed.value.tighteningId), pushed.ack)
+ *   )
+ * })
+ * ```
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const LastResults = Mid.subscription(LastResultMid, {
+  1: {
+    subscribe: SubscribeResultsMid.rev(1),
+    ack: AcknowledgeResultMid.rev(1),
+    unsubscribe: UnsubscribeResultsMid.rev(1)
+  }
+})
+
+/**
  * MID 0065 revision 1: a stored result returned by the controller.
  *
  * **Example** (Reading a stored result)

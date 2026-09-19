@@ -10,7 +10,7 @@
  */
 import { Duration, Effect, Ref, Stream } from "effect"
 import { frames } from "../protocol/Framer.ts"
-import { decodeFrame, KeepAliveMid, type Message } from "../protocol/Messages.ts"
+import { decodeFrame, type Incoming, KeepAliveMid, type Message } from "../protocol/Messages.ts"
 import * as Mid from "../protocol/Mid.ts"
 import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
 import { ConnectionLost, type Duplex } from "../transport/Transport.ts"
@@ -80,8 +80,9 @@ const protocolLost = (tag: string): Effect.Effect<never, ConnectionLost> =>
   Effect.fail(new ConnectionLost({ reason: `protocol error: ${tag}` }))
 
 /**
- * Reads frames until the controller goes away, handing every message that is
- * not a reply to `onUnsolicited`.
+ * Reads frames until the controller goes away. Each frame is offered to the
+ * request in flight first, then to `subscribed`; a message neither takes goes
+ * to `onUnsolicited`.
  *
  * It never succeeds: a stream that ends means the peer closed the connection.
  *
@@ -90,12 +91,15 @@ const protocolLost = (tag: string): Effect.Effect<never, ConnectionLost> =>
  */
 export const readLoop = (
   session: Session,
+  subscribed: (incoming: Incoming) => Effect.Effect<boolean>,
   onUnsolicited: (message: Message) => Effect.Effect<void>
 ): Effect.Effect<never, ConnectionLost> =>
   Effect.gen(function* () {
     const onFrame = Effect.fnUntraced(function* (frame: string) {
       const incoming = yield* decodeFrame(frame)
-      const consumed = yield* session.replies.offer(incoming)
+      // A pushed frame can arrive while a request waits for its reply, so the
+      // reply is recognised first and everything else falls through.
+      const consumed = (yield* session.replies.offer(incoming)) || (yield* subscribed(incoming))
 
       if (!consumed) {
         yield* onUnsolicited(incoming.message)
