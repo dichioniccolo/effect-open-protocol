@@ -3,16 +3,17 @@
   "exploration": {
     "slug": "typed-mids",
     "title": "Typed MIDs",
-    "status": "active",
-    "stage": "decompose",
-    "openQuestions": [
-      "Approve the MAP.md candidates for graduation: two goals (typed-mid-definitions, then typed-subscriptions), or collapse into one?"
-    ],
+    "status": "graduated",
+    "stage": "graduate",
+    "openQuestions": [],
     "sources": [
       "research/SOURCES.md"
     ],
     "links": {
-      "goals": [],
+      "goals": [
+        "goals/typed-mid-definitions",
+        "goals/typed-subscriptions"
+      ],
       "docs": [],
       "supersededBy": null
     },

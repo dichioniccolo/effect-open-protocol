@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "initiative-manifest/v2",
+  "initiative": {
+    "id": "typed-mid-definitions",
+    "title": "Typed MID Definitions",
+    "status": "active",
+    "created": "2026-09-19",
+    "updated": "2026-09-19",
+    "packetAnchorDocument": "SPEC.md"
+  },
+  "packetPath": "goals/typed-mid-definitions",
+  "lifecycle": "active",
+  "mission": "Code-defined Open Protocol MIDs with one exact Effect Schema type per revision and a declared reply, so request(Def.rev(n), payload) returns exactly the reply type; every built-in MID migrates and the untyped request API is removed.",
+  "executionCapable": true,
+  "reflectionRequired": true,
+  "provenance": {
+    "exploration": "explorations/typed-mids",
+    "graduated": "2026-09-19",
+    "explorationDecisions": "explorations/typed-mids/DECISIONS.md",
+    "explorationBrief": "explorations/typed-mids/BRIEF.md",
+    "explorationMap": "explorations/typed-mids/MAP.md"
+  },
+  "completionGate": {
+    "requiresPullRequest": true,
+    "requiresMergeable": true,
+    "statement": "Not achieved until this goal's work ships as a PR driven to mergeable: required checks green and every review thread answered."
+  },
+  "currentSourceOfTruth": [
+    "CLAUDE.md",
+    "goals/typed-mid-definitions/README.md",
+    "goals/typed-mid-definitions/SPEC.md",
+    "goals/typed-mid-definitions/PLAN.md",
+    "goals/typed-mid-definitions/GOAL.md",
+    "goals/typed-mid-definitions/research/SOURCES.md"
+  ],
+  "researchReports": [
+    "research/SOURCES.md"
+  ],
+  "agentLaunchers": [
+    {
+      "kind": "goal-launcher",
+      "path": "GOAL.md",
+      "targetChars": 3500,
+      "maxChars": 4000,
+      "command": "follow the instructions in goals/typed-mid-definitions/GOAL.md"
+    }
+  ],
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Field codec",
+      "status": "pending"
+    },
+    {
+      "id": "P1",
+      "name": "First slice: 0064 → 0065",
+      "status": "pending"
+    },
+    {
+      "id": "P2",
+      "name": "Migrate built-ins",
+      "status": "pending"
+    },
+    {
+      "id": "P3",
+      "name": "Decode fallback and simulator",
+      "status": "pending"
+    },
+    {
+      "id": "P4",
+      "name": "Example MID and docs",
+      "status": "pending"
+    },
+    {
+      "id": "P5",
+      "name": "PR to mergeable",
+      "status": "pending"
+    },
+    {
+      "id": "P6",
+      "name": "Close",
+      "status": "pending"
+    }
+  ],
+  "verificationCommands": [
+    "bun run check",
+    "bun run test",
+    "bun run lint",
+    "bun run format:check",
+    "bun run build",
+    "test \"$(wc -m < goals/typed-mid-definitions/GOAL.md)\" -le 4000",
+    "jq . goals/typed-mid-definitions/ops/manifest.json",
+    "rg -n \"typed-mid-definitions|GOAL.md|agentLaunchers|packetAnchorDocument\" goals/typed-mid-definitions",
+    "git diff --check -- goals/typed-mid-definitions"
+  ],
+  "stopConditions": [
+    "Required source files are missing or materially contradictory.",
+    "The implementation would exceed named scope.",
+    "Verification requires unnamed credentials, cost, destructive side effects, or policy approval.",
+    "The same blocker repeats after reasonable investigation.",
+    "Exact revision or reply types prove impossible after both appetite cuts: stop and report with the failing type test; never widen the types.",
+    "An existing delivery, chaos or gap-recovery assertion would have to change (not just its call site): stop and report."
+  ],
+  "relatedGoals": {
+    "followOn": "goals/typed-subscriptions"
+  }
+}

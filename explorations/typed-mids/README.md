@@ -3,8 +3,8 @@
 ## Status
 
 <!-- Keep in sync with ops/manifest.json on every stage/status change. -->
-Stage: `decompose`
-Status: `active`
+Stage: `graduate`
+Status: `graduated`
 
 Source: [`ops/manifest.json`](./ops/manifest.json)
 
@@ -15,8 +15,11 @@ through Effect Schema, with the reply a MID expects typed as well.
 
 ## Next Open Question
 
-Approve MAP.md for graduation: two goals (`typed-mid-definitions`, then
-`typed-subscriptions`), or collapse them into one goal with two phases?
+None. Graduated into
+[`goals/typed-mid-definitions`](../../goals/typed-mid-definitions/) (active)
+and [`goals/typed-subscriptions`](../../goals/typed-subscriptions/) (paused
+until the first merges). No gated candidates remain in MAP.md. Reopen at
+`decompose` only if a goal's scope turns out wrong.
 
 ## Read This First
 
@@ -29,6 +32,10 @@ Approve MAP.md for graduation: two goals (`typed-mid-definitions`, then
 
 ## Trail
 
+- 2026-09-19: graduated as two goals, per MAP.md; the user said "graduate"
+  without collapsing them. `typed-mid-definitions` is active,
+  `typed-subscriptions` is paused on it. Definition-of-ready: brief complete,
+  no open questions, map names the goals, capabilities cited.
 - 2026-09-19: user confirmed BRIEF.md. MAP.md drafted: two candidates
   (`typed-mid-definitions`, then `typed-subscriptions`), first slice 0064 →
   0065 end to end on the new path, capability check done (NET-NEW: definitions
