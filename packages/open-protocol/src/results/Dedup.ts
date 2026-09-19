@@ -9,7 +9,7 @@
  *
  * It lives in memory: a process restart forgets everything, so the handler
  * must be idempotent on `(deviceId, tighteningId)`. That is an integration
- * requirement, not a detail — the README states it.
+ * requirement, not a detail — docs/REFERENCE.md states it.
  *
  * @since 0.0.0
  */
