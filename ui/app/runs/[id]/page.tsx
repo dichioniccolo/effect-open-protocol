@@ -21,7 +21,7 @@ export default async function Page({ params }: { readonly params: Promise<{ read
       O.match({
         onNone: () => Effect.succeedNone,
         onSome: (runId) =>
-          WireStore.use((store) =>
+          WireStore.WireStore.use((store) =>
             Effect.gen(function* () {
               const run = yield* store.findRun(runId)
 

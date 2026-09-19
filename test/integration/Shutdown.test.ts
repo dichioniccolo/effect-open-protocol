@@ -16,10 +16,10 @@ import {
 } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
+import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
-import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
-import { DevicePool, layer as devicePoolLayer } from "../../src/pool/DevicePool.ts"
+import * as DeviceConnection from "../../src/connection/DeviceConnection.ts"
+import * as DevicePool from "../../src/pool/DevicePool.ts"
 import { KeepAlive } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
@@ -51,11 +51,11 @@ describe("shutdown", () => {
   it.effect("releases the session when the owning scope closes", () =>
     provided(
       Effect.gen(function* () {
-        const simulator = yield* makeSimulator({ endpoint })
+        const simulator = yield* ControllerSimulator.make({ endpoint })
         const scope = yield* Scope.make()
 
         const connection = yield* Scope.provide(
-          makeConnection({ id: DeviceId.make("tool-1"), endpoint, onResult: () => Effect.void }),
+          DeviceConnection.make({ id: DeviceId.make("tool-1"), endpoint, onResult: () => Effect.void }),
           scope
         )
 
@@ -75,11 +75,11 @@ describe("shutdown", () => {
     provided(
       Effect.gen(function* () {
         const received = yield* Ref.make<ReadonlyArray<number>>([])
-        const simulator = yield* makeSimulator({ endpoint })
+        const simulator = yield* ControllerSimulator.make({ endpoint })
         const scope = yield* Scope.make()
 
         const pool = yield* Scope.provide(
-          Effect.map(Layer.build(devicePoolLayer), (context) => Context.get(context, DevicePool)),
+          Effect.map(Layer.build(DevicePool.layer), (context) => Context.get(context, DevicePool.DevicePool)),
           scope
         )
 
@@ -109,8 +109,8 @@ describe("shutdown", () => {
   it.effect("says goodbye with a communication stop before closing", () =>
     provided(
       Effect.gen(function* () {
-        const simulator = yield* makeSimulator({ endpoint })
-        const connection = yield* makeConnection({ id: DeviceId.make("tool-1"), endpoint })
+        const simulator = yield* ControllerSimulator.make({ endpoint })
+        const connection = yield* DeviceConnection.make({ id: DeviceId.make("tool-1"), endpoint })
         yield* awaitState(connection.state, "Ready")
         expect(yield* simulator.stops).toBe(0)
 
@@ -125,9 +125,9 @@ describe("shutdown", () => {
   it.effect("fails an in-flight request as soon as the session ends", () =>
     provided(
       Effect.gen(function* () {
-        const simulator = yield* makeSimulator({ endpoint, silent: true })
+        const simulator = yield* ControllerSimulator.make({ endpoint, silent: true })
 
-        const connection = yield* makeConnection({
+        const connection = yield* DeviceConnection.make({
           id: DeviceId.make("tool-1"),
           endpoint,
           responseTimeout: Duration.minutes(5)
@@ -150,8 +150,8 @@ describe("shutdown", () => {
   it.effect("is safe to close twice and refuses later work", () =>
     provided(
       Effect.gen(function* () {
-        const simulator = yield* makeSimulator({ endpoint })
-        const connection = yield* makeConnection({ id: DeviceId.make("tool-1"), endpoint })
+        const simulator = yield* ControllerSimulator.make({ endpoint })
+        const connection = yield* DeviceConnection.make({ id: DeviceId.make("tool-1"), endpoint })
         yield* awaitState(connection.state, "Ready")
 
         yield* connection.close

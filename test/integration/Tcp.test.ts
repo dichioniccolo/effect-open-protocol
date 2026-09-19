@@ -2,11 +2,11 @@ import { describe, expect, it } from "@effect/vitest"
 import { Duration, Effect, pipe, Predicate, Ref, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
-import { layer as simulatorOnTcp } from "../../simulator/TcpListener.ts"
-import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
+import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
+import * as TcpListener from "../../simulator/TcpListener.ts"
+import * as DeviceConnection from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { layer as layerTcp } from "../../src/transport/TcpTransport.ts"
+import * as TcpTransport from "../../src/transport/TcpTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 
 const deviceId = DeviceId.make("tcp-tool")
@@ -30,10 +30,10 @@ describe("real TCP smoke test", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const simulator = yield* makeSimulator({ endpoint, controllerName: "TcpSim" })
+          const simulator = yield* ControllerSimulator.make({ endpoint, controllerName: "TcpSim" })
           const received = yield* Ref.make<ReadonlyArray<number>>([])
 
-          const connection = yield* makeConnection({
+          const connection = yield* DeviceConnection.make({
             id: deviceId,
             endpoint,
             onResult: (result: TighteningResult) =>
@@ -54,7 +54,7 @@ describe("real TCP smoke test", () => {
           expect(results).toEqual([1])
           expect(yield* connection.delivered).toBe(1)
         })
-      ).pipe(Effect.provide([layerTcp, simulatorOnTcp()])),
+      ).pipe(Effect.provide([TcpTransport.layer, TcpListener.layer()])),
     30_000
   )
 })

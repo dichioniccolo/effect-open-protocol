@@ -15,9 +15,8 @@
  * @since 0.0.0
  */
 import { NodeSocketServer } from "@effect/platform-node"
-import { Deferred, Effect, Fiber, Layer, pipe, Predicate, Queue, Ref, Stream } from "effect"
+import { Data, Deferred, Effect, Fiber, Layer, pipe, Predicate, Queue, Ref, Semaphore, Stream } from "effect"
 import * as A from "effect/Array"
-import * as O from "effect/Option"
 import type { ServerSide } from "../src/transport/InMemoryTransport.ts"
 import { ConnectionLost, type Endpoint } from "../src/transport/Transport.ts"
 import { type Listener, SimulatorListenFailed, SimulatorNetwork } from "./SimulatorNetwork.ts"
@@ -27,25 +26,32 @@ const capacity = 64
 
 const encoder = new TextEncoder()
 
+/** Where the port stands: free, held by a running binding, or given up for good. */
+type Status = Data.TaggedEnum<{
+  Unbound: {}
+  Bound: { readonly fiber: Fiber.Fiber<never, SimulatorListenFailed> }
+  /** The owning scope closed, so a late outage window cannot bring the port back up. */
+  Retired: {}
+}>
+
+const Status = Data.taggedEnum<Status>()
+
 /** Binds a TCP port for the lifetime of the calling scope. */
 const listen = Effect.fnUntraced(function* (options: {
   readonly endpoint: Endpoint
   /** Wraps every accepted connection before it is handed to the simulator. */
-  readonly decorate?: ((side: ServerSide) => Effect.Effect<ServerSide>) | undefined
+  readonly decorate: (side: ServerSide) => Effect.Effect<ServerSide>
 }) {
   const address = `${options.endpoint.host}:${options.endpoint.port}`
   const accepted = yield* Queue.bounded<ServerSide>(capacity)
-  const running = yield* Ref.make(O.none<Fiber.Fiber<never, SimulatorListenFailed>>())
-  // Set once the owning scope closes, so a late outage window cannot bring the
-  // port back up while the simulator is shutting down.
-  const retired = yield* Ref.make(false)
+  const scope = yield* Effect.scope
+  const status = yield* Ref.make<Status>(Status.Unbound())
+  // Binding, unbinding and retiring each read the status and then act on it,
+  // so they take turns: two outage windows must never both see a free port.
+  const lock = yield* Semaphore.make(1)
 
-  const handOver = Effect.fnUntraced(function* (side: ServerSide) {
-    const decorate = O.fromNullishOr(options.decorate)
-    const ready = O.isNone(decorate) ? side : yield* decorate.value(side)
-
-    yield* Queue.offer(accepted, ready)
-  })
+  const handOver = (side: ServerSide): Effect.Effect<void> =>
+    Effect.flatMap(options.decorate(side), (ready) => Effect.asVoid(Queue.offer(accepted, ready)))
 
   /**
    * One binding: the server, the sockets it accepted, and the loop that
@@ -103,41 +109,40 @@ const listen = Effect.fnUntraced(function* (options: {
     )
 
   const bind: Effect.Effect<void, SimulatorListenFailed> = Effect.gen(function* () {
-    const done = yield* Ref.get(retired)
-    const current = yield* Ref.get(running)
-
-    if (done || O.isSome(current)) {
+    if (!Status.$is("Unbound")(yield* Ref.get(status))) {
       return
     }
 
     const ready = yield* Deferred.make<void, SimulatorListenFailed>()
 
-    const fiber = yield* Effect.forkChild(binding(ready).pipe(Effect.tapError((error) => Deferred.fail(ready, error))))
+    // Forked into the listener's scope, not the caller's fiber: whoever asks
+    // for the port back may be gone long before the port should be.
+    const fiber = yield* binding(ready).pipe(
+      Effect.tapError((error) => Deferred.fail(ready, error)),
+      Effect.forkIn(scope)
+    )
 
     // Fails here, not in the background, when the port is taken.
     yield* Deferred.await(ready)
-    yield* Ref.set(running, O.some(fiber))
-  })
+    yield* Ref.set(status, Status.Bound({ fiber }))
+  }).pipe(lock.withPermits(1))
 
-  const unbind: Effect.Effect<void> = Effect.gen(function* () {
-    const fiber = yield* Ref.getAndSet(running, O.none())
+  /** Releases the port, leaving the status at `next` unless it is already retired for good. */
+  const release = (next: Status): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const current = yield* Ref.getAndUpdate(status, (value) => (Status.$is("Retired")(value) ? value : next))
 
-    if (O.isSome(fiber)) {
-      yield* Fiber.interrupt(fiber.value)
-    }
-  })
+      if (Status.$is("Bound")(current)) {
+        yield* Fiber.interrupt(current.fiber)
+      }
+    }).pipe(lock.withPermits(1))
 
   yield* bind
-  yield* Effect.addFinalizer(
-    Effect.fnUntraced(function* () {
-      yield* Ref.set(retired, true)
-      yield* unbind
-    })
-  )
+  yield* Effect.addFinalizer(() => release(Status.Retired()))
 
   const refuse = Effect.fnUntraced(function* (refused: boolean) {
     if (refused) {
-      yield* unbind
+      yield* release(Status.Unbound())
       yield* Effect.logInfo("the controller stopped listening").pipe(Effect.annotateLogs({ endpoint: address }))
 
       return
@@ -172,11 +177,11 @@ const listen = Effect.fnUntraced(function* (options: {
  * ```ts
  * import { Effect } from "effect"
  * import { Endpoint } from "effect-open-protocol"
- * import { make } from "../simulator/ControllerSimulator.ts"
- * import { layer } from "../simulator/TcpListener.ts"
+ * import * as ControllerSimulator from "../simulator/ControllerSimulator.ts"
+ * import * as TcpListener from "../simulator/TcpListener.ts"
  *
- * const program = make({ endpoint: new Endpoint({ host: "127.0.0.1", port: 45455 }) }).pipe(
- *   Effect.provide(layer()),
+ * const program = ControllerSimulator.make({ endpoint: new Endpoint({ host: "127.0.0.1", port: 45455 }) }).pipe(
+ *   Effect.provide(TcpListener.layer()),
  *   Effect.scoped
  * )
  * ```
@@ -187,4 +192,6 @@ const listen = Effect.fnUntraced(function* (options: {
 export const layer = (
   options: { readonly decorate?: ((side: ServerSide) => Effect.Effect<ServerSide>) | undefined } = {}
 ): Layer.Layer<SimulatorNetwork> =>
-  Layer.succeed(SimulatorNetwork)({ bind: (endpoint) => listen({ endpoint, decorate: options.decorate }) })
+  Layer.succeed(SimulatorNetwork)({
+    bind: (endpoint) => listen({ endpoint, decorate: options.decorate ?? Effect.succeed })
+  })

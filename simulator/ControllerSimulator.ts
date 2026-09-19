@@ -16,11 +16,18 @@ import * as A from "effect/Array"
 import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
 import { frames } from "../src/protocol/Framer.ts"
-import { decodeMessage, LastResult } from "../src/protocol/Messages.ts"
+import { decodeMessage, LastResult, type Message } from "../src/protocol/Messages.ts"
 import { type TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
 import type { ServerSide } from "../src/transport/InMemoryTransport.ts"
 import type { Endpoint } from "../src/transport/Transport.ts"
-import { type ControllerIdentity, observe, replyTo, resultFor, simulatorDevice } from "./ControllerBehaviour.ts"
+import {
+  type ControllerIdentity,
+  defaultIdentity,
+  observe,
+  replyTo,
+  resultFor,
+  simulatorDevice
+} from "./ControllerBehaviour.ts"
 import type * as Faults from "./Faults.ts"
 import { sendWithFaults } from "./FaultyWire.ts"
 import { forget, initialSessionState, latestOf, type SessionState } from "./SessionState.ts"
@@ -38,7 +45,7 @@ export interface SimulatorOptions extends ControllerIdentity {
   readonly resultInterval?: Duration.Duration | undefined
   /** How long to wait for MID 0062 before resending a result. Defaults to 5 seconds. */
   readonly ackTimeout?: Duration.Duration | undefined
-  /** Attempts before the controller gives up on a result and drops the session. */
+  /** Attempts before the controller gives up on a result and drops the session. Defaults to 3. */
   readonly ackAttempts?: number | undefined
   /**
    * Seeded misbehaviour injected while the session runs. Absent rather than a
@@ -47,6 +54,30 @@ export interface SimulatorOptions extends ControllerIdentity {
    */
   readonly faults?: Faults.FaultConfig | undefined
 }
+
+/** Every simulator knob that has a default, and what it falls back to. */
+const defaultOptions = {
+  ...defaultIdentity,
+  ackTimeout: Duration.seconds(5),
+  ackAttempts: 3
+}
+
+/** `SimulatorOptions` with every default filled in. */
+interface SimulatorSettings
+  extends
+    Omit<SimulatorOptions, keyof typeof defaultOptions>,
+    Required<Pick<SimulatorOptions, keyof typeof defaultOptions>> {}
+
+/** Fills in every default once, key by key so an explicit `undefined` cannot erase one. */
+const resolveOptions = (options: SimulatorOptions): SimulatorSettings => ({
+  ...options,
+  cellId: options.cellId ?? defaultOptions.cellId,
+  channelId: options.channelId ?? defaultOptions.channelId,
+  controllerName: options.controllerName ?? defaultOptions.controllerName,
+  silent: options.silent ?? defaultOptions.silent,
+  ackTimeout: options.ackTimeout ?? defaultOptions.ackTimeout,
+  ackAttempts: options.ackAttempts ?? defaultOptions.ackAttempts
+})
 
 /**
  * What a running simulator exposes to a test or demo.
@@ -77,52 +108,10 @@ export interface Simulator {
   readonly backlog: Effect.Effect<number>
 }
 
-const serve = Effect.fnUntraced(function* (
-  connection: ServerSide,
-  state: Ref.Ref<SessionState>,
-  store: MutableHashMap.MutableHashMap<number, TighteningResult>,
-  options: SimulatorOptions,
-  refuseFor: (duration: Duration.Duration) => Effect.Effect<void>
-) {
-  yield* Ref.update(state, (current) => ({ ...current, connection: O.some(connection) }))
-
-  const onFrame = Effect.fnUntraced(function* (frame: string) {
-    const message = yield* Effect.fromResult(decodeMessage(frame, simulatorDevice))
-    const current = yield* Ref.modify(state, (value) => [value, observe(message, value)])
-
-    if (Predicate.isTagged(message, "AcknowledgeResult")) {
-      const pending = current.pendingAck
-
-      if (O.isSome(pending)) {
-        yield* Deferred.succeed(pending.value, undefined)
-      }
-
-      return
-    }
-
-    const reply = replyTo(message, options, store, latestOf(current))
-
-    if (O.isSome(reply)) {
-      yield* sendWithFaults(connection, reply.value, options.faults, state, refuseFor)
-    }
-  })
-
-  yield* frames(connection.incoming).pipe(
-    Stream.runForEach((frame) =>
-      onFrame(frame).pipe(Effect.catchCause((cause) => Effect.logWarning("simulator dropped a frame", cause)))
-    ),
-    Effect.catchCause((cause) => Effect.logDebug("simulator session ended", cause))
-  )
-
-  yield* Ref.update(state, (current) => forget(current, connection))
-})
-
 /** Serves the connections a bound endpoint accepts, for the lifetime of the calling scope. */
-const start = Effect.fnUntraced(function* (options: SimulatorOptions, listener: Listener) {
+const start = Effect.fnUntraced(function* (options: SimulatorSettings, listener: Listener) {
   const store = MutableHashMap.empty<number, TighteningResult>()
   const state = yield* Ref.make<SessionState>(initialSessionState)
-  const ackTimeout = options.ackTimeout ?? Duration.seconds(5)
-  const ackAttempts = options.ackAttempts ?? 3
 
   // Outage windows run on the simulator's own fiber, one at a time, so the
   // endpoint always starts accepting again even if the session that triggered
@@ -141,9 +130,47 @@ const start = Effect.fnUntraced(function* (options: SimulatorOptions, listener: 
   // at shutdown would rebind the port the scope is about to release. An outage
   // in flight dies with the simulator either way.
 
+  const send = (connection: ServerSide, message: Message): Effect.Effect<void> =>
+    sendWithFaults(connection, message, options.faults, state, refuseFor)
+
+  /** Serves one accepted connection until it ends. */
+  const serve = Effect.fnUntraced(function* (connection: ServerSide) {
+    yield* Ref.update(state, (current) => ({ ...current, connection: O.some(connection) }))
+
+    const onFrame = Effect.fnUntraced(function* (frame: string) {
+      const message = yield* Effect.fromResult(decodeMessage(frame, simulatorDevice))
+      const current = yield* Ref.modify(state, (value) => [value, observe(message, value)])
+
+      if (Predicate.isTagged(message, "AcknowledgeResult")) {
+        const pending = current.pendingAck
+
+        if (O.isSome(pending)) {
+          yield* Deferred.succeed(pending.value, undefined)
+        }
+
+        return
+      }
+
+      const reply = replyTo(message, options, store, latestOf(current))
+
+      if (O.isSome(reply)) {
+        yield* send(connection, reply.value)
+      }
+    })
+
+    yield* frames(connection.incoming).pipe(
+      Stream.runForEach((frame) =>
+        onFrame(frame).pipe(Effect.catchCause((cause) => Effect.logWarning("simulator dropped a frame", cause)))
+      ),
+      Effect.catchCause((cause) => Effect.logDebug("simulator session ended", cause))
+    )
+
+    yield* Ref.update(state, (current) => forget(current, connection))
+  })
+
   const acceptLoop = yield* pipe(
     Queue.take(listener.accepted),
-    Effect.flatMap((connection) => Effect.forkChild(serve(connection, state, store, options, refuseFor))),
+    Effect.flatMap((connection) => Effect.forkChild(serve(connection))),
     Effect.forever,
     Effect.forkChild
   )
@@ -160,9 +187,9 @@ const start = Effect.fnUntraced(function* (options: SimulatorOptions, listener: 
     const acknowledged = yield* Deferred.make<void>()
     yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.some(acknowledged) }))
 
-    const attempt = sendWithFaults(connection, new LastResult({ result }), options.faults, state, refuseFor).pipe(
+    const attempt = send(connection, new LastResult({ result })).pipe(
       Effect.andThen(Deferred.await(acknowledged)),
-      Effect.timeoutOption(ackTimeout),
+      Effect.timeoutOption(options.ackTimeout),
       Effect.catchCause(() => Effect.succeed(O.none<void>()))
     )
 
@@ -173,7 +200,7 @@ const start = Effect.fnUntraced(function* (options: SimulatorOptions, listener: 
             O.isSome(acknowledgement) ? Effect.succeed(true) : tryDeliver(remaining - 1)
           )
 
-    const delivered = yield* tryDeliver(ackAttempts)
+    const delivered = yield* tryDeliver(options.ackAttempts)
     yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.none() }))
 
     if (delivered) {
@@ -210,39 +237,30 @@ const start = Effect.fnUntraced(function* (options: SimulatorOptions, listener: 
     return result
   })
 
-  yield* O.match(O.fromNullishOr(options.resultInterval), {
-    onNone: () => Effect.void,
-    onSome: (interval) =>
-      Effect.asVoid(
-        Effect.forkChild(
-          Effect.forever(
-            pipe(
-              Effect.sleep(interval),
-              Effect.andThen(Ref.get(state)),
-              Effect.flatMap((current) =>
-                current.quiet || !current.everSubscribed ? Effect.void : Effect.asVoid(produce)
-              )
-            )
-          )
-        )
-      )
+  /** Produces a result on each tick, once a client has subscribed and until the run quiesces. */
+  const tick = Effect.fnUntraced(function* (interval: Duration.Duration) {
+    yield* Effect.sleep(interval)
+
+    const current = yield* Ref.get(state)
+
+    if (!current.quiet && current.everSubscribed) {
+      yield* produce
+    }
   })
+
+  if (options.resultInterval !== undefined) {
+    yield* Effect.forkChild(Effect.forever(tick(options.resultInterval)))
+  }
 
   yield* Effect.addFinalizer(() => Fiber.interrupt(acceptLoop))
 
-  const drop = pipe(
-    Ref.getAndUpdate(state, (current) => ({
-      ...current,
-      subscribed: false,
-      connection: O.none()
-    })),
-    Effect.flatMap((current) =>
-      O.match(current.connection, {
-        onNone: () => Effect.void,
-        onSome: (connection) => connection.close("the controller dropped the connection")
-      })
-    )
-  )
+  const drop = Effect.gen(function* () {
+    const current = yield* Ref.getAndUpdate(state, (value) => ({ ...value, subscribed: false, connection: O.none() }))
+
+    if (O.isSome(current.connection)) {
+      yield* current.connection.value.close("the controller dropped the connection")
+    }
+  })
 
   return {
     quiesce: Ref.update(state, (current) => ({ ...current, quiet: true })),
@@ -267,10 +285,10 @@ const start = Effect.fnUntraced(function* (options: SimulatorOptions, listener: 
  * ```ts
  * import { Effect } from "effect"
  * import { Endpoint } from "effect-open-protocol"
- * import { make } from "../simulator/ControllerSimulator.ts"
+ * import * as ControllerSimulator from "../simulator/ControllerSimulator.ts"
  *
  * const program = Effect.gen(function* () {
- *   const simulator = yield* make({ endpoint: new Endpoint({ host: "sim", port: 4545 }) })
+ *   const simulator = yield* ControllerSimulator.make({ endpoint: new Endpoint({ host: "sim", port: 4545 }) })
  *   return yield* simulator.keepAlives
  * })
  * ```
@@ -282,5 +300,5 @@ export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
   const network = yield* SimulatorNetwork
   const listener = yield* network.bind(options.endpoint)
 
-  return yield* start(options, listener)
+  return yield* start(resolveOptions(options), listener)
 })

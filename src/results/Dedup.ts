@@ -64,14 +64,6 @@ interface State {
   readonly emptyHistory: boolean
 }
 
-/**
- * Default number of identifiers kept per device.
- *
- * @category constants
- * @since 0.0.0
- */
-export const defaultCapacity = 1000
-
 /** Advances the watermark across every identifier already delivered. */
 const advance = (from: TighteningId, ahead: HashSet.HashSet<TighteningId>): Pick<State, "watermark" | "ahead"> => {
   const next = TighteningId.make(from + 1)
@@ -109,7 +101,7 @@ const lowestAhead = (ahead: HashSet.HashSet<TighteningId>): O.Option<TighteningI
  * @category constructors
  * @since 0.0.0
  */
-export const make = Effect.fnUntraced(function* (capacity: number = defaultCapacity) {
+export const make = Effect.fnUntraced(function* (capacity: number) {
   const state = yield* Ref.make<State>({
     ids: HashSet.empty<TighteningId>(),
     order: [],

@@ -2,8 +2,8 @@ import { describe, expect, it } from "@effect/vitest"
 import { Duration, Effect, Random, Ref, Schedule } from "effect"
 import * as A from "effect/Array"
 import * as Faults from "../../simulator/Faults.ts"
-import { make as makeSimulator, type Simulator } from "../../simulator/ControllerSimulator.ts"
-import { DevicePool, layer as devicePoolLayer } from "../../src/pool/DevicePool.ts"
+import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
+import * as DevicePool from "../../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
@@ -19,13 +19,13 @@ const runChaos = (options: { readonly seed: number; readonly devices: number; re
     const onResult = (result: TighteningResult) =>
       Ref.update(delivered, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
 
-    const pool = yield* DevicePool
+    const pool = yield* DevicePool.DevicePool
 
     const simulators = yield* Effect.forEach(A.range(1, options.devices), (index) =>
       Effect.gen(function* () {
         const endpoint = new Endpoint({ host: `chaos-${options.seed}`, port: 4600 + index })
 
-        const simulator = yield* makeSimulator({
+        const simulator = yield* ControllerSimulator.make({
           endpoint,
           controllerName: `Controller-${index}`,
           resultInterval: Duration.millis(100),
@@ -50,10 +50,12 @@ const runChaos = (options: { readonly seed: number; readonly devices: number; re
     )
 
     yield* Effect.sleep(Duration.seconds(2))
-    yield* Effect.forEach(simulators, (simulator: Simulator) => simulator.quiesce, { discard: true })
+    yield* Effect.forEach(simulators, (simulator: ControllerSimulator.Simulator) => simulator.quiesce, {
+      discard: true
+    })
 
     const generated = Effect.map(
-      Effect.forEach(simulators, (simulator: Simulator) => simulator.generated),
+      Effect.forEach(simulators, (simulator: ControllerSimulator.Simulator) => simulator.generated),
       (counts) => A.reduce(counts, 0, (sum, value) => sum + value)
     )
 
@@ -69,7 +71,12 @@ const runChaos = (options: { readonly seed: number; readonly devices: number; re
     yield* settle(200)
 
     return yield* Effect.all({ generated, delivered: Ref.get(delivered) })
-  }).pipe(Random.withSeed(options.seed), Effect.scoped, Effect.provide(devicePoolLayer), Effect.provide(layerSimulated))
+  }).pipe(
+    Random.withSeed(options.seed),
+    Effect.scoped,
+    Effect.provide(DevicePool.layer),
+    Effect.provide(layerSimulated)
+  )
 
 describe("chaos invariant", () => {
   it.live(

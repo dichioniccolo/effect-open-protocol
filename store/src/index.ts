@@ -1,6 +1,16 @@
 /**
- * Storage for recorded wire traces.
+ * Storage for recorded wire traces: the shapes, flat, and the store itself as
+ * `WireStore.WireStore` and `WireStore.layer`.
  *
  * @since 0.0.0
  */
-export * from "./WireStore.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * from "./Schema.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * as WireStore from "./WireStore.ts"

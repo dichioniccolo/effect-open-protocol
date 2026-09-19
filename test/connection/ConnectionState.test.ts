@@ -42,8 +42,8 @@ const toReady: ReadonlyArray<ConnectionEvent> = [
   new AttemptStarted(),
   new Opened(),
   new Accepted({ controllerName: "Airbag1" }),
-  new Subscribed(),
-  new Recovered()
+  new Recovered(),
+  new Subscribed()
 ]
 
 describe("ConnectionState", () => {
@@ -56,11 +56,11 @@ describe("ConnectionState", () => {
     assertSuccess(transition(new Connecting({ attempt: 1 }), new Opened()), new Handshaking({ attempt: 1 }))
     assertSuccess(
       transition(new Handshaking({ attempt: 2 }), new Accepted({ controllerName: "c" })),
-      new Subscribing({ attempt: 2, controllerName: "c" })
+      new Recovering({ attempt: 2, controllerName: "c" })
     )
     assertSuccess(
-      transition(new Subscribing({ attempt: 2, controllerName: "c" }), new Subscribed()),
-      new Recovering({ attempt: 2, controllerName: "c" })
+      transition(new Recovering({ attempt: 2, controllerName: "c" }), new Recovered()),
+      new Subscribing({ attempt: 2, controllerName: "c" })
     )
   })
 

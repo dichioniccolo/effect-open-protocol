@@ -16,8 +16,9 @@
  *
  * @since 0.0.0
  */
-import { Cause, Duration, Effect, pipe, Queue, Ref, Schedule } from "effect"
+import { Cause, Effect, pipe, Queue, Ref, type Schedule } from "effect"
 import type { TighteningResult } from "../protocol/TighteningResult.ts"
+import type { ConnectionLost } from "../transport/Transport.ts"
 import type { Dedup } from "./Dedup.ts"
 
 /**
@@ -28,44 +29,6 @@ import type { Dedup } from "./Dedup.ts"
  * @since 0.0.0
  */
 export type ResultHandler = (result: TighteningResult) => Effect.Effect<void, unknown>
-
-/**
- * How results are delivered.
- *
- * @category models
- * @since 0.0.0
- */
-export interface DeliveryOptions {
-  readonly handler: ResultHandler
-  /** Retries applied to a failing handler before giving up on the ACK. */
-  readonly handlerRetry?: Schedule.Schedule<unknown> | undefined
-  /** How many results may wait for the handler. */
-  readonly bufferSize?: number | undefined
-}
-
-/**
- * Retries a failing handler three times with jittered exponential backoff.
- *
- * Handler failures are expensive here: a result the controller gives up on is
- * gone for good, so a transient application error should not cost traceability
- * data.
- *
- * @category constants
- * @since 0.0.0
- */
-export const defaultHandlerRetry: Schedule.Schedule<Duration.Duration> = pipe(
-  Schedule.exponential(Duration.millis(200)),
-  Schedule.jittered,
-  Schedule.upTo({ times: 3 })
-)
-
-/**
- * Default number of results waiting for a slow handler.
- *
- * @category constants
- * @since 0.0.0
- */
-export const defaultBufferSize = 16
 
 /**
  * A running delivery pipeline for one device.
@@ -127,14 +90,17 @@ export const dropping: ResultDelivery = {
  * @since 0.0.0
  */
 export const make = Effect.fnUntraced(function* (options: {
-  readonly delivery: DeliveryOptions
+  readonly handler: ResultHandler
+  /** Retries applied to a failing handler before giving up on the ACK. */
+  readonly handlerRetry: Schedule.Schedule<unknown>
+  /** How many results may wait for the handler. */
+  readonly bufferSize: number
   readonly dedup: Dedup
-  readonly acknowledge: (result: TighteningResult) => Effect.Effect<void, unknown>
+  readonly acknowledge: (result: TighteningResult) => Effect.Effect<void, ConnectionLost>
 }) {
-  const dedup = options.dedup
-  const queue = yield* Queue.bounded<TighteningResult>(options.delivery.bufferSize ?? defaultBufferSize)
+  const { dedup } = options
+  const queue = yield* Queue.bounded<TighteningResult>(options.bufferSize)
   const counters = yield* Ref.make<Counters>({ delivered: 0, duplicates: 0 })
-  const retry = options.delivery.handlerRetry ?? defaultHandlerRetry
 
   const acknowledge = (result: TighteningResult): Effect.Effect<void> =>
     pipe(
@@ -156,8 +122,8 @@ export const make = Effect.fnUntraced(function* (options: {
 
   const handle = (result: TighteningResult): Effect.Effect<void> =>
     pipe(
-      options.delivery.handler(result),
-      Effect.retry(retry),
+      options.handler(result),
+      Effect.retry(options.handlerRetry),
       Effect.matchCauseEffect({
         onFailure: (cause: Cause.Cause<unknown>) =>
           Effect.logError("the result handler failed, not acknowledging", cause).pipe(

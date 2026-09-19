@@ -46,7 +46,7 @@ const cursorOf = (request: NextRequest): EventId =>
  */
 const feed = (runId: RunId, after: EventId) =>
   Effect.gen(function* () {
-    const store = yield* WireStore
+    const store = yield* WireStore.WireStore
     const cursor = yield* Ref.make(after)
 
     const nextPage = pipe(

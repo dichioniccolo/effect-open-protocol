@@ -5,7 +5,8 @@ import { NodeServices } from "@effect/platform-node"
 import { Effect, FileSystem, Layer, Path } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import { EventId, EventQuery, layer as storeLayer, NewEvent, RunId, RunStart, WireStore } from "../src/WireStore.ts"
+import { EventId, EventQuery, NewEvent, RunId, RunStart } from "../src/Schema.ts"
+import * as WireStore from "../src/WireStore.ts"
 
 /** A fresh database file in a directory that disappears with the test. */
 const tempDatabase = Effect.gen(function* () {
@@ -16,7 +17,7 @@ const tempDatabase = Effect.gen(function* () {
   return path.join(directory, "traces.sqlite")
 })
 
-const storeAt = (filename: string) => storeLayer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)
+const storeAt = (filename: string) => WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)
 
 const start = new RunStart({
   side: "client",
@@ -45,7 +46,7 @@ describe("WireStore", () => {
     Effect.gen(function* () {
       const filename = yield* tempDatabase
       yield* Effect.gen(function* () {
-        const store = yield* WireStore
+        const store = yield* WireStore.WireStore
         const id = yield* store.startRun(start)
         yield* store.insertEvents([
           event(id, "2026-09-18T10:00:00.100Z", { kind: "chunk", mid: O.none() }),
@@ -108,7 +109,7 @@ describe("WireStore", () => {
     Effect.gen(function* () {
       const filename = yield* tempDatabase
       yield* Effect.gen(function* () {
-        const store = yield* WireStore
+        const store = yield* WireStore.WireStore
         const first = yield* store.startRun(start)
         const second = yield* store.startRun(new RunStart({ ...start, side: "controller" }))
         yield* store.insertEvents([])
@@ -122,8 +123,12 @@ describe("WireStore", () => {
   it.effect("keeps its data when the migrations run again", () =>
     Effect.gen(function* () {
       const filename = yield* tempDatabase
-      const id = yield* WireStore.use((store) => store.startRun(start)).pipe(Effect.provide(storeAt(filename)))
-      const runs = yield* WireStore.use((store) => store.listRuns).pipe(Effect.provide(storeAt(filename)))
+
+      const id = yield* WireStore.WireStore.use((store) => store.startRun(start)).pipe(
+        Effect.provide(storeAt(filename))
+      )
+
+      const runs = yield* WireStore.WireStore.use((store) => store.listRuns).pipe(Effect.provide(storeAt(filename)))
       expect(A.map(runs, (run) => run.id)).toEqual([id])
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   )

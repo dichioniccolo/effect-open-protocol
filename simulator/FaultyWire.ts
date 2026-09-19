@@ -77,11 +77,14 @@ export const sendWithFaults = (
       onSome: (config) => Faults.next(config)
     })
 
+    /** Empties what a coalesce fault held back, returning it. */
+    const takePending = Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }])
+
     /** Writes whatever a coalesce fault held back, in front of this frame. */
     const flush = Effect.fnUntraced(function* (frame: Uint8Array) {
-      const pending = yield* Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }])
+      const pending = yield* takePending
 
-      yield* Effect.ignore(connection.send(A.length(pending) === 0 ? frame : concat(A.append(pending, frame))))
+      yield* Effect.ignore(connection.send(concat(A.append(pending, frame))))
     })
 
     return yield* Match.value(fault).pipe(
@@ -98,7 +101,7 @@ export const sendWithFaults = (
       Match.tag(
         "SplitFrame",
         Effect.fnUntraced(function* (split) {
-          const pending = yield* Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }])
+          const pending = yield* takePending
 
           yield* Effect.forEach(
             A.appendAll(pending, Faults.split(bytes, split.pieces)),
@@ -119,7 +122,7 @@ export const sendWithFaults = (
           const flushLater = Effect.gen(function* () {
             yield* Effect.sleep(coalesceFlushDelay)
 
-            const held = yield* Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }])
+            const held = yield* takePending
 
             if (A.length(held) > 0) {
               yield* Effect.ignore(connection.send(concat(held)))

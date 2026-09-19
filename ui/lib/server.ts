@@ -8,7 +8,7 @@
  */
 import { BunServices } from "@effect/platform-bun"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { layer as storeLayer, WireStore } from "@wire-trace/store"
+import { WireStore } from "@wire-trace/store"
 import { Config, Effect, FileSystem, Layer, ManagedRuntime, Path } from "effect"
 
 const traceDb = Config.String("WIRE_TRACE_DB").pipe(Config.withDefault("../.wire-trace/traces.sqlite"))
@@ -20,7 +20,7 @@ const StoreLive = Layer.unwrap(
     const path = yield* Path.Path
     yield* fs.makeDirectory(path.dirname(filename), { recursive: true })
 
-    return storeLayer.pipe(Layer.provide(SqliteClient.layer({ filename })))
+    return WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })))
   })
 ).pipe(Layer.provide(BunServices.layer))
 
@@ -31,8 +31,8 @@ const StoreLive = Layer.unwrap(
  */
 declare global {
   // `var` is what puts a binding on `globalThis`; `let` and `const` would not.
-  var wireTraceRuntime: ManagedRuntime.ManagedRuntime<WireStore, unknown> | undefined
+  var wireTraceRuntime: ManagedRuntime.ManagedRuntime<WireStore.WireStore, unknown> | undefined
 }
 
-export const runtime: ManagedRuntime.ManagedRuntime<WireStore, unknown> = (globalThis.wireTraceRuntime ??=
+export const runtime: ManagedRuntime.ManagedRuntime<WireStore.WireStore, unknown> = (globalThis.wireTraceRuntime ??=
   ManagedRuntime.make(StoreLive))

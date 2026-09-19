@@ -16,7 +16,8 @@ import { Context, Effect, Fiber, FileSystem, Layer, Path, pipe, Queue, Ref, type
 import * as A from "effect/Array"
 import * as DateTime from "effect/DateTime"
 import * as O from "effect/Option"
-import { layer as storeLayer, NewEvent, type RunId, type RunSide, RunStart, WireStore } from "../store/src/WireStore.ts"
+import { NewEvent, type RunId, type RunSide, RunStart } from "../store/src/Schema.ts"
+import * as WireStore from "../store/src/WireStore.ts"
 import { type WireEvent, wireEventLine, type WireSink } from "../src/transport/WireTrace.ts"
 
 /**
@@ -61,8 +62,8 @@ const openDatabase = Effect.fnUntraced(function* (filename: string, start: RunSt
   const path = yield* Path.Path
   yield* fs.makeDirectory(path.dirname(filename), { recursive: true })
 
-  const context = yield* Layer.build(storeLayer.pipe(Layer.provide(SqliteClient.layer({ filename }))))
-  const store = Context.get(context, WireStore)
+  const context = yield* Layer.build(WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename }))))
+  const store = Context.get(context, WireStore.WireStore)
   const runId = yield* store.startRun(start)
   const queue = yield* Queue.unbounded<NewEvent>()
 
@@ -204,10 +205,10 @@ export const make = Effect.fnUntraced(function* (side: RunSide, config: Recordin
  * ```ts
  * import { Effect } from "effect"
  * import * as O from "effect/Option"
- * import { Recording } from "../cli/Recording.ts"
+ * import * as Recording from "../cli/Recording.ts"
  *
  * const program = Effect.gen(function* () {
- *   const recording = yield* Recording
+ *   const recording = yield* Recording.Recording
  *   return yield* recording.nextConnection
  * }).pipe(
  *   Effect.provide(

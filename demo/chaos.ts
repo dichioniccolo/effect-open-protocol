@@ -17,8 +17,8 @@ import { Duration, Effect, pipe, Predicate, Random, Ref, Schedule } from "effect
 import * as A from "effect/Array"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import * as Faults from "../simulator/Faults.ts"
-import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
-import { DevicePool, layer as devicePoolLayer } from "../src/pool/DevicePool.ts"
+import * as ControllerSimulator from "../simulator/ControllerSimulator.ts"
+import * as DevicePool from "../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
@@ -38,7 +38,7 @@ const line = (label: string, value: string | number): string => `${pad(label, 26
  * is still in flight.
  */
 const settle = (
-  simulators: ReadonlyArray<Simulator>,
+  simulators: ReadonlyArray<ControllerSimulator.Simulator>,
   tally: Ref.Ref<Tally>,
   within: Duration.Duration
 ): Effect.Effect<void> => {
@@ -76,13 +76,13 @@ const runChaos = Effect.fnUntraced(function* (options: {
       delivered: A.append(current.delivered, `${result.deviceId}:${result.tighteningId}`)
     }))
 
-  const pool = yield* DevicePool
+  const pool = yield* DevicePool.DevicePool
 
   const simulators = yield* Effect.forEach(A.range(1, options.devices), (index) =>
     Effect.gen(function* () {
       const endpoint = new Endpoint({ host: "chaos", port: 4500 + index })
 
-      const simulator = yield* makeSimulator({
+      const simulator = yield* ControllerSimulator.make({
         endpoint,
         controllerName: `Controller-${index}`,
         resultInterval: options.resultInterval,
@@ -115,13 +115,13 @@ const runChaos = Effect.fnUntraced(function* (options: {
 
   // Chaos over: stop the faults and the result generator, then let the pool
   // reconnect and recover before the invariant is judged.
-  yield* Effect.forEach(simulators, (simulator: Simulator) => simulator.quiesce, { discard: true })
+  yield* Effect.forEach(simulators, (simulator: ControllerSimulator.Simulator) => simulator.quiesce, { discard: true })
   yield* Effect.logInfo("chaos phase over, letting the run settle")
   yield* settle(simulators, tally, options.settleTimeout)
 
   const status = yield* pool.status
 
-  const totals = yield* Effect.forEach(simulators, (simulator: Simulator) =>
+  const totals = yield* Effect.forEach(simulators, (simulator: ControllerSimulator.Simulator) =>
     Effect.all({ generated: simulator.generated, abandoned: simulator.abandoned })
   )
 
@@ -199,7 +199,7 @@ const command = Command.make("chaos", { seed, duration, devices, faultRate, sett
     Random.withSeed(config.seed),
     Effect.flatMap((passed) => (passed ? Effect.void : Effect.die("the chaos run lost or duplicated a result"))),
     Effect.scoped,
-    Effect.provide(devicePoolLayer),
+    Effect.provide(DevicePool.layer),
     Effect.provide(layerSimulated)
   )
 ).pipe(Command.withDescription("Run N simulated controllers under random faults and check the invariant"))

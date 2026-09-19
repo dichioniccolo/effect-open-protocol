@@ -3,13 +3,13 @@ import { Duration, Effect, pipe, Predicate, Ref, Result, Schedule, Stream, Subsc
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as Str from "effect/String"
-import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
+import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
 import type { DeviceConnectionService } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
-import { DevicePool, layer as devicePoolLayer } from "../../src/pool/DevicePool.ts"
+import * as DevicePool from "../../src/pool/DevicePool.ts"
 
 const toolOne = DeviceId.make("tool-1")
 
@@ -22,7 +22,7 @@ const endpointTwo = new Endpoint({ host: "sim", port: 4546 })
 const missing = new Endpoint({ host: "sim", port: 9999 })
 
 const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(devicePoolLayer), Effect.provide(layerSimulated))
+  Effect.scoped(effect).pipe(Effect.provide(DevicePool.layer), Effect.provide(layerSimulated))
 
 const awaitReady = (connection: DeviceConnectionService): Effect.Effect<ConnectionState> =>
   pipe(
@@ -43,9 +43,9 @@ describe("DevicePool", () => {
   it.effect("runs several devices at once", () =>
     provided(
       Effect.gen(function* () {
-        yield* makeSimulator({ endpoint: endpointOne, controllerName: "one" })
-        yield* makeSimulator({ endpoint: endpointTwo, controllerName: "two" })
-        const pool = yield* DevicePool
+        yield* ControllerSimulator.make({ endpoint: endpointOne, controllerName: "one" })
+        yield* ControllerSimulator.make({ endpoint: endpointTwo, controllerName: "two" })
+        const pool = yield* DevicePool.DevicePool
 
         const first = yield* pool.add({ id: toolOne, endpoint: endpointOne })
         const second = yield* pool.add({ id: toolTwo, endpoint: endpointTwo })
@@ -62,8 +62,8 @@ describe("DevicePool", () => {
   it.effect("keeps a failing device from affecting the others", () =>
     provided(
       Effect.gen(function* () {
-        yield* makeSimulator({ endpoint: endpointOne })
-        const pool = yield* DevicePool
+        yield* ControllerSimulator.make({ endpoint: endpointOne })
+        const pool = yield* DevicePool.DevicePool
 
         const healthy = yield* pool.add({ id: toolOne, endpoint: endpointOne })
 
@@ -88,8 +88,8 @@ describe("DevicePool", () => {
   it.effect("refuses to add the same device twice", () =>
     provided(
       Effect.gen(function* () {
-        yield* makeSimulator({ endpoint: endpointOne })
-        const pool = yield* DevicePool
+        yield* ControllerSimulator.make({ endpoint: endpointOne })
+        const pool = yield* DevicePool.DevicePool
         yield* pool.add({ id: toolOne, endpoint: endpointOne })
 
         const again = yield* Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
@@ -102,8 +102,8 @@ describe("DevicePool", () => {
   it.effect("lets only one of two concurrent adds of the same device win", () =>
     provided(
       Effect.gen(function* () {
-        yield* makeSimulator({ endpoint: endpointOne })
-        const pool = yield* DevicePool
+        yield* ControllerSimulator.make({ endpoint: endpointOne })
+        const pool = yield* DevicePool.DevicePool
 
         const both = yield* Effect.all(
           [
@@ -123,8 +123,8 @@ describe("DevicePool", () => {
   it.effect("stops a device on remove and forgets it", () =>
     provided(
       Effect.gen(function* () {
-        yield* makeSimulator({ endpoint: endpointOne })
-        const pool = yield* DevicePool
+        yield* ControllerSimulator.make({ endpoint: endpointOne })
+        const pool = yield* DevicePool.DevicePool
         const connection = yield* pool.add({ id: toolOne, endpoint: endpointOne })
         yield* awaitReady(connection)
 
@@ -140,14 +140,14 @@ describe("DevicePool", () => {
   it.effect("delivers results per device", () =>
     provided(
       Effect.gen(function* () {
-        const first = yield* makeSimulator({ endpoint: endpointOne })
-        const second = yield* makeSimulator({ endpoint: endpointTwo })
+        const first = yield* ControllerSimulator.make({ endpoint: endpointOne })
+        const second = yield* ControllerSimulator.make({ endpoint: endpointTwo })
         const received = yield* Ref.make<ReadonlyArray<string>>([])
 
         const onResult = (result: TighteningResult) =>
           Ref.update(received, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
 
-        const pool = yield* DevicePool
+        const pool = yield* DevicePool.DevicePool
 
         const one = yield* pool.add({ id: toolOne, endpoint: endpointOne, onResult })
         const two = yield* pool.add({ id: toolTwo, endpoint: endpointTwo, onResult })

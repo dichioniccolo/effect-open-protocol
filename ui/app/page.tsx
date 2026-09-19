@@ -12,7 +12,7 @@ export default async function Page() {
   const { json, renderedAt } = await runtime.runPromise(
     Effect.all({
       json: Effect.flatMap(
-        WireStore.use((store) => store.listRuns),
+        WireStore.WireStore.use((store) => store.listRuns),
         S.encodeEffect(RunListJson)
       ),
       renderedAt: Effect.map(DateTime.now, DateTime.formatIso)

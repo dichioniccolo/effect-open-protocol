@@ -33,7 +33,7 @@ export interface DeviceConfig {
   readonly responseTimeout?: Duration.Duration | undefined
   /** Called for every result the controller pushes. Subscribing is skipped when absent. */
   readonly onResult?: ResultHandler | undefined
-  /** Retries applied to a failing handler before the acknowledgement is skipped. */
+  /** Retries applied to a failing handler before the acknowledgement is skipped. Defaults to three, jittered exponential. */
   readonly handlerRetry?: Schedule.Schedule<unknown> | undefined
   /** How many results may wait for a slow handler. Defaults to 16. */
   readonly resultBuffer?: number | undefined
@@ -77,6 +77,22 @@ export const defaultReconnect: Schedule.Schedule<Duration.Duration> = pipe(
 )
 
 /**
+ * Retries a failing handler three times with jittered exponential backoff.
+ *
+ * Handler failures are expensive here: a result the controller gives up on is
+ * gone for good, so a transient application error should not cost traceability
+ * data.
+ *
+ * @category constants
+ * @since 0.0.0
+ */
+export const defaultHandlerRetry: Schedule.Schedule<Duration.Duration> = pipe(
+  Schedule.exponential(Duration.millis(200)),
+  Schedule.jittered,
+  Schedule.upTo({ times: 3 })
+)
+
+/**
  * The knobs that have a default, and what they fall back to.
  *
  * Every default lives here once: `DeviceSettings` is derived from these keys,
@@ -92,7 +108,11 @@ export const defaultSettings = {
   stopTimeout: Duration.seconds(1),
   recoveryAttempts: 5,
   recoveryRetryDelay: Duration.millis(500),
-  recoveryTimeout: Duration.seconds(1)
+  recoveryTimeout: Duration.seconds(1),
+  handlerRetry: defaultHandlerRetry,
+  resultBuffer: 16,
+  dedupCapacity: 1000,
+  recoveryLimit: 100
 }
 
 /** The knobs `defaultSettings` answers for; `Pick` refuses a key `DeviceConfig` does not have. */
@@ -136,5 +156,9 @@ export const resolveSettings = (config: DeviceConfig): DeviceSettings => ({
   stopTimeout: config.stopTimeout ?? defaultSettings.stopTimeout,
   recoveryAttempts: config.recoveryAttempts ?? defaultSettings.recoveryAttempts,
   recoveryRetryDelay: config.recoveryRetryDelay ?? defaultSettings.recoveryRetryDelay,
-  recoveryTimeout: config.recoveryTimeout ?? defaultSettings.recoveryTimeout
+  recoveryTimeout: config.recoveryTimeout ?? defaultSettings.recoveryTimeout,
+  handlerRetry: config.handlerRetry ?? defaultSettings.handlerRetry,
+  resultBuffer: config.resultBuffer ?? defaultSettings.resultBuffer,
+  dedupCapacity: config.dedupCapacity ?? defaultSettings.dedupCapacity,
+  recoveryLimit: config.recoveryLimit ?? defaultSettings.recoveryLimit
 })

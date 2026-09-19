@@ -15,15 +15,6 @@
     "dist/**",
     "ui/.next/**",
     "ui/next-env.d.ts",
-    ".agent/**",
-    ".codex/**",
-    ".continue/**",
-    ".cursor/**",
-    ".gemini/**",
-    ".opencode/**",
-    ".pi/**",
-    ".roo/**",
-    ".windsurf/**",
     "tools/oxlint/anti-slop/**"
   ],
   "jsPlugins": [
