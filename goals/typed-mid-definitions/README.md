@@ -2,7 +2,7 @@
 
 ## Status
 
-Lifecycle: `active`
+Lifecycle: `completed-retained`
 
 Source: [`ops/manifest.json`](./ops/manifest.json)
 
@@ -34,12 +34,16 @@ follow the instructions in goals/typed-mid-definitions/GOAL.md
 
 ## Current Phase
 
-P5 PR to mergeable: in progress. P0–P4 are done; see PLAN.md §What Landed So
-Far.
+Closed. P0–P6 are complete; see PLAN.md §What Landed. Next: once PR 7
+merges, flip [`typed-subscriptions`](../typed-subscriptions/) to `active`.
 
 ## Latest Evidence
 
-Not started.
+- [PR 7](https://github.com/dichioniccolo/effect-open-protocol/pull/7):
+  `CLEAN`, mergeable, zero review threads.
+- Local matrix: `bun run check`, `test` (128), `lint`, `format:check`, `build`
+  all green.
+- Reflection: [`history/reflections/2026-09-19-claude.md`](./history/reflections/2026-09-19-claude.md).
 
 ## Notes
 
@@ -47,5 +51,5 @@ Not started.
   [`explorations/typed-mids`](../../explorations/typed-mids/), the first of two
   goals. The follow-on [`typed-subscriptions`](../typed-subscriptions/) stays
   `paused` until this one merges.
-- Record any appetite cut (the `extend` helper, then mapped reply revisions)
-  here and in the PR.
+- No appetite cut was needed: revisions extend by spreading layout entries,
+  and reply revisions are mapped per request revision.
