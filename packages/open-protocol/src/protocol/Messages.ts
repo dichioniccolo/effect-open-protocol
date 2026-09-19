@@ -442,8 +442,8 @@ export const LastResultMid = Mid.define({
           SchemaTransformation.transformEffect({
             decode: (body) =>
               Effect.gen(function* () {
-                const { deviceId } = yield* Mid.FrameContext
-                const result = yield* resultOf(deviceId, body)
+                const frame = yield* Mid.FrameContext
+                const result = yield* resultOf(frame.deviceId, body)
 
                 return new LastResult({ result })
               }),
@@ -530,8 +530,8 @@ export const OldResultMid = Mid.define({
           SchemaTransformation.transformEffect({
             decode: (body) =>
               Effect.gen(function* () {
-                const { deviceId } = yield* Mid.FrameContext
-                const result = yield* resultOf(deviceId, body)
+                const frame = yield* Mid.FrameContext
+                const result = yield* resultOf(frame.deviceId, body)
 
                 return new OldResult({ result })
               }),

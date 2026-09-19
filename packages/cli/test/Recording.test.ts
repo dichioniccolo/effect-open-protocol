@@ -70,8 +70,8 @@ describe("Recording", () => {
         const latency = latencyOf({ latency: 0, jitter: 0 })
 
         for (const _ of [1, 2]) {
-          const { duplex } = yield* fixture
-          const traced = yield* instrument(duplex, { source: "client", recording, latency })
+          const setup = yield* fixture
+          const traced = yield* instrument(setup.duplex, { source: "client", recording, latency })
           yield* traced.send(handshake)
           yield* Stream.runDrain(traced.incoming)
         }
@@ -79,28 +79,28 @@ describe("Recording", () => {
       // Closing the scope is Ctrl-C: whatever is still queued must land.
       yield* Scope.close(scope, Exit.void)
 
-      const { runs, events } = yield* readBack(filename)
-      expect(A.map(runs, (run) => [run.side, run.eventCount])).toEqual([["client", 8]])
+      const stored = yield* readBack(filename)
+      expect(A.map(stored.runs, (run) => [run.side, run.eventCount])).toEqual([["client", 8]])
       assertSome(
         O.map(
-          O.flatMap(A.head(runs), (run) => run.endedAt),
+          O.flatMap(A.head(stored.runs), (run) => run.endedAt),
           () => "ended"
         ),
         "ended"
       )
-      expect(A.map(events, (event) => [event.connection, event.direction, event.kind, O.getOrNull(event.mid)])).toEqual(
-        [
-          [1, "send", "chunk", null],
-          [1, "send", "frame", "0001"],
-          [1, "recv", "chunk", null],
-          [1, "recv", "frame", "0002"],
-          [2, "send", "chunk", null],
-          [2, "send", "frame", "0001"],
-          [2, "recv", "chunk", null],
-          [2, "recv", "frame", "0002"]
-        ]
-      )
-      expect(events[1]?.raw).toBe("00200001001         \\0")
+      expect(
+        A.map(stored.events, (event) => [event.connection, event.direction, event.kind, O.getOrNull(event.mid)])
+      ).toEqual([
+        [1, "send", "chunk", null],
+        [1, "send", "frame", "0001"],
+        [1, "recv", "chunk", null],
+        [1, "recv", "frame", "0002"],
+        [2, "send", "chunk", null],
+        [2, "send", "frame", "0001"],
+        [2, "recv", "chunk", null],
+        [2, "recv", "frame", "0002"]
+      ])
+      expect(stored.events[1]?.raw).toBe("00200001001         \\0")
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   )
 
@@ -115,16 +115,16 @@ describe("Recording", () => {
           yield* sql`drop table events`
         }).pipe(Effect.provide(SqliteClient.layer({ filename })))
 
-        const { duplex, written } = yield* fixture
+        const setup = yield* fixture
 
-        const traced = yield* instrument(duplex, {
+        const traced = yield* instrument(setup.duplex, {
           source: "client",
           recording,
           latency: latencyOf({ latency: 0, jitter: 0 })
         })
 
         yield* traced.send(handshake)
-        expect(yield* Ref.get(written)).toEqual([handshake])
+        expect(yield* Ref.get(setup.written)).toEqual([handshake])
       }).pipe(Effect.scoped)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   )
@@ -139,16 +139,16 @@ describe("Recording", () => {
       yield* fs.writeFileString(blocker, "")
       yield* Effect.gen(function* () {
         const recording = yield* Recording.make("client", runInto(path.join(blocker, "traces.sqlite")))
-        const { duplex, written } = yield* fixture
+        const setup = yield* fixture
 
-        const traced = yield* instrument(duplex, {
+        const traced = yield* instrument(setup.duplex, {
           source: "client",
           recording,
           latency: latencyOf({ latency: 0, jitter: 0 })
         })
 
         yield* traced.send(handshake)
-        expect(yield* Ref.get(written)).toEqual([handshake])
+        expect(yield* Ref.get(setup.written)).toEqual([handshake])
       }).pipe(Effect.scoped)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   )

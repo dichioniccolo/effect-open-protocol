@@ -54,10 +54,12 @@ describe("typed request", () => {
   it.effect("asks for an old result and gets it back as MID 0065 revision 1", () =>
     provided(
       Effect.gen(function* () {
-        const { simulator, connection } = yield* connected
-        const produced = yield* simulator.produce
+        const setup = yield* connected
+        const produced = yield* setup.simulator.produce
 
-        const reply = yield* connection.request(RequestOldResultMid.rev(1), { tighteningId: TighteningId.make(0) })
+        const reply = yield* setup.connection.request(RequestOldResultMid.rev(1), {
+          tighteningId: TighteningId.make(0)
+        })
 
         expectTypeOf(reply).toEqualTypeOf<OldResult>()
         expect(reply._tag).toBe("OldResult")
@@ -70,9 +72,9 @@ describe("typed request", () => {
   it.effect("resolves an accepted request with the 0005 acknowledgement", () =>
     provided(
       Effect.gen(function* () {
-        const { connection } = yield* connected
+        const setup = yield* connected
 
-        const accepted = yield* connection.request(SubscribeResultsMid.rev(1), {})
+        const accepted = yield* setup.connection.request(SubscribeResultsMid.rev(1), {})
 
         expectTypeOf(accepted).toEqualTypeOf<CommandAccepted>()
         expect(accepted.mid).toBe(60)
@@ -83,10 +85,10 @@ describe("typed request", () => {
   it.effect("fails with the 0004 the controller answers", () =>
     provided(
       Effect.gen(function* () {
-        const { connection } = yield* connected
+        const setup = yield* connected
 
         const outcome = yield* Effect.result(
-          connection.request(RequestOldResultMid.rev(1), { tighteningId: TighteningId.make(424242) })
+          setup.connection.request(RequestOldResultMid.rev(1), { tighteningId: TighteningId.make(424242) })
         )
 
         expect(outcome).toEqual(Result.fail(new CommandRejected({ mid: 64, code: 15 })))
@@ -97,9 +99,9 @@ describe("typed request", () => {
   it.effect("mirrors a keep-alive", () =>
     provided(
       Effect.gen(function* () {
-        const { connection } = yield* connected
+        const setup = yield* connected
 
-        expect(yield* connection.request(KeepAliveMid.rev(1), {})).toEqual(new KeepAlive())
+        expect(yield* setup.connection.request(KeepAliveMid.rev(1), {})).toEqual(new KeepAlive())
       })
     )
   )
