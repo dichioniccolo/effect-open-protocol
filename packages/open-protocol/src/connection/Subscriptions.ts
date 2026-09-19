@@ -11,17 +11,16 @@
  *
  * @since 0.0.0
  */
-import { type Cause, Effect, Queue, Ref, type Scope, Semaphore, Stream } from "effect"
+import { type Cause, Data, Effect, Match, Queue, Ref, type Scope, Semaphore, Stream } from "effect"
 import * as O from "effect/Option"
 import * as R from "effect/Record"
 import type { Incoming } from "../protocol/Messages.ts"
 import * as Mid from "../protocol/Mid.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
-import { ConnectionLost } from "../transport/Transport.ts"
+import type { ConnectionLost } from "../transport/Transport.ts"
 import { AlreadySubscribed, type CommandRejected } from "./ConnectionError.ts"
-import { subscribeTo } from "./Handshake.ts"
-import { lostOn } from "./RequestReply.ts"
-import { sendPayload, type Session } from "./Session.ts"
+import { lostOn, orLost } from "./RequestReply.ts"
+import type { Session } from "./Session.ts"
 
 /**
  * One pushed value and the acknowledgement that goes with it.
@@ -50,6 +49,25 @@ export interface Pushed<A> {
  */
 export type SubscribeError = CommandRejected | AlreadySubscribed
 
+/**
+ * Sends a control MID bare on whichever session is open, failing when none is.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export type SendBare = (revision: Mid.AnyRevision) => Effect.Effect<void, ConnectionLost>
+
+/**
+ * What acknowledging a value of `subscription` does: its ack MID sent bare,
+ * or nothing when it has none. Also what a result recovered with MID 0064 is
+ * acknowledged with: an ack that names no value is the same for every one.
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
+export const ackOf = (send: SendBare, subscription: Mid.AnySubscription): Effect.Effect<void, ConnectionLost> =>
+  O.match(subscription.ack, { onNone: () => Effect.void, onSome: send })
+
 /** One active subscription, its value type kept inside the closures that use it. */
 interface Entry {
   readonly subscription: Mid.AnySubscription
@@ -60,6 +78,31 @@ interface Entry {
   /** Drops what is buffered and lets go of a read loop waiting to push. */
   readonly shutdown: Effect.Effect<void>
 }
+
+/** Everything the registry knows, changed in one step so no update is ever half applied. */
+type State = Data.TaggedEnum<{
+  Open: {
+    readonly entries: R.ReadonlyRecord<string, Entry>
+    /** The session every entry has been sent on, once it is restored. */
+    readonly live: O.Option<Session>
+  }
+  Closed: {}
+}>
+
+const State = Data.taggedEnum<State>()
+
+type Open = Data.TaggedEnum.Value<State, "Open">
+
+/** What registering an entry found. */
+type Added = Data.TaggedEnum<{
+  Registered: { readonly live: O.Option<Session> }
+  Taken: {}
+  Closed: {}
+}>
+
+const Added = Data.taggedEnum<Added>()
+
+const decided = (added: Added, next: State): readonly [Added, State] => [added, next]
 
 /**
  * The subscription registry of one connection.
@@ -80,8 +123,6 @@ export interface Subscriptions {
   readonly subscribe: <Data extends Mid.AnyRevision>(
     subscription: Mid.Subscription<Data>
   ) => Stream.Stream<Pushed<Mid.Type<Data>>, SubscribeError>
-  /** What `ack` does for the values of `subscription`. */
-  readonly acknowledge: (subscription: Mid.AnySubscription) => Effect.Effect<void, ConnectionLost>
   /** Hands an incoming frame to the subscription of its MID; `true` if one took it. */
   readonly offer: (incoming: Incoming) => Effect.Effect<boolean>
   /** Sends every active subscription on a session that just opened; any failure costs the session. */
@@ -93,65 +134,42 @@ export interface Subscriptions {
 }
 
 /**
- * Builds the registry of one connection.
- *
- * `session` is the connection's open session, if any: acknowledgements go to
- * whichever session is open when they run, as they always have.
- *
- * **Example** (A registry over a connection's session)
- *
- * ```ts
- * import { Effect, Ref } from "effect"
- * import * as O from "effect/Option"
- * import { DeviceId, type Session, Subscriptions } from "effect-open-protocol"
- *
- * const registry = Effect.gen(function* () {
- *   const session = yield* Ref.make(O.none<Session>())
- *   return yield* Subscriptions.make({ deviceId: DeviceId.make("line-1-tool-3"), session, bufferSize: 16 })
- * })
- * ```
+ * Builds the registry of one connection. `send` is how acknowledgements reach
+ * the controller: bare, on whichever session is open when they run.
  *
  * @category constructors
  * @since 0.0.0
  */
 export const make = Effect.fnUntraced(function* (options: {
   readonly deviceId: DeviceId
-  readonly session: Ref.Ref<O.Option<Session>>
+  readonly send: SendBare
   /** How many pushed values may wait for their consumer before the read loop waits too. */
   readonly bufferSize: number
 }) {
-  const entries = yield* Ref.make<R.ReadonlyRecord<string, Entry>>({})
-  const live = yield* Ref.make(O.none<Session>())
-  const closed = yield* Ref.make(false)
-  // Subscribing, unsubscribing and restoring take turns, so a subscription
-  // added while a session is being restored is neither sent twice nor missed.
+  const state = yield* Ref.make<State>(State.Open({ entries: {}, live: O.none() }))
+  // Only the sends take turns, so a subscription added while a session is
+  // being restored is neither sent twice nor missed.
   const gate = yield* Semaphore.make(1)
 
   const annotated = <A, E>(effect: Effect.Effect<A, E>, mid: number) =>
     Effect.annotateLogs(effect, { deviceId: options.deviceId, mid })
 
-  const acknowledge = (subscription: Mid.AnySubscription): Effect.Effect<void, ConnectionLost> =>
-    O.match(subscription.ack, {
-      onNone: () => Effect.void,
-      onSome: (revision) =>
-        Effect.gen(function* () {
-          const open = yield* Ref.get(options.session)
+  /** The open state, or nothing once closed. */
+  const opened: Effect.Effect<O.Option<Open>> = Effect.map(Ref.get(state), O.liftPredicate(State.$is("Open")))
 
-          if (O.isNone(open)) {
-            return yield* new ConnectionLost({ reason: "no session to acknowledge on" })
-          }
+  const whileOpen = (f: (registry: Open) => Open): Effect.Effect<void> =>
+    Ref.update(state, (current) => (State.$is("Open")(current) ? f(current) : current))
 
-          // An ack carries no field (the definition checks it), so failing to
-          // encode it would be a bug here.
-          yield* Effect.catchTag(sendPayload(open.value.duplex, revision, {}), "PayloadEncodeError", Effect.die)
-        })
-    })
+  const without =
+    (key: string) =>
+    (registry: Open): Open =>
+      State.Open({ ...registry, entries: R.remove(registry.entries, key) })
 
   const entryOf = <Data extends Mid.AnyRevision>(
     subscription: Mid.Subscription<Data>,
     queue: Queue.Queue<Pushed<Mid.Type<Data>>, Cause.Done>
   ): Entry => {
-    const ack = acknowledge(subscription)
+    const ack = ackOf(options.send, subscription)
 
     return {
       subscription,
@@ -172,27 +190,40 @@ export const make = Effect.fnUntraced(function* (options: {
     Effect.gen(function* () {
       const mid = entry.subscription.data.mid
 
-      if (R.has(yield* Ref.get(entries), key)) {
-        return yield* new AlreadySubscribed({ mid })
-      }
-
-      if (yield* Ref.get(closed)) {
-        return yield* entry.end
-      }
-
-      yield* Ref.update(entries, R.set(key, entry))
-      const session = yield* Ref.get(live)
-
-      if (O.isNone(session)) {
-        return
-      }
+      // Checked and registered in one step, so `close` can never slip in
+      // between and leave a stream nobody will end.
+      const added = yield* Ref.modify(state, (current) =>
+        State.$match(current, {
+          Closed: () => decided(Added.Closed(), current),
+          Open: (registry) =>
+            R.has(registry.entries, key)
+              ? decided(Added.Taken(), current)
+              : decided(
+                  Added.Registered({ live: registry.live }),
+                  State.Open({ ...registry, entries: R.set(registry.entries, key, entry) })
+                )
+        })
+      )
 
       // A refusal is final, so the subscription is not kept; a session that
       // fails to answer is on its way out, and the next handshake sends it.
-      yield* Effect.catchTags(subscribeTo(session.value, entry.subscription), {
-        CommandRejected: (rejected) => Effect.andThen(Ref.update(entries, R.remove(key)), Effect.fail(rejected)),
-        ConnectionLost: (lost) =>
-          annotated(Effect.logWarning("could not subscribe yet, retrying at the next handshake", lost.reason), mid)
+      const send = (session: Session): Effect.Effect<void, CommandRejected> =>
+        session.replies.request(entry.subscription.subscribe, {}).pipe(
+          Effect.catchTags({
+            ...lostOn("subscribe"),
+            CommandRejected: (rejected: CommandRejected) =>
+              Effect.andThen(whileOpen(without(key)), Effect.fail(rejected))
+          }),
+          Effect.catchTag("ConnectionLost", (lost) =>
+            annotated(Effect.logWarning("could not subscribe yet, retrying at the next handshake", lost.reason), mid)
+          ),
+          Effect.asVoid
+        )
+
+      yield* Added.$match(added, {
+        Closed: () => entry.end,
+        Taken: () => Effect.fail(new AlreadySubscribed({ mid })),
+        Registered: (registered) => O.match(registered.live, { onNone: () => Effect.void, onSome: send })
       })
     })
 
@@ -200,23 +231,20 @@ export const make = Effect.fnUntraced(function* (options: {
     Effect.gen(function* () {
       // Out of the registry first, and without waiting for the gate: a read
       // loop blocked on a full queue nobody drains any more must be let go.
-      yield* Ref.update(entries, R.remove(key))
+      yield* whileOpen(without(key))
       yield* entry.shutdown
 
       yield* gate.withPermits(1)(
         Effect.gen(function* () {
-          const session = yield* Ref.get(live)
+          const live = O.flatMap(yield* opened, (registry) => registry.live)
 
-          if (O.isNone(session) || O.isNone(entry.subscription.unsubscribe)) {
+          if (O.isNone(live) || O.isNone(entry.subscription.unsubscribe)) {
             return
           }
 
           // Best effort: the consumer is gone either way.
           yield* Effect.catchCause(
-            Effect.catchTags(
-              session.value.replies.request(entry.subscription.unsubscribe.value, {}),
-              lostOn("unsubscribe")
-            ),
+            orLost("unsubscribe")(live.value.replies.request(entry.subscription.unsubscribe.value, {})),
             (cause) => annotated(Effect.logWarning("could not unsubscribe", cause), entry.subscription.data.mid)
           )
         })
@@ -238,7 +266,7 @@ export const make = Effect.fnUntraced(function* (options: {
 
   const offer = (incoming: Incoming): Effect.Effect<boolean> =>
     Effect.gen(function* () {
-      const entry = R.get(yield* Ref.get(entries), `${incoming.header.mid}`)
+      const entry = O.flatMap(yield* opened, (registry) => R.get(registry.entries, `${incoming.header.mid}`))
 
       return O.isSome(entry) ? yield* entry.value.push(incoming) : false
     })
@@ -246,38 +274,36 @@ export const make = Effect.fnUntraced(function* (options: {
   const restore = (session: Session): Effect.Effect<void, ConnectionLost> =>
     gate.withPermits(1)(
       Effect.gen(function* () {
-        const active = R.values(yield* Ref.get(entries))
+        const active = O.match(yield* opened, { onNone: () => [], onSome: (registry) => R.values(registry.entries) })
 
         // Every subscription or none: a session missing one of them would
-        // silently drop what the consumer is waiting for.
+        // silently drop what the consumer is waiting for. A refusal here costs
+        // the session, as a refused MID 0060 always has.
         yield* Effect.forEach(
           active,
-          (entry) =>
-            Effect.catchTag(
-              subscribeTo(session, entry.subscription),
-              "CommandRejected",
-              lostOn("subscribe").CommandRejected
-            ),
+          (entry) => orLost("subscribe")(session.replies.request(entry.subscription.subscribe, {})),
           { discard: true }
         )
 
-        yield* Ref.set(live, O.some(session))
+        yield* whileOpen((registry) => State.Open({ ...registry, live: O.some(session) }))
       })
     )
 
   const close = Effect.gen(function* () {
-    yield* Ref.set(closed, true)
-    const active = yield* Ref.getAndSet(entries, {})
-    yield* Effect.forEach(R.values(active), (entry) => entry.end, { discard: true })
+    const previous = yield* Ref.getAndSet(state, State.Closed())
+
+    yield* Match.valueTags(previous, {
+      Closed: () => Effect.void,
+      Open: (registry) => Effect.forEach(R.values(registry.entries), (entry) => entry.end, { discard: true })
+    })
   })
 
   return {
     open,
     subscribe: (subscription) => Stream.unwrap(open(subscription)),
-    acknowledge,
     offer,
     restore,
-    detach: Ref.set(live, O.none()),
+    detach: whileOpen((registry) => State.Open({ ...registry, live: O.none() })),
     close
   } satisfies Subscriptions
 })

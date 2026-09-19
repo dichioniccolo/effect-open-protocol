@@ -81,8 +81,8 @@ const protocolLost = (tag: string): Effect.Effect<never, ConnectionLost> =>
 
 /**
  * Reads frames until the controller goes away. Each frame is offered to the
- * request in flight first, then to `subscribed`; a message neither takes goes
- * to `onUnsolicited`.
+ * request in flight first, then to `routes.subscribed`; a message neither
+ * takes goes to `routes.unsolicited`.
  *
  * It never succeeds: a stream that ends means the peer closed the connection.
  *
@@ -91,18 +91,21 @@ const protocolLost = (tag: string): Effect.Effect<never, ConnectionLost> =>
  */
 export const readLoop = (
   session: Session,
-  subscribed: (incoming: Incoming) => Effect.Effect<boolean>,
-  onUnsolicited: (message: Message) => Effect.Effect<void>
+  routes: {
+    /** Takes a frame for an active subscription; `true` if one did. */
+    readonly subscribed: (incoming: Incoming) => Effect.Effect<boolean>
+    readonly unsolicited: (message: Message) => Effect.Effect<void>
+  }
 ): Effect.Effect<never, ConnectionLost> =>
   Effect.gen(function* () {
     const onFrame = Effect.fnUntraced(function* (frame: string) {
       const incoming = yield* decodeFrame(frame)
       // A pushed frame can arrive while a request waits for its reply, so the
       // reply is recognised first and everything else falls through.
-      const consumed = (yield* session.replies.offer(incoming)) || (yield* subscribed(incoming))
+      const consumed = (yield* session.replies.offer(incoming)) || (yield* routes.subscribed(incoming))
 
       if (!consumed) {
-        yield* onUnsolicited(incoming.message)
+        yield* routes.unsolicited(incoming.message)
       }
     })
 

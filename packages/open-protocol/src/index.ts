@@ -92,11 +92,6 @@ export * as RequestReply from "./connection/RequestReply.ts"
 /**
  * @since 0.0.0
  */
-export * as Subscriptions from "./connection/Subscriptions.ts"
-
-/**
- * @since 0.0.0
- */
 export * as Dedup from "./results/Dedup.ts"
 
 /**

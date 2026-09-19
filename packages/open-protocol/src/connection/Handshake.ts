@@ -9,10 +9,9 @@
  * @since 0.0.0
  */
 import { Effect } from "effect"
-import { CommunicationStartMid, SubscribeResultsMid } from "../protocol/Messages.ts"
-import type * as Mid from "../protocol/Mid.ts"
+import { CommunicationStartMid, LastResults } from "../protocol/Messages.ts"
 import type { ConnectionLost } from "../transport/Transport.ts"
-import { type CommandRejected, HandshakeRejected } from "./ConnectionError.ts"
+import { HandshakeRejected } from "./ConnectionError.ts"
 import { lostOn, orLost } from "./RequestReply.ts"
 import type { Session } from "./Session.ts"
 
@@ -46,36 +45,4 @@ export const startCommunication = (session: Session): Effect.Effect<string, Conn
  * @since 0.0.0
  */
 export const subscribeResults = (session: Session): Effect.Effect<void, ConnectionLost> =>
-  Effect.asVoid(orLost("subscribe")(session.replies.request(SubscribeResultsMid.rev(1), {})))
-
-/**
- * Sends a subscription's subscribe MID and waits for the controller to accept
- * it.
- *
- * **Details**
- *
- * A refusal is the controller's answer and stays a `CommandRejected`, so the
- * caller decides what it means; anything else (silence, a garbled reply) is a
- * session that cannot go on.
- *
- * **Example** (Subscribing to results on a session)
- *
- * ```ts
- * import { LastResults, subscribeTo, type Session } from "effect-open-protocol"
- *
- * const subscribed = (session: Session) => subscribeTo(session, LastResults.rev(1))
- * ```
- *
- * @category handshake
- * @since 0.0.0
- */
-export const subscribeTo = (
-  session: Session,
-  subscription: Mid.AnySubscription
-): Effect.Effect<void, ConnectionLost | CommandRejected> =>
-  Effect.asVoid(
-    Effect.catchTags(session.replies.request(subscription.subscribe, {}), {
-      ...lostOn("subscribe"),
-      CommandRejected: (rejected: CommandRejected) => Effect.fail(rejected)
-    })
-  )
+  Effect.asVoid(orLost("subscribe")(session.replies.request(LastResults.rev(1).subscribe, {})))
