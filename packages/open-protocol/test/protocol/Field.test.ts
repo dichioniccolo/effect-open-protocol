@@ -33,6 +33,11 @@ describe("Field", () => {
     }>()
   })
 
+  it("accepts only fields, which carry their width", () => {
+    // @ts-expect-error a plain Schema has no width, so it cannot be placed on the wire
+    expect(() => Field.layout([["name", S.String]])).toBeDefined()
+  })
+
   it.effect("round trips a parameter-id layout", () =>
     Effect.gen(function* () {
       const wire = "010001" + "0201" + "03" + "Airbag1".padEnd(25, " ")
@@ -85,7 +90,10 @@ describe("Field", () => {
 
   it.effect("rejects a status code outside the literals", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(S.decodeEffect(Field.enumerated({ width: 1, literals: TighteningStatus }))("7"))
+      const exit = yield* Effect.exit(
+        S.decodeEffect(Field.enumerated({ width: 1, literals: TighteningStatus }).codec)("7")
+      )
+
       expect(Exit.isFailure(exit)).toBe(true)
     })
   )

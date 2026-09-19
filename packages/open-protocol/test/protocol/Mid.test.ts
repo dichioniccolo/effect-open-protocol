@@ -34,19 +34,15 @@ const Job = Mid.define({
   revisions: { 1: Mid.as(JobSelected, Field.layout([["jobId", Field.digits({ width: 4 })]])) }
 })
 
-const SelectParameterSet = Mid.request({
-  tag: "SelectParameterSet",
-  mid: 18,
-  revisions: { 1: Field.layout(selected) },
-  replies: { 1: Mid.accepted }
-})
+const SelectParameterSet = Mid.request(
+  Mid.define({ tag: "SelectParameterSet", mid: 18, revisions: { 1: Field.layout(selected) } }),
+  { 1: Mid.accepted }
+)
 
-const AskParameterSet = Mid.request({
-  tag: "AskParameterSet",
-  mid: 14,
-  revisions: { 1: Field.layout([]), 2: Field.layout([]) },
-  replies: { 1: ParameterSetSelected.rev(1), 2: ParameterSetSelected.rev(2) }
-})
+const AskParameterSet = Mid.request(
+  Mid.define({ tag: "AskParameterSet", mid: 14, revisions: { 1: Field.layout([]), 2: Field.layout([]) } }),
+  { 1: ParameterSetSelected.rev(1), 2: ParameterSetSelected.rev(2) }
+)
 
 const dataOf = (frame: string): string => Str.substring(headerLength, Str.length(frame) - 1)(frame)
 

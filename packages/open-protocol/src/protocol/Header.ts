@@ -158,3 +158,32 @@ export const encodeHeader = (header: Header): string =>
   "00" +
   "0" +
   "0"
+
+/**
+ * Wraps a data field in a complete frame: a reliable-mode header for `mid` at
+ * `revision`, its length computed from `data`, and the NUL terminator.
+ *
+ * **Example** (A keep-alive frame)
+ *
+ * ```ts
+ * import { encodeFrame } from "effect-open-protocol"
+ *
+ * console.log(encodeFrame(9999, 1, "")) // "00209999001000000000\u0000"
+ * ```
+ *
+ * @category encoding
+ * @since 0.0.0
+ */
+export const encodeFrame = (mid: number, revision: number, data: string): string =>
+  encodeHeader(
+    new Header({
+      length: headerLength + Str.length(data),
+      mid,
+      revision,
+      noAck: false,
+      stationId: 1,
+      spindleId: 1
+    })
+  ) +
+  data +
+  terminator

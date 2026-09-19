@@ -7,7 +7,7 @@ import * as GapRecovery from "../../src/connection/GapRecovery.ts"
 import { resolveSettings } from "../../src/connection/DeviceSettings.ts"
 import * as RequestReply from "../../src/connection/RequestReply.ts"
 import type { Session } from "../../src/connection/Session.ts"
-import { decodeMessage, OldResult } from "../../src/protocol/Messages.ts"
+import { decodeFrame, decodeMessage, encodeMessage, OldResult } from "../../src/protocol/Messages.ts"
 import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 import * as Dedup from "../../src/results/Dedup.ts"
@@ -62,7 +62,11 @@ const fixture = Effect.fnUntraced(function* () {
 
       const replies = yield* Ref.get(slot)
 
-      yield* O.match(replies, { onNone: () => Effect.void, onSome: (current) => Effect.asVoid(current.offer(reply)) })
+      yield* O.match(replies, {
+        onNone: () => Effect.void,
+        onSome: (current) =>
+          Effect.asVoid(Effect.flatMap(Effect.orDie(decodeFrame(encodeMessage(reply), deviceId)), current.offer))
+      })
     })
 
   const replies = yield* RequestReply.make({ send: answer, responseTimeout: Duration.seconds(1), deviceId })

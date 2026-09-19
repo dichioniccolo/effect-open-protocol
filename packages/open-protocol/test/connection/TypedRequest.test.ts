@@ -6,7 +6,6 @@ import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { CommandRejected } from "../../src/connection/ConnectionError.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
 import * as DeviceConnection from "../../src/connection/DeviceConnection.ts"
-import type { ReplyOf } from "../../src/connection/RequestReply.ts"
 import {
   AcknowledgeResultMid,
   type CommandAccepted,
@@ -18,6 +17,7 @@ import {
   RequestOldResultMid,
   SubscribeResultsMid
 } from "../../src/protocol/Messages.ts"
+import type { ReplyOf } from "../../src/protocol/Mid.ts"
 import { DeviceId, TighteningId } from "../../src/protocol/TighteningResult.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 

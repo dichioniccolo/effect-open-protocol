@@ -10,16 +10,14 @@
  */
 import { Effect } from "effect"
 import { CommunicationStartMid, SubscribeResultsMid } from "../protocol/Messages.ts"
-import { ConnectionLost } from "../transport/Transport.ts"
+import type { ConnectionLost } from "../transport/Transport.ts"
 import { HandshakeRejected } from "./ConnectionError.ts"
+import { lostOn, orLost } from "./RequestReply.ts"
 import type { Session } from "./Session.ts"
-
-const lost = (step: string, tag: string): Effect.Effect<never, ConnectionLost> =>
-  Effect.fail(new ConnectionLost({ reason: `${step} failed: ${tag}` }))
 
 /**
  * Opens the session with MID 0001 and returns the name the controller
- * answered with, or the empty string when it named itself in no reply of ours.
+ * answered with.
  *
  * A refusal is the controller's own verdict (code 96: another client already
  * holds it), so it stays a `HandshakeRejected`; silence is a dead socket.
@@ -30,11 +28,8 @@ const lost = (step: string, tag: string): Effect.Effect<never, ConnectionLost> =
 export const startCommunication = (session: Session): Effect.Effect<string, ConnectionLost | HandshakeRejected> =>
   Effect.gen(function* () {
     const accepted = yield* Effect.catchTags(session.replies.request(CommunicationStartMid.rev(1), {}), {
-      CommandRejected: (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code })),
-      RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })),
-      UnexpectedRevision: (error) => lost("handshake", error._tag),
-      PayloadDecodeError: (error) => lost("handshake", error._tag),
-      PayloadEncodeError: (error) => lost("handshake", error._tag)
+      ...lostOn("handshake"),
+      CommandRejected: (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))
     })
 
     return accepted.controllerName
@@ -50,13 +45,4 @@ export const startCommunication = (session: Session): Effect.Effect<string, Conn
  * @since 0.0.0
  */
 export const subscribeResults = (session: Session): Effect.Effect<void, ConnectionLost> =>
-  Effect.gen(function* () {
-    yield* Effect.catchTags(session.replies.request(SubscribeResultsMid.rev(1), {}), {
-      CommandRejected: (rejected) =>
-        Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` })),
-      RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })),
-      UnexpectedRevision: (error) => lost("subscribe", error._tag),
-      PayloadDecodeError: (error) => lost("subscribe", error._tag),
-      PayloadEncodeError: (error) => lost("subscribe", error._tag)
-    })
-  })
+  Effect.asVoid(orLost("subscribe")(session.replies.request(SubscribeResultsMid.rev(1), {})))
