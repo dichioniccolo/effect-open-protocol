@@ -34,8 +34,9 @@ follow the instructions in goals/typed-mid-definitions/GOAL.md
 
 ## Current Phase
 
-P0 Field codec: not started. Next action: build `Field.*` over `Ascii.ts` and
-prove it against the 0061/0065 property round trips.
+P1 First slice (0064 → 0065): in progress. P0 landed: `src/protocol/Field.ts`
+(fields as Schemas, `Field.layout`), 0061/0065 bodies rebuilt on it, and the
+private slot codec deleted.
 
 ## Latest Evidence
 
