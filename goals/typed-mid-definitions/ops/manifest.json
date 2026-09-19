@@ -69,12 +69,12 @@
     {
       "id": "P4",
       "name": "Example MID and docs",
-      "status": "in-progress"
+      "status": "complete"
     },
     {
       "id": "P5",
       "name": "PR to mergeable",
-      "status": "pending"
+      "status": "in-progress"
     },
     {
       "id": "P6",

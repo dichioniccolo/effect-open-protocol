@@ -262,7 +262,7 @@ connection code.
 
 | Module | Role |
 | --- | --- |
-| `src/protocol` | Header, framer, message schemas, tightening results |
+| `src/protocol` | Header, framer, `Field` (fixed-width fields as Schemas), `Mid` (message definitions), the built-in messages, tightening results |
 | `src/transport` | The `Transport` service, TCP and in-memory implementations |
 | `src/connection` | State machine, session lifecycle, request/reply correlation |
 | `src/results` | Duplicate detection, delivery, gap recovery |
@@ -302,13 +302,91 @@ identifiers, and fields for link-level sequencing and message linking.
 | 9999 | both | Keep-alive, mirrored by the controller |
 
 Anything else decodes into an `UnknownMessage`, which is logged and dropped: an
-unexpected MID never breaks a connection. A malformed frame is a different
-matter. It fails the session, and the reconnect gives us a clean stream,
-because TCP offers no boundary to resynchronise on.
+unexpected MID never breaks a connection. The same goes for a revision the
+library does not define and for a data field that does not decode; both are
+kept as `UnknownMessage` with a warning that names the MID, the revision and
+the reason. A malformed frame is a different matter. A bad length, a missing
+terminator or an unreadable header fails the session, and the reconnect gives
+us a clean stream, because TCP offers no boundary to resynchronise on.
 
 Link-level sequence numbering (MID 9997/9998), message linking and binary
 payloads are unsupported on purpose, and rejected with a typed error rather
 than misparsed.
+
+## Defining your own MIDs
+
+The built-in messages above are defined with the same two modules any user
+gets: `Field` describes a data field, `Mid` turns layouts into a message
+definition. Each revision is its own Schema, so each has its own exact type,
+and a request says in its definition which reply every revision expects.
+
+```ts
+import { Effect } from "effect"
+import { DeviceConnection, Field, Mid } from "effect-open-protocol"
+
+// Illustrative MIDs: 9100 and 9101 and their layouts are made up for this
+// example, not taken from the specification.
+const statusFields = [
+  ["toolId", Field.digits({ id: "01", width: 3 })],
+  ["temperature", Field.digits({ id: "02", width: 4 })]
+] as const
+
+const ToolStatus = Mid.define({
+  tag: "ToolStatus",
+  mid: 9101,
+  revisions: {
+    1: Field.layout(statusFields),
+    // Revision 2 appends a field: spread the previous layout's entries.
+    2: Field.layout([...statusFields, ["motorHours", Field.digits({ id: "03", width: 6 })]])
+  }
+})
+
+const ToolStatusRequest = Mid.request({
+  tag: "ToolStatusRequest",
+  mid: 9100,
+  revisions: {
+    1: Field.layout([["toolId", Field.digits({ width: 3 })]]),
+    2: Field.layout([["toolId", Field.digits({ width: 3 })]])
+  },
+  replies: { 1: ToolStatus.rev(1), 2: ToolStatus.rev(2) }
+})
+
+const program = Effect.gen(function* () {
+  const connection = yield* DeviceConnection.DeviceConnection
+  // `reading.motorHours` is a number here; ask for revision 1 and it does not exist.
+  const reading = yield* connection.request(ToolStatusRequest.rev(2), { toolId: 7 })
+})
+```
+
+- **Fields.** `Field.digits`, `text`, `raw`, `enumerated` and `filler` each
+  return a Schema between exactly `width` characters and a typed value, with
+  an optional two-digit parameter id. `Field.layout` takes them as an ordered
+  array, so wire order never depends on object key order. A bare `filler` is
+  written on the wire and never shows up in the value. `digits` and `raw`
+  take a `schema` to decode into a branded or refined type.
+- **Revisions.** A revision is a `Field.layout` (the value is a plain tagged
+  struct), `Mid.as(Class, layout)` (the value is an instance of your class),
+  or `Mid.custom(codec)` for anything shaped differently from the wire. `rev(n)`
+  only accepts a revision the definition declares.
+- **Replies.** Each request revision names its reply: a revision of another
+  definition, `Mid.accepted` (the generic 0005, with 0004 as a rejection), or
+  `Mid.noReply`. `request` returns exactly that type.
+- **Errors.** Besides `NotReady`, `RequestTimeout` and `ConnectionLost`, a
+  request can fail with:
+  - `CommandRejected`: the controller answered 0004.
+  - `UnexpectedRevision`: the reply came at a revision the request did not
+    declare. It fails straight away instead of waiting for the timeout.
+  - `PayloadDecodeError`: the reply's data field did not decode.
+  - `PayloadEncodeError`: the payload does not fit its fields. Nothing is
+    sent.
+- **Limits.**
+  - A custom MID the controller pushes on its own arrives as `UnknownMessage`
+    for now.
+  - The simulator answers any MID it does not model with 0004: code 99 for an
+    unknown MID, code 97 for an unsupported revision.
+
+The full example runs as a test, `packages/open-protocol/test/example/ToolStatus.test.ts`,
+against a scripted controller on the in-memory transport.
 
 ## Delivery semantics
 
@@ -448,8 +526,9 @@ that names the MID it refers to, and the specification allows only one
 outstanding message.
 
 **Decision.** A semaphore of one around send-and-await; replies are matched
-against the pending request's expectation. Unmatched messages are treated as
-unsolicited traffic.
+against the reply the request's definition declares (0005/0004 by the MID they
+name, a dedicated reply by its MID and revision). Unmatched messages are
+treated as unsolicited traffic.
 
 **Alternatives.** Matching purely on MID with several requests in flight; the
 protocol does not give enough information to do this safely.
@@ -508,10 +587,12 @@ logged and the state is observable.
   again. Idempotent handlers cover this.
 - Gap recovery is bounded by `recoveryLimit` (100 by default); a longer outage
   needs a larger bound or a manual reconciliation.
-- The library assumes revision 1 of every MID it uses.
+- The built-in MIDs are defined at revision 1 only. A newer revision arrives as
+  `UnknownMessage` until someone defines it.
 - One instance per set of devices: the pool owns every device it is given.
-- The protocol subset is small on purpose. Adding a MID means adding a schema
-  and a branch, not redesigning anything.
+- The protocol subset is small on purpose. Adding a MID means writing a
+  definition (see [Defining your own MIDs](#defining-your-own-mids)), not
+  changing the library.
 
 ## NestJS vs Effect
 

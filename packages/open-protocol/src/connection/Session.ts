@@ -31,6 +31,16 @@ const encoder = new TextEncoder()
 /**
  * Writes an encoded frame straight to the socket, without expecting a reply.
  *
+ * **Example** (Writing a keep-alive frame)
+ *
+ * ```ts
+ * import { encodeMessage, KeepAlive, sendFrame, type Duplex } from "effect-open-protocol"
+ *
+ * declare const duplex: Duplex
+ *
+ * const sent = sendFrame(duplex, encodeMessage(new KeepAlive()))
+ * ```
+ *
  * @category sending
  * @since 0.0.0
  */
@@ -39,6 +49,16 @@ export const sendFrame = (duplex: Duplex, frame: string): Effect.Effect<void, Co
 
 /**
  * Sends one modelled message, without waiting for anything.
+ *
+ * **Example** (Acknowledging a result without waiting)
+ *
+ * ```ts
+ * import { AcknowledgeResult, sendRaw, type Duplex } from "effect-open-protocol"
+ *
+ * declare const duplex: Duplex
+ *
+ * const sent = sendRaw(duplex, new AcknowledgeResult())
+ * ```
  *
  * @category sending
  * @since 0.0.0

@@ -31,6 +31,18 @@ import type { DeviceId } from "./TighteningResult.ts"
  * result carries it. A revision codec that needs it reads this service; the
  * codec entry points provide it.
  *
+ * **Example** (Decoding a revision that stamps the device)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { DeviceId, Mid, OldResultMid } from "effect-open-protocol"
+ *
+ * declare const data: string
+ *
+ * // `Mid.decode` provides the context; a codec reads it with `FrameContext.use`.
+ * const decoded = Mid.decode(OldResultMid.rev(1), data, DeviceId.make("tool-1"))
+ * ```
+ *
  * @category services
  * @since 0.0.0
  */
@@ -41,6 +53,19 @@ export class FrameContext extends Context.Service<FrameContext, { readonly devic
 /**
  * A revision whose value is a class: the layout decodes into the class's
  * fields, the definition adds `_tag` and `revision`.
+ *
+ * **Example** (Inspecting a binding)
+ *
+ * ```ts
+ * import * as S from "effect/Schema"
+ * import { Field, Mid } from "effect-open-protocol"
+ *
+ * class Ping extends S.TaggedClass<Ping>()("Ping", { revision: S.tag(1) }) {}
+ *
+ * const binding = Mid.as(Ping, Field.layout([]))
+ *
+ * console.log(binding._tag) // "Binding"
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -53,6 +78,17 @@ export class Binding<Target extends S.Top, Layout extends S.Top> extends Data.Ta
 /**
  * A revision written as a ready codec, for values whose shape differs from the
  * wire record. The codec must produce `_tag` and `revision` itself.
+ *
+ * **Example** (Inspecting a custom revision)
+ *
+ * ```ts
+ * import * as S from "effect/Schema"
+ * import { Mid } from "effect-open-protocol"
+ *
+ * declare const codec: S.Codec<{ readonly _tag: "Raw"; readonly revision: 1 }, string>
+ *
+ * console.log(Mid.custom(codec)._tag) // "Custom"
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -237,6 +273,19 @@ export interface AnyDefinition {
 /**
  * The generic `0005` acknowledgement answers the request; `0004` rejects it.
  *
+ * **Example** (Declaring a request answered by 0005)
+ *
+ * ```ts
+ * import { Field, Mid } from "effect-open-protocol"
+ *
+ * const Reset = Mid.request({
+ *   tag: "Reset",
+ *   mid: 9200,
+ *   revisions: { 1: Field.layout([]) },
+ *   replies: { 1: Mid.accepted }
+ * })
+ * ```
+ *
  * @category models
  * @since 0.0.0
  */
@@ -244,6 +293,19 @@ export class Accepted extends Data.TaggedClass("Accepted")<{}> {}
 
 /**
  * Nothing answers the request: sending it is the whole exchange.
+ *
+ * **Example** (Declaring a request nothing answers)
+ *
+ * ```ts
+ * import { Field, Mid } from "effect-open-protocol"
+ *
+ * const Notify = Mid.request({
+ *   tag: "Notify",
+ *   mid: 9201,
+ *   revisions: { 1: Field.layout([]) },
+ *   replies: { 1: Mid.noReply }
+ * })
+ * ```
  *
  * @category models
  * @since 0.0.0
@@ -262,6 +324,16 @@ export type Reply = AnyRevision | Accepted | NoReply
 /**
  * The reply of a request answered by `0005`.
  *
+ * **Example** (A request acknowledged by 0005)
+ *
+ * ```ts
+ * import { Field, Mid } from "effect-open-protocol"
+ *
+ * const replies = { 1: Mid.accepted }
+ *
+ * const Select = Mid.request({ tag: "Select", mid: 9202, revisions: { 1: Field.layout([]) }, replies })
+ * ```
+ *
  * @category constructors
  * @since 0.0.0
  */
@@ -269,6 +341,14 @@ export const accepted: Accepted = new Accepted()
 
 /**
  * The reply of a request nothing answers.
+ *
+ * **Example** (A fire-and-forget request)
+ *
+ * ```ts
+ * import { Field, Mid } from "effect-open-protocol"
+ *
+ * const Beep = Mid.request({ tag: "Beep", mid: 9203, revisions: { 1: Field.layout([]) }, replies: { 1: Mid.noReply } })
+ * ```
  *
  * @category constructors
  * @since 0.0.0
@@ -460,9 +540,9 @@ export function request(options: {
  * **Example** (Encoding a request)
  *
  * ```ts
- * import { encode, RequestOldResult, TighteningId } from "effect-open-protocol"
+ * import { Mid, RequestOldResult, RequestOldResultMid, TighteningId } from "effect-open-protocol"
  *
- * const frame = encode(RequestOldResult.rev(1), new RequestOldResult.Message({ tighteningId: TighteningId.make(0) }))
+ * const frame = Mid.encode(RequestOldResultMid.rev(1), new RequestOldResult({ tighteningId: TighteningId.make(0) }))
  * ```
  *
  * @category encoding
@@ -494,6 +574,17 @@ export const encode = <Rev extends AnyRevision>(
 
 /**
  * Reads the data field of a frame as a value of a revision.
+ *
+ * **Example** (Reading a data field as MID 0005 revision 1)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { CommandAcceptedMid, DeviceId, Mid } from "effect-open-protocol"
+ *
+ * const accepted = Mid.decode(CommandAcceptedMid.rev(1), "0060", DeviceId.make("tool-1"))
+ *
+ * Effect.runPromise(accepted).then((message) => console.log(message.mid)) // 60
+ * ```
  *
  * @category decoding
  * @since 0.0.0

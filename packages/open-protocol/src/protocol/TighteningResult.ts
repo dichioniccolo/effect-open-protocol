@@ -165,6 +165,18 @@ const limitStatus = (id: string) => Field.enumerated({ id, width: 1, literals: L
  * are fillers; parameter 21 (last change of the parameter set) is written with
  * the tightening timestamp and ignored on decode.
  *
+ * **Example** (Reading the torque of a MID 0061 data field)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import * as S from "effect/Schema"
+ * import { LastResultBody } from "effect-open-protocol"
+ *
+ * declare const data: string
+ *
+ * const torque = Effect.map(S.decodeEffect(LastResultBody)(data), (fields) => fields.torque / 100)
+ * ```
+ *
  * @category layouts
  * @since 0.0.0
  */
@@ -196,6 +208,18 @@ export const LastResultBody = Field.layout([
 
 /**
  * The MID 0065 revision 1 data field.
+ *
+ * **Example** (Reading the id of a MID 0065 data field)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import * as S from "effect/Schema"
+ * import { OldResultBody } from "effect-open-protocol"
+ *
+ * declare const data: string
+ *
+ * const id = Effect.map(S.decodeEffect(OldResultBody)(data), (fields) => fields.tighteningId)
+ * ```
  *
  * @category layouts
  * @since 0.0.0
@@ -237,6 +261,18 @@ export interface ResultFields {
  * Builds the domain result from what a layout decoded, stamping the device it
  * came from.
  *
+ * **Example** (Building a result from decoded fields)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import * as S from "effect/Schema"
+ * import { DeviceId, OldResultBody, resultOf } from "effect-open-protocol"
+ *
+ * declare const data: string
+ *
+ * const result = Effect.flatMap(S.decodeEffect(OldResultBody)(data), (fields) => resultOf(DeviceId.make("tool-1"), fields))
+ * ```
+ *
  * @category decoding
  * @since 0.0.0
  */
@@ -259,6 +295,17 @@ export const resultOf = (
 
 /**
  * The layout fields of a domain result, torque back in hundredths.
+ *
+ * **Example** (Writing a result back as a MID 0065 data field)
+ *
+ * ```ts
+ * import * as S from "effect/Schema"
+ * import { fieldsOf, OldResultBody, type TighteningResult } from "effect-open-protocol"
+ *
+ * declare const result: TighteningResult
+ *
+ * const data = S.encodeEffect(OldResultBody)(fieldsOf(result))
+ * ```
  *
  * @category encoding
  * @since 0.0.0
