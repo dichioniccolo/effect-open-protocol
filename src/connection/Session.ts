@@ -14,7 +14,7 @@ import { decodeMessage, encodeMessage, KeepAlive, type Message } from "../protoc
 import type { DeviceId } from "../protocol/TighteningResult.ts"
 import { ConnectionLost, type Duplex } from "../transport/Transport.ts"
 import { expectReply } from "./RequestReply.ts"
-import type { RequestReplyService } from "./RequestReply.ts"
+import type { RequestReply } from "./RequestReply.ts"
 
 /**
  * The socket and the correlation slot that belong to one connection attempt.
@@ -24,7 +24,7 @@ import type { RequestReplyService } from "./RequestReply.ts"
  */
 export interface Session {
   readonly duplex: Duplex
-  readonly replies: RequestReplyService
+  readonly replies: RequestReply
 }
 
 const encoder = new TextEncoder()

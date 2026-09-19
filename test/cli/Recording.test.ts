@@ -6,7 +6,7 @@ import { Effect, Exit, FileSystem, Layer, Path, Ref, Scope, Stream } from "effec
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { SqlClient } from "effect/unstable/sql/SqlClient"
-import { make as makeRecording } from "../../cli/Recording.ts"
+import * as Recording from "../../cli/Recording.ts"
 import { instrument, latencyOf } from "../../cli/Wire.ts"
 import { EventQuery, layer as storeLayer, RunId, WireStore } from "../../store/src/WireStore.ts"
 import { terminator } from "../../src/protocol/Header.ts"
@@ -18,7 +18,16 @@ const handshake = encoder.encode(`00200001001         ${terminator}`)
 
 const reply = encoder.encode(`00200002001         ${terminator}`)
 
-const start = { side: "client", host: "127.0.0.1", port: 4545, seed: 1, latency: 0, jitter: 0 } as const
+/** The flags of a run that traces into `traceDb` and nowhere else. */
+const runInto = (traceDb: string): Recording.RecordingConfig => ({
+  host: "127.0.0.1",
+  port: 4545,
+  seed: 1,
+  latency: 0,
+  jitter: 0,
+  traceFile: O.none(),
+  traceDb
+})
 
 const tempDatabase = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
@@ -58,7 +67,7 @@ describe("Recording", () => {
       const filename = yield* tempDatabase
       const scope = yield* Scope.make()
       yield* Effect.gen(function* () {
-        const recording = yield* makeRecording({ traceDb: filename, file: O.none(), start })
+        const recording = yield* Recording.make("client", runInto(filename))
         const latency = latencyOf({ latency: 0, jitter: 0 })
 
         for (const _ of [1, 2]) {
@@ -100,7 +109,7 @@ describe("Recording", () => {
     Effect.gen(function* () {
       const filename = yield* tempDatabase
       yield* Effect.gen(function* () {
-        const recording = yield* makeRecording({ traceDb: filename, file: O.none(), start })
+        const recording = yield* Recording.make("client", runInto(filename))
         // Another process breaks the file under the recorder.
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient
@@ -130,7 +139,7 @@ describe("Recording", () => {
       const blocker = path.join(directory, "blocker")
       yield* fs.writeFileString(blocker, "")
       yield* Effect.gen(function* () {
-        const recording = yield* makeRecording({ traceDb: path.join(blocker, "traces.sqlite"), file: O.none(), start })
+        const recording = yield* Recording.make("client", runInto(path.join(blocker, "traces.sqlite")))
         const { duplex, written } = yield* fixture
 
         const traced = yield* instrument(duplex, {

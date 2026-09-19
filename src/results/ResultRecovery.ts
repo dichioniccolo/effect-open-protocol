@@ -15,7 +15,7 @@ import type { CommandRejected, RequestTimeout } from "../connection/ConnectionEr
 import { type Message, RequestOldResult } from "../protocol/Messages.ts"
 import { TighteningId, type TighteningResult } from "../protocol/TighteningResult.ts"
 import type { ConnectionLost } from "../transport/Transport.ts"
-import type { DedupService } from "./Dedup.ts"
+import type { Dedup } from "./Dedup.ts"
 
 /**
  * Default number of missed results fetched after a reconnect.
@@ -95,7 +95,7 @@ export type RecoveryFailure = CommandRejected | RequestTimeout | ConnectionLost
  * @since 0.0.0
  */
 export const runRecovery = Effect.fnUntraced(function* (options: {
-  readonly dedup: DedupService
+  readonly dedup: Dedup
   readonly request: (message: Message, mid: number) => Effect.Effect<Message, RecoveryFailure>
   readonly submit: (result: TighteningResult) => Effect.Effect<void>
   readonly limit?: number | undefined

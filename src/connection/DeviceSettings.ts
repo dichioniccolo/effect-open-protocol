@@ -125,12 +125,10 @@ export interface DeviceSettings extends Omit<DeviceConfig, Defaulted>, Required<
  * @category constructors
  * @since 0.0.0
  */
-// crispen: the key-by-key merge stays. DeviceConfig carries a Schedule and a
-// handler function, so it is not decodable data and cannot hold the defaults as
-// a schema; a generic merge would need a cast to keep the per-key types, and a
-// blind `{ ...defaultSettings, ...config }` would let an explicit `undefined`
-// erase a default. Fold into a schema if these knobs ever become plain data.
 export const resolveSettings = (config: DeviceConfig): DeviceSettings => ({
+  // Key by key on purpose: `{ ...defaultSettings, ...config }` would let an
+  // explicit `undefined` erase a default, and the config carries a Schedule
+  // and a handler, so it cannot hold its defaults as a schema.
   ...config,
   reconnect: config.reconnect ?? defaultSettings.reconnect,
   keepAliveInterval: config.keepAliveInterval ?? defaultSettings.keepAliveInterval,

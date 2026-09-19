@@ -176,6 +176,7 @@ const devices = Flag.Int("devices").pipe(
 )
 
 const faultRate = Flag.Finite("fault-rate").pipe(
+  Flag.withSchema(Faults.FaultRate),
   Flag.withDescription("Probability that a given message triggers a fault"),
   Flag.withDefault(0.15)
 )

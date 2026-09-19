@@ -10,7 +10,6 @@
  * @since 0.0.0
  */
 import { Deferred, Effect, Match, pipe, Predicate, Ref, Semaphore } from "effect"
-import * as Context from "effect/Context"
 import * as O from "effect/Option"
 import type { Duration } from "effect"
 import type { Message } from "../protocol/Messages.ts"
@@ -35,9 +34,9 @@ export type Expectation = (message: Message) => O.Option<Effect.Effect<Message, 
  * **Example** (Waiting for the subscribe acknowledgement)
  *
  * ```ts
- * import { expectReply } from "effect-open-protocol"
+ * import { RequestReply } from "effect-open-protocol"
  *
- * const expectation = expectReply(60)
+ * const expectation = RequestReply.expectReply(60)
  * ```
  *
  * @category constructors
@@ -68,7 +67,7 @@ interface Pending {
  * @category models
  * @since 0.0.0
  */
-export interface RequestReplyService {
+export interface RequestReply {
   /**
    * Sends a message and waits for the reply that matches `expectation`,
    * queueing behind any request already in flight.
@@ -88,7 +87,15 @@ export interface RequestReplyService {
   readonly interruptAll: (error: ConnectionLost) => Effect.Effect<void>
 }
 
-/** Builds a correlation slot over a send function. */
+/**
+ * Builds the correlation slot of one live session over its send function.
+ *
+ * Every attempt builds its own over the socket it just opened, so the slot
+ * dies with the session it belongs to.
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
 export const make = Effect.fnUntraced(function* (options: {
   readonly send: (message: Message) => Effect.Effect<void, ConnectionLost>
   readonly responseTimeout: Duration.Duration
@@ -147,19 +154,5 @@ export const make = Effect.fnUntraced(function* (options: {
       })
     })
 
-  return { request, offer, interruptAll } satisfies RequestReplyService
+  return { request, offer, interruptAll } satisfies RequestReply
 })
-
-/**
- * The correlation slot of one live session.
- *
- * Every attempt builds its own over the socket it just opened, so the slot
- * dies with the session it belongs to: `RequestReply.make` is the way in, and
- * the `Session` carries the result to whoever sends on it.
- *
- * @category services
- * @since 0.0.0
- */
-export class RequestReply extends Context.Service<RequestReply, RequestReplyService>()(
-  "effect-open-protocol/RequestReply"
-) {}

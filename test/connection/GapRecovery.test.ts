@@ -1,14 +1,14 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Duration, Effect, Predicate, Ref, Stream } from "effect"
 import * as A from "effect/Array"
-import { make as makeRecovery } from "../../src/connection/GapRecovery.ts"
+import * as GapRecovery from "../../src/connection/GapRecovery.ts"
 import { resolveSettings } from "../../src/connection/DeviceSettings.ts"
 import type { Session } from "../../src/connection/Session.ts"
 import { type Message, OldResult } from "../../src/protocol/Messages.ts"
 import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
-import { Dedup, make as makeDedup } from "../../src/results/Dedup.ts"
-import { ResultDelivery, type ResultDeliveryService } from "../../src/results/ResultDelivery.ts"
+import * as Dedup from "../../src/results/Dedup.ts"
+import type { ResultDelivery } from "../../src/results/ResultDelivery.ts"
 
 const deviceId = DeviceId.make("gap-tool")
 
@@ -40,7 +40,7 @@ const settings = resolveSettings({
 const fixture = Effect.fnUntraced(function* () {
   const asked = yield* Ref.make<ReadonlyArray<number>>([])
   const submitted = yield* Ref.make<ReadonlyArray<number>>([])
-  const dedup = yield* makeDedup(64)
+  const dedup = yield* Dedup.make(64)
 
   // Recovery only talks through `replies`; the duplex is an inert stand-in.
   const session: Session = {
@@ -70,14 +70,10 @@ const fixture = Effect.fnUntraced(function* () {
       ),
     delivered: Effect.succeed(0),
     duplicates: Effect.succeed(0)
-  } satisfies ResultDeliveryService
+  } satisfies ResultDelivery
 
-  // The window is real and the delivery queue is this stub: recovery takes
-  // both from context, so a test can swap either one.
-  const recovery = yield* makeRecovery({ settings }).pipe(
-    Effect.provideService(Dedup, dedup),
-    Effect.provideService(ResultDelivery, pipeline)
-  )
+  // The window is real and the delivery queue is this stub.
+  const recovery = yield* GapRecovery.make({ settings, dedup, pipeline })
 
   return { asked, dedup, pipeline, recovery, session, submitted }
 })

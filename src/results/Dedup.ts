@@ -13,8 +13,7 @@
  *
  * @since 0.0.0
  */
-import { Effect, Layer, Ref } from "effect"
-import * as Context from "effect/Context"
+import { Effect, Ref } from "effect"
 import * as A from "effect/Array"
 import * as HashSet from "effect/HashSet"
 import * as O from "effect/Option"
@@ -26,7 +25,7 @@ import { TighteningId } from "../protocol/TighteningResult.ts"
  * @category models
  * @since 0.0.0
  */
-export interface DedupService {
+export interface Dedup {
   /** Whether this identifier was already delivered. */
   readonly seen: (id: TighteningId) => Effect.Effect<boolean>
   /** Records an identifier as delivered, evicting the oldest when full. */
@@ -86,7 +85,30 @@ const lowestAhead = (ahead: HashSet.HashSet<TighteningId>): O.Option<TighteningI
     O.match(lowest, { onNone: () => O.some(id), onSome: (value) => O.some(id < value ? id : value) })
   )
 
-/** Builds a bounded dedup store. */
+/**
+ * Builds the duplicate window of one device.
+ *
+ * A connection builds one for itself and hands it to both its delivery queue
+ * and its gap recovery, so they share one window and nothing leaks between
+ * devices.
+ *
+ * **Example** (Recognising a resend)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Dedup, TighteningId } from "effect-open-protocol"
+ *
+ * const program = Effect.gen(function* () {
+ *   const dedup = yield* Dedup.make(16)
+ *   const id = TighteningId.make(7)
+ *   yield* dedup.remember(id)
+ *   return yield* dedup.seen(id)
+ * })
+ * ```
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
 export const make = Effect.fnUntraced(function* (capacity: number = defaultCapacity) {
   const state = yield* Ref.make<State>({
     ids: HashSet.empty<TighteningId>(),
@@ -165,38 +187,5 @@ export const make = Effect.fnUntraced(function* (capacity: number = defaultCapac
     markNoHistory,
     sawEmptyHistory: Effect.map(Ref.get(state), (current) => current.emptyHistory),
     lastDelivered: Effect.map(Ref.get(state), (current) => current.watermark)
-  } satisfies DedupService
+  } satisfies Dedup
 })
-
-/**
- * The duplicate window of one device.
- *
- * A connection provides `Dedup.layer` for itself, so its delivery queue and
- * its gap recovery share one window and nothing leaks between devices.
- *
- * **Example** (Recognising a resend)
- *
- * ```ts
- * import { Effect } from "effect"
- * import { Dedup, TighteningId } from "effect-open-protocol"
- *
- * const program = Effect.gen(function* () {
- *   const dedup = yield* Dedup
- *   const id = TighteningId.make(7)
- *   yield* dedup.remember(id)
- *   return yield* dedup.seen(id)
- * })
- * ```
- *
- * @category services
- * @since 0.0.0
- */
-export class Dedup extends Context.Service<Dedup, DedupService>()("effect-open-protocol/Dedup") {}
-
-/**
- * Provides a window of `capacity` identifiers for the lifetime of the layer.
- *
- * @category layers
- * @since 0.0.0
- */
-export const layer = (capacity: number = defaultCapacity): Layer.Layer<Dedup> => Layer.effect(Dedup)(make(capacity))

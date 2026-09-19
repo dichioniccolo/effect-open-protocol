@@ -9,13 +9,12 @@
  *
  * @since 0.0.0
  */
-import { Effect, Layer, Ref } from "effect"
-import * as Context from "effect/Context"
+import { Effect, Ref } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import type { TighteningResult } from "../protocol/TighteningResult.ts"
-import { Dedup } from "../results/Dedup.ts"
-import { ResultDelivery } from "../results/ResultDelivery.ts"
+import type { Dedup } from "../results/Dedup.ts"
+import type { ResultDelivery } from "../results/ResultDelivery.ts"
 import { runRecovery } from "../results/ResultRecovery.ts"
 import { expectReply } from "./RequestReply.ts"
 import type { Session } from "./Session.ts"
@@ -27,18 +26,44 @@ import type { DeviceSettings } from "./DeviceSettings.ts"
  * @category models
  * @since 0.0.0
  */
-export interface GapRecoveryService {
+export interface GapRecovery {
   /** Fetches everything between the last contiguously delivered result and the newest one. */
   readonly recoverGap: (session: Session) => Effect.Effect<void>
   /** Submits a pushed result, starting a recovery pass first when it reveals a gap. */
   readonly submitResult: (session: Session, result: TighteningResult) => Effect.Effect<void>
 }
 
-/** Builds the recovery policy for one device. */
-export const make = Effect.fnUntraced(function* (options: { readonly settings: DeviceSettings }) {
-  const settings = options.settings
-  const dedup = yield* Dedup
-  const pipeline = yield* ResultDelivery
+/**
+ * Builds the recovery policy for one device, over the window and the queue it
+ * shares with the connection's read loop.
+ *
+ * A pass started by the timer and one started by a pushed result go through
+ * the same policy, so they share its "only one pass at a time" state.
+ *
+ * **Example** (Recovering what an outage lost)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { GapRecovery } from "effect-open-protocol"
+ * import type { Dedup, ResultDelivery, Session, DeviceSettings } from "effect-open-protocol"
+ *
+ * const recover = (options: {
+ *   readonly settings: DeviceSettings
+ *   readonly dedup: Dedup.Dedup
+ *   readonly pipeline: ResultDelivery.ResultDelivery
+ *   readonly session: Session
+ * }) => Effect.flatMap(GapRecovery.make(options), (recovery) => recovery.recoverGap(options.session))
+ * ```
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
+export const make = Effect.fnUntraced(function* (options: {
+  readonly settings: DeviceSettings
+  readonly dedup: Dedup
+  readonly pipeline: ResultDelivery
+}) {
+  const { dedup, pipeline, settings } = options
   const recovering = yield* Ref.make(false)
 
   const recoverGap = (session: Session): Effect.Effect<void> => {
@@ -102,40 +127,5 @@ export const make = Effect.fnUntraced(function* (options: { readonly settings: D
     yield* pipeline.submit(result)
   })
 
-  return { recoverGap, submitResult } satisfies GapRecoveryService
+  return { recoverGap, submitResult } satisfies GapRecovery
 })
-
-/**
- * The gap policy of one device.
- *
- * A connection provides `GapRecovery.layer` for itself over its `Dedup` and
- * `ResultDelivery`, so a pass started by the timer and one started by a pushed
- * result share the same "only one pass at a time" state.
- *
- * **Example** (Recovering what an outage lost)
- *
- * ```ts
- * import { Effect } from "effect"
- * import { GapRecovery } from "effect-open-protocol"
- * import type { Session } from "effect-open-protocol"
- *
- * const recover = (session: Session) =>
- *   Effect.flatMap(GapRecovery, (recovery) => recovery.recoverGap(session))
- * ```
- *
- * @category services
- * @since 0.0.0
- */
-export class GapRecovery extends Context.Service<GapRecovery, GapRecoveryService>()(
-  "effect-open-protocol/GapRecovery"
-) {}
-
-/**
- * Provides the recovery policy for `settings` for the lifetime of the layer.
- *
- * @category layers
- * @since 0.0.0
- */
-export const layer = (options: {
-  readonly settings: DeviceSettings
-}): Layer.Layer<GapRecovery, never, Dedup | ResultDelivery> => Layer.effect(GapRecovery)(make(options))

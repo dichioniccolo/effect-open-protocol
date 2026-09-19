@@ -24,9 +24,7 @@ import { type ControllerIdentity, observe, replyTo, resultFor, simulatorDevice }
 import type * as Faults from "./Faults.ts"
 import { sendWithFaults } from "./FaultyWire.ts"
 import { forget, initialSessionState, latestOf, type SessionState } from "./SessionState.ts"
-import { SimulatorNetwork } from "./SimulatorNetwork.ts"
-
-export { SimulatorListenFailed } from "./TcpListener.ts"
+import { type Listener, SimulatorNetwork } from "./SimulatorNetwork.ts"
 
 /**
  * How a simulated controller should behave.
@@ -42,7 +40,11 @@ export interface SimulatorOptions extends ControllerIdentity {
   readonly ackTimeout?: Duration.Duration | undefined
   /** Attempts before the controller gives up on a result and drops the session. */
   readonly ackAttempts?: number | undefined
-  /** Seeded misbehaviour injected while the session runs. */
+  /**
+   * Seeded misbehaviour injected while the session runs. Absent rather than a
+   * zero rate on purpose: a run without faults draws nothing from `Random`, so
+   * it replays the same whether or not a fault config type ever changes.
+   */
   readonly faults?: Faults.FaultConfig | undefined
 }
 
@@ -67,6 +69,8 @@ export interface Simulator {
   readonly produce: Effect.Effect<TighteningResult>
   /** Drops the current connection the way a controller does when it gives up. */
   readonly drop: Effect.Effect<void>
+  /** Stops accepting connections, the way a rebooting controller does, or starts again. */
+  readonly refuse: (refused: boolean) => Effect.Effect<void>
   /** Stops producing results and injecting faults, so a run can settle before it is judged. */
   readonly quiesce: Effect.Effect<void>
   /** Results still waiting to be pushed or acknowledged. */
@@ -114,11 +118,7 @@ const serve = Effect.fnUntraced(function* (
 })
 
 /** Serves the connections a bound endpoint accepts, for the lifetime of the calling scope. */
-const start = Effect.fnUntraced(function* (
-  options: SimulatorOptions,
-  accepted: Queue.Dequeue<ServerSide>,
-  refuse: (refused: boolean) => Effect.Effect<void>
-) {
+const start = Effect.fnUntraced(function* (options: SimulatorOptions, listener: Listener) {
   const store = MutableHashMap.empty<number, TighteningResult>()
   const state = yield* Ref.make<SessionState>(initialSessionState)
   const ackTimeout = options.ackTimeout ?? Duration.seconds(5)
@@ -131,7 +131,7 @@ const start = Effect.fnUntraced(function* (
   yield* Effect.forkChild(
     Effect.forever(
       Effect.flatMap(Queue.take(outages), (duration) =>
-        pipe(refuse(true), Effect.andThen(Effect.sleep(duration)), Effect.andThen(refuse(false)))
+        pipe(listener.refuse(true), Effect.andThen(Effect.sleep(duration)), Effect.andThen(listener.refuse(false)))
       )
     )
   )
@@ -142,73 +142,50 @@ const start = Effect.fnUntraced(function* (
   // in flight dies with the simulator either way.
 
   const acceptLoop = yield* pipe(
-    Queue.take(accepted),
+    Queue.take(listener.accepted),
     Effect.flatMap((connection) => Effect.forkChild(serve(connection, state, store, options, refuseFor))),
     Effect.forever,
     Effect.forkChild
   )
 
   /** Pushes a result and waits for its acknowledgement, resending as the specification prescribes. */
-  const push = (result: TighteningResult): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(state)
+  const push = Effect.fnUntraced(function* (result: TighteningResult) {
+    const current = yield* Ref.get(state)
 
-      return yield* O.match(current.connection, {
-        onNone: () => Effect.void,
-        onSome: (connection) =>
-          current.subscribed
-            ? Effect.gen(function* () {
-                const acknowledged = yield* Deferred.make<void>()
-                yield* Ref.update(state, (value) => ({
-                  ...value,
-                  pendingAck: O.some(acknowledged)
-                }))
+    if (O.isNone(current.connection) || !current.subscribed) {
+      return
+    }
 
-                const attempt = sendWithFaults(
-                  connection,
-                  new LastResult({ result }),
-                  options.faults,
-                  state,
-                  refuseFor
-                ).pipe(
-                  Effect.andThen(Deferred.await(acknowledged)),
-                  Effect.timeoutOption(ackTimeout),
-                  Effect.catchCause(() => Effect.succeed(O.none<void>()))
-                )
+    const connection = current.connection.value
+    const acknowledged = yield* Deferred.make<void>()
+    yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.some(acknowledged) }))
 
-                const tryDeliver = (remaining: number): Effect.Effect<boolean> =>
-                  Effect.gen(function* () {
-                    if (remaining <= 0) {
-                      return false
-                    }
+    const attempt = sendWithFaults(connection, new LastResult({ result }), options.faults, state, refuseFor).pipe(
+      Effect.andThen(Deferred.await(acknowledged)),
+      Effect.timeoutOption(ackTimeout),
+      Effect.catchCause(() => Effect.succeed(O.none<void>()))
+    )
 
-                    const acknowledgement = yield* attempt
+    const tryDeliver = (remaining: number): Effect.Effect<boolean> =>
+      remaining <= 0
+        ? Effect.succeed(false)
+        : Effect.flatMap(attempt, (acknowledgement) =>
+            O.isSome(acknowledgement) ? Effect.succeed(true) : tryDeliver(remaining - 1)
+          )
 
-                    return O.isSome(acknowledgement) ? true : yield* tryDeliver(remaining - 1)
-                  })
+    const delivered = yield* tryDeliver(ackAttempts)
+    yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.none() }))
 
-                const delivered = yield* tryDeliver(ackAttempts)
-                yield* Ref.update(state, (value) => ({
-                  ...value,
-                  pendingAck: O.none()
-                }))
+    if (delivered) {
+      return
+    }
 
-                if (delivered) {
-                  return
-                }
-
-                yield* Ref.update(state, (value) => ({
-                  ...value,
-                  abandoned: A.append(value.abandoned, result.tighteningId)
-                }))
-                yield* Effect.logWarning("giving up on an unacknowledged result").pipe(
-                  Effect.annotateLogs({ tighteningId: result.tighteningId })
-                )
-                yield* connection.close("no acknowledgement for the last tightening result")
-              })
-            : Effect.void
-      })
-    })
+    yield* Ref.update(state, (value) => ({ ...value, abandoned: A.append(value.abandoned, result.tighteningId) }))
+    yield* Effect.logWarning("giving up on an unacknowledged result").pipe(
+      Effect.annotateLogs({ tighteningId: result.tighteningId })
+    )
+    yield* connection.close("no acknowledgement for the last tightening result")
+  })
 
   const outbox = yield* Queue.unbounded<TighteningResult>()
 
@@ -276,7 +253,8 @@ const start = Effect.fnUntraced(function* (
     generated: Effect.map(Ref.get(state), (current) => current.generated),
     abandoned: Effect.map(Ref.get(state), (current) => current.abandoned),
     produce,
-    drop
+    drop,
+    refuse: listener.refuse
   } satisfies Simulator
 })
 
@@ -302,7 +280,7 @@ const start = Effect.fnUntraced(function* (
  */
 export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
   const network = yield* SimulatorNetwork
-  const accepted = yield* network.bind(options.endpoint)
+  const listener = yield* network.bind(options.endpoint)
 
-  return yield* start(options, accepted, (refused) => network.refuse(options.endpoint, refused))
+  return yield* start(options, listener)
 })

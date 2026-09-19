@@ -9,9 +9,33 @@
  * @since 0.0.0
  */
 import { Context, Effect, Layer, type Queue, type Scope } from "effect"
+import * as S from "effect/Schema"
 import { InMemoryNetwork, layerComplete, type ServerSide } from "../src/transport/InMemoryTransport.ts"
 import type { Endpoint, Transport } from "../src/transport/Transport.ts"
-import type { SimulatorListenFailed } from "./TcpListener.ts"
+
+/**
+ * The simulated controller could not take its port.
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class SimulatorListenFailed extends S.TaggedError<SimulatorListenFailed>()("SimulatorListenFailed", {
+  endpoint: S.String,
+  reason: S.String
+}) {}
+
+/**
+ * One bound endpoint, as the simulated controller behind it sees it.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface Listener {
+  /** Connections accepted on the endpoint. */
+  readonly accepted: Queue.Dequeue<ServerSide>
+  /** Stops accepting, the way a rebooting controller does, or starts again. */
+  readonly refuse: (refused: boolean) => Effect.Effect<void>
+}
 
 /**
  * What a simulated controller needs from the network it listens on.
@@ -20,10 +44,8 @@ import type { SimulatorListenFailed } from "./TcpListener.ts"
  * @since 0.0.0
  */
 export interface SimulatorNetworkService {
-  /** Accepts connections on an endpoint until the caller's scope closes. */
-  readonly bind: (endpoint: Endpoint) => Effect.Effect<Queue.Dequeue<ServerSide>, SimulatorListenFailed, Scope.Scope>
-  /** Stops accepting on an endpoint, the way a rebooting controller does, or starts again. */
-  readonly refuse: (endpoint: Endpoint, refused: boolean) => Effect.Effect<void>
+  /** Listens on an endpoint until the caller's scope closes. */
+  readonly bind: (endpoint: Endpoint) => Effect.Effect<Listener, SimulatorListenFailed, Scope.Scope>
 }
 
 /**
@@ -46,7 +68,13 @@ export class SimulatorNetwork extends Context.Service<SimulatorNetwork, Simulato
  * @since 0.0.0
  */
 export const layerInMemory: Layer.Layer<SimulatorNetwork, never, InMemoryNetwork> = Layer.effect(SimulatorNetwork)(
-  Effect.map(InMemoryNetwork, (network) => ({ bind: network.bind, refuse: network.refuse }))
+  Effect.map(InMemoryNetwork, (network) => ({
+    bind: (endpoint) =>
+      Effect.map(network.bind(endpoint), (accepted) => ({
+        accepted,
+        refuse: (refused) => network.refuse(endpoint, refused)
+      }))
+  }))
 )
 
 /**

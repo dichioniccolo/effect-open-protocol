@@ -11,7 +11,6 @@
  */
 import { Data, Duration, Effect, Match, Random } from "effect"
 import * as A from "effect/Array"
-import * as O from "effect/Option"
 import * as S from "effect/Schema"
 
 /**
@@ -40,6 +39,23 @@ export const FaultKind = S.Literals([
 export type FaultKind = typeof FaultKind.Type
 
 /**
+ * Probability in `[0, 1]` that a given opportunity produces a fault.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export const FaultRate = S.Number.check(S.isBetween({ minimum: 0, maximum: 1 })).annotate({
+  identifier: "FaultRate",
+  description: "Probability in [0, 1] that an opportunity produces a fault"
+})
+
+/**
+ * @category models
+ * @since 0.0.0
+ */
+export type FaultRate = typeof FaultRate.Type
+
+/**
  * How aggressively faults are injected.
  *
  * @category models
@@ -47,10 +63,9 @@ export type FaultKind = typeof FaultKind.Type
  */
 export class FaultConfig extends S.Class<FaultConfig>("FaultConfig")(
   {
-    /** Probability in `[0, 1]` that a given opportunity produces a fault. */
-    rate: S.Number.check(S.isBetween({ minimum: 0, maximum: 1 })),
-    /** Kinds allowed in this run. */
-    kinds: S.Array(FaultKind).pipe(S.withConstructorDefault(Effect.succeed(FaultKind.literals))),
+    rate: FaultRate,
+    /** Kinds allowed in this run; a run with none to allow has no `FaultConfig` at all. */
+    kinds: S.NonEmptyArray(FaultKind).pipe(S.withConstructorDefault(Effect.succeed(FaultKind.literals))),
     /** Upper bound for injected reply delays. */
     maxDelay: S.Duration.pipe(S.withConstructorDefault(Effect.succeed(Duration.seconds(8)))),
     /** Upper bound for how long a link stays silent or refuses connections. */
@@ -128,16 +143,11 @@ export const next = (config: FaultConfig): Effect.Effect<Fault> =>
   Effect.gen(function* () {
     const roll = yield* Random.next
 
-    if (roll >= config.rate || A.length(config.kinds) === 0) {
+    if (roll >= config.rate) {
       return none
     }
 
-    // Half-open: the inclusive default would draw an index one past the end,
-    // and the missing kind would read as "no fault" on that roll.
-    const index = yield* Random.nextIntBetween(0, A.length(config.kinds), { halfOpen: true })
-    const kind = A.get(config.kinds, index)
-
-    return yield* O.match(kind, { onNone: () => Effect.succeed(none), onSome: (value) => faultOf(value, config) })
+    return yield* faultOf(yield* Random.choice(config.kinds), config)
   })
 
 /**

@@ -18,22 +18,12 @@ import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import { Command, Flag } from "effect/unstable/cli"
-import { make as makeConnection } from "../src/connection/DeviceConnection.ts"
+import * as DeviceConnection from "../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
 import { layer as tcpLayer } from "../src/transport/TcpTransport.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
-import {
-  host,
-  instrumentedTransport,
-  jitter,
-  latency,
-  latencyOf,
-  port,
-  recordingOf,
-  seed,
-  traceDb,
-  traceFile
-} from "./Wire.ts"
+import * as Recording from "./Recording.ts"
+import { host, instrumentedTransport, jitter, latency, latencyOf, port, seed, traceDb, traceFile } from "./Wire.ts"
 
 const deviceId = Flag.String("device-id").pipe(
   Flag.withDescription("Identifier stamped on every result this client receives"),
@@ -73,7 +63,7 @@ const run = Effect.fnUntraced(function* (config: {
   const received = yield* Ref.make<ReadonlyArray<string>>([])
   const id = yield* Effect.orDie(S.decodeEffect(DeviceId)(config.deviceId))
 
-  const connection = yield* makeConnection({
+  const connection = yield* DeviceConnection.make({
     id,
     endpoint: new Endpoint({ host: config.host, port: config.port }),
     recoveryInterval: config.recoveryInterval > 0 ? Duration.millis(config.recoveryInterval) : undefined,
@@ -82,14 +72,7 @@ const run = Effect.fnUntraced(function* (config: {
         Ref.update(received, (current) => A.append(current, `${result.tighteningId}`)),
         Effect.andThen(report(result))
       )
-  }).pipe(
-    Effect.provide(
-      instrumentedTransport({
-        source: "client",
-        latency: latencyOf(config)
-      })
-    )
-  )
+  })
 
   yield* Effect.logInfo("client started").pipe(
     Effect.annotateLogs({
@@ -146,7 +129,8 @@ const command = Command.make(
     pipe(
       run(config),
       Random.withSeed(config.seed),
-      Effect.provide(recordingOf("client", config)),
+      Effect.provide(instrumentedTransport({ source: "client", latency: latencyOf(config) })),
+      Effect.provide(Recording.layer("client", config)),
       Effect.scoped,
       Effect.provide(tcpLayer),
       Effect.asVoid
