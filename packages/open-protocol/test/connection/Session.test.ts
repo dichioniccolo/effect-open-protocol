@@ -65,22 +65,22 @@ const read = (frames: ReadonlyArray<string>) =>
 describe("Session.readLoop", () => {
   it.effect("keeps reading after a data field that does not decode", () =>
     Effect.gen(function* () {
-      const { ended, received } = yield* read([garbled, encodeMessage(new KeepAlive())])
+      const outcome = yield* read([garbled, encodeMessage(new KeepAlive())])
 
-      expect(A.map(received, (message) => message._tag)).toEqual(["UnknownMessage", "KeepAlive"])
-      expect(received[0]).toMatchObject(
+      expect(A.map(outcome.received, (message) => message._tag)).toEqual(["UnknownMessage", "KeepAlive"])
+      expect(outcome.received[0]).toMatchObject(
         new UnknownMessage({ mid: 61, revision: 1, data: Str.substring(20, Str.length(garbled) - 1)(garbled) })
       )
-      expect(ended).toEqual(new ConnectionLost({ reason: "the controller closed the connection" }))
+      expect(outcome.ended).toEqual(new ConnectionLost({ reason: "the controller closed the connection" }))
     })
   )
 
   it.effect("still ends the session on a malformed header", () =>
     Effect.gen(function* () {
-      const { ended, received } = yield* read(["0020XXXX            \u0000", encodeMessage(new KeepAlive())])
+      const outcome = yield* read(["0020XXXX            \u0000", encodeMessage(new KeepAlive())])
 
-      expect(received).toEqual([])
-      expect(ended).toEqual(new ConnectionLost({ reason: "protocol error: MalformedHeader" }))
+      expect(outcome.received).toEqual([])
+      expect(outcome.ended).toEqual(new ConnectionLost({ reason: "protocol error: MalformedHeader" }))
     })
   )
 })

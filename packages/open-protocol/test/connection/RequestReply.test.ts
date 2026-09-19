@@ -80,9 +80,9 @@ const peer = (answer: O.Option<Message>) =>
 describe("RequestReply", () => {
   it.effect("decodes a dedicated reply that arrives as an unknown frame", () =>
     Effect.gen(function* () {
-      const { replies } = yield* peer(O.some(new UnknownMessage({ mid: 7001, revision: 1, data: "0042" })))
+      const setup = yield* peer(O.some(new UnknownMessage({ mid: 7001, revision: 1, data: "0042" })))
 
-      const status = yield* replies.request(AskStatus.rev(1), {})
+      const status = yield* setup.replies.request(AskStatus.rev(1), {})
 
       expect(status).toEqual(Status.rev(1).codec.make({ level: 42 }))
     })
@@ -90,9 +90,9 @@ describe("RequestReply", () => {
 
   it.effect("fails at once when the reply comes at another revision", () =>
     Effect.gen(function* () {
-      const { replies } = yield* peer(O.some(new UnknownMessage({ mid: 7001, revision: 2, data: "0042ready " })))
+      const setup = yield* peer(O.some(new UnknownMessage({ mid: 7001, revision: 2, data: "0042ready " })))
 
-      const error = yield* Effect.flip(replies.request(AskStatus.rev(1), {}))
+      const error = yield* Effect.flip(setup.replies.request(AskStatus.rev(1), {}))
 
       expect(error).toEqual(new UnexpectedRevision({ mid: 7001, expected: 1, received: 2 }))
     })
@@ -100,9 +100,9 @@ describe("RequestReply", () => {
 
   it.effect("fails with a decode error when the reply's data field is wrong", () =>
     Effect.gen(function* () {
-      const { replies } = yield* peer(O.some(new UnknownMessage({ mid: 7001, revision: 1, data: "4x" })))
+      const setup = yield* peer(O.some(new UnknownMessage({ mid: 7001, revision: 1, data: "4x" })))
 
-      const error = yield* Effect.flip(replies.request(AskStatus.rev(1), {}))
+      const error = yield* Effect.flip(setup.replies.request(AskStatus.rev(1), {}))
 
       expect(error._tag).toBe("PayloadDecodeError")
     })
@@ -110,9 +110,9 @@ describe("RequestReply", () => {
 
   it.effect("turns a 0004 for the request into CommandRejected", () =>
     Effect.gen(function* () {
-      const { replies } = yield* peer(O.some(new CommandError({ mid: 7000, code: 99 })))
+      const setup = yield* peer(O.some(new CommandError({ mid: 7000, code: 99 })))
 
-      const error = yield* Effect.flip(replies.request(AskStatus.rev(1), {}))
+      const error = yield* Effect.flip(setup.replies.request(AskStatus.rev(1), {}))
 
       expect(error).toEqual(new CommandRejected({ mid: 7000, code: 99 }))
     })
@@ -120,12 +120,12 @@ describe("RequestReply", () => {
 
   it.effect("resolves an accepted request with its 0005 and sends the payload", () =>
     Effect.gen(function* () {
-      const { replies, sent } = yield* peer(O.some(new CommandAccepted({ mid: 7002 })))
+      const setup = yield* peer(O.some(new CommandAccepted({ mid: 7002 })))
 
-      const accepted = yield* replies.request(Reset.rev(1), { level: 3 })
+      const accepted = yield* setup.replies.request(Reset.rev(1), { level: 3 })
 
       expect(accepted).toEqual(new CommandAccepted({ mid: 7002 }))
-      expect(yield* Ref.get(sent)).toEqual([
+      expect(yield* Ref.get(setup.sent)).toEqual([
         "0024" + "7002" + "001" + "0" + "01" + "01" + "00" + "0" + "0" + "0003" + "\u0000"
       ])
     })
@@ -133,30 +133,30 @@ describe("RequestReply", () => {
 
   it.effect("returns once a request that expects nothing is sent", () =>
     Effect.gen(function* () {
-      const { replies, sent } = yield* peer(O.none())
+      const setup = yield* peer(O.none())
 
-      yield* replies.request(Notify.rev(1), {})
+      yield* setup.replies.request(Notify.rev(1), {})
 
-      expect(A.length(yield* Ref.get(sent))).toBe(1)
+      expect(A.length(yield* Ref.get(setup.sent))).toBe(1)
     })
   )
 
   it.effect("refuses a payload that does not fit before sending anything", () =>
     Effect.gen(function* () {
-      const { replies, sent } = yield* peer(O.none())
+      const setup = yield* peer(O.none())
 
-      const error = yield* Effect.flip(replies.request(Reset.rev(1), { level: 12345 }))
+      const error = yield* Effect.flip(setup.replies.request(Reset.rev(1), { level: 12345 }))
 
       expect(error._tag).toBe("PayloadEncodeError")
-      expect(yield* Ref.get(sent)).toEqual([])
+      expect(yield* Ref.get(setup.sent)).toEqual([])
     })
   )
 
   it.effect("leaves messages that answer nothing to the caller", () =>
     Effect.gen(function* () {
-      const { replies } = yield* peer(O.none())
+      const setup = yield* peer(O.none())
 
-      expect(yield* replies.offer(new CommandAccepted({ mid: 60 }))).toBe(false)
+      expect(yield* setup.replies.offer(new CommandAccepted({ mid: 60 }))).toBe(false)
     })
   )
 })

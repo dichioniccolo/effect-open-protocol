@@ -55,10 +55,10 @@ describe("tracedDuplex", () => {
   it.effect("traces a chunk and the frame it completes", () =>
     Effect.gen(function* () {
       const wire = encodeMessage(new KeepAlive())
-      const { events, traced } = yield* fixture([encoder.encode(wire)])
-      yield* Stream.runDrain(traced.incoming)
+      const setup = yield* fixture([encoder.encode(wire)])
+      yield* Stream.runDrain(setup.traced.incoming)
 
-      const recorded = yield* Ref.get(events)
+      const recorded = yield* Ref.get(setup.events)
       expect(A.length(kindsOf(recorded, "chunk"))).toBe(1)
 
       const frames = kindsOf(recorded, "frame")
@@ -75,10 +75,10 @@ describe("tracedDuplex", () => {
     Effect.gen(function* () {
       const wire = encodeMessage(new SubscribeResults())
       const pieces = [wire.slice(0, 7), wire.slice(7, 15), wire.slice(15)]
-      const { events, traced } = yield* fixture(A.map(pieces, (piece) => encoder.encode(piece)))
-      yield* Stream.runDrain(traced.incoming)
+      const setup = yield* fixture(A.map(pieces, (piece) => encoder.encode(piece)))
+      yield* Stream.runDrain(setup.traced.incoming)
 
-      const recorded = yield* Ref.get(events)
+      const recorded = yield* Ref.get(setup.events)
       expect(A.length(kindsOf(recorded, "chunk"))).toBe(3)
       expect(A.length(kindsOf(recorded, "frame"))).toBe(1)
     })
@@ -87,10 +87,10 @@ describe("tracedDuplex", () => {
   it.effect("keeps a coalesced read as one chunk and two frames", () =>
     Effect.gen(function* () {
       const wire = encodeMessage(new KeepAlive()) + encodeMessage(new SubscribeResults())
-      const { events, traced } = yield* fixture([encoder.encode(wire)])
-      yield* Stream.runDrain(traced.incoming)
+      const setup = yield* fixture([encoder.encode(wire)])
+      yield* Stream.runDrain(setup.traced.incoming)
 
-      const recorded = yield* Ref.get(events)
+      const recorded = yield* Ref.get(setup.events)
       expect(A.length(kindsOf(recorded, "chunk"))).toBe(1)
       expect(A.map(kindsOf(recorded, "frame"), (event) => event.mid)).toStrictEqual([O.some("9999"), O.some("0060")])
     })
@@ -99,11 +99,11 @@ describe("tracedDuplex", () => {
   it.effect("forwards writes untouched and traces them as sends", () =>
     Effect.gen(function* () {
       const wire = encodeMessage(new KeepAlive())
-      const { events, traced, written } = yield* fixture([])
-      yield* traced.send(encoder.encode(wire))
+      const setup = yield* fixture([])
+      yield* setup.traced.send(encoder.encode(wire))
 
-      expect(yield* Ref.get(written)).toEqual([encoder.encode(wire)])
-      const recorded = yield* Ref.get(events)
+      expect(yield* Ref.get(setup.written)).toEqual([encoder.encode(wire)])
+      const recorded = yield* Ref.get(setup.events)
       expect(A.map(recorded, (event) => event.direction)).toEqual(["send", "send"])
       expect(A.map(recorded, (event) => event.kind)).toEqual(["chunk", "frame"])
     })
@@ -112,12 +112,12 @@ describe("tracedDuplex", () => {
   it.effect("keeps the two directions on separate reassembly buffers", () =>
     Effect.gen(function* () {
       const wire = encodeMessage(new KeepAlive())
-      const { events, traced } = yield* fixture([encoder.encode(wire.slice(0, 10))])
-      yield* traced.send(encoder.encode(wire))
-      yield* Stream.runDrain(traced.incoming)
+      const setup = yield* fixture([encoder.encode(wire.slice(0, 10))])
+      yield* setup.traced.send(encoder.encode(wire))
+      yield* Stream.runDrain(setup.traced.incoming)
 
       // The half frame that arrived must not complete the one that was sent.
-      const recorded = yield* Ref.get(events)
+      const recorded = yield* Ref.get(setup.events)
       expect(A.length(kindsOf(recorded, "frame"))).toBe(1)
       const frame = yield* Effect.fromOption(A.head(kindsOf(recorded, "frame")))
       expect(frame.direction).toBe("send")
@@ -126,10 +126,10 @@ describe("tracedDuplex", () => {
 
   it.effect("survives a stream it cannot frame", () =>
     Effect.gen(function* () {
-      const { events, traced } = yield* fixture([encoder.encode("not a frame at all")])
-      yield* Stream.runDrain(traced.incoming)
+      const setup = yield* fixture([encoder.encode("not a frame at all")])
+      yield* Stream.runDrain(setup.traced.incoming)
 
-      const recorded = yield* Ref.get(events)
+      const recorded = yield* Ref.get(setup.events)
       expect(A.length(kindsOf(recorded, "chunk"))).toBe(1)
       expect(A.length(kindsOf(recorded, "frame"))).toBe(0)
     })
@@ -138,10 +138,10 @@ describe("tracedDuplex", () => {
   it.effect("renders a trace line as one JSON object", () =>
     Effect.gen(function* () {
       const wire = encodeMessage(new KeepAlive())
-      const { events, traced } = yield* fixture([encoder.encode(wire)])
-      yield* Stream.runDrain(traced.incoming)
+      const setup = yield* fixture([encoder.encode(wire)])
+      yield* Stream.runDrain(setup.traced.incoming)
 
-      const recorded = yield* Ref.get(events)
+      const recorded = yield* Ref.get(setup.events)
       const frame = yield* Effect.fromOption(A.head(kindsOf(recorded, "frame")))
       const line = yield* wireEventLine(frame)
       expect(line).toContain('"kind":"frame"')
