@@ -325,18 +325,8 @@ export type Fields<Entries extends ReadonlyArray<Entry>> = {
  */
 export interface Layout<Entries extends ReadonlyArray<Entry>> extends S.decodeTo<S.Struct<Fields<Entries>>, S.String> {}
 
-interface Slot {
-  readonly placement: FieldPlacement
-  /** The property a named field decodes into; `None` for a filler. */
-  readonly name: O.Option<string>
-  /** What a filler always writes; `None` for a named field. */
-  readonly fixed: O.Option<string>
-}
-
-const slotOf = (entry: Entry): Slot =>
-  Predicate.isTagged(entry, "Filler")
-    ? { placement: entry.placement, name: O.none(), fixed: O.some(entry.value) }
-    : { placement: entry[1].placement, name: O.some(entry[0]), fixed: O.none() }
+const placed = (entry: Entry): FieldPlacement =>
+  Predicate.isTagged(entry, "Filler") ? entry.placement : entry[1].placement
 
 interface Scan {
   readonly offset: number
@@ -345,49 +335,46 @@ interface Scan {
 
 const step =
   (data: string, options: ParseOptions) =>
-  (scan: Scan, slot: Slot): Effect.Effect<Scan, SchemaIssue.Issue> => {
-    const expected = O.getOrElse(slot.placement.id, () => "")
+  (scan: Scan, entry: Entry): Effect.Effect<Scan, SchemaIssue.Issue> => {
+    const placement = placed(entry)
+    const expected = O.getOrElse(placement.id, () => "")
     const id = Str.substring(scan.offset, scan.offset + Str.length(expected))(data)
     const start = scan.offset + Str.length(expected)
-    const value = Str.substring(start, start + slot.placement.width)(data)
+    const value = Str.substring(start, start + placement.width)(data)
 
-    return id !== expected
-      ? invalid(`expected parameter ${expected} at offset ${scan.offset}, found "${id}"`, data, options)
-      : Str.length(value) !== slot.placement.width
-        ? invalid(`parameter ${expected || `at offset ${start}`} is truncated`, data, options)
-        : Effect.succeed({
-            offset: start + slot.placement.width,
-            values: O.match(slot.name, {
-              onNone: () => scan.values,
-              onSome: (name) => A.append(scan.values, [name, value] as const)
-            })
-          })
+    if (id !== expected) {
+      return invalid(`expected parameter ${expected} at offset ${scan.offset}, found "${id}"`, data, options)
+    }
+
+    if (Str.length(value) !== placement.width) {
+      return invalid(`parameter ${expected || `at offset ${start}`} is truncated`, data, options)
+    }
+
+    return Effect.succeed({
+      offset: start + placement.width,
+      values: Predicate.isTagged(entry, "Filler") ? scan.values : A.append(scan.values, [entry[0], value] as const)
+    })
   }
 
 const emptyScan: Scan = { offset: 0, values: [] }
 
 const slice = (
-  slots: ReadonlyArray<Slot>,
+  entries: ReadonlyArray<Entry>,
   data: string,
   options: ParseOptions
 ): Effect.Effect<{ readonly [name: string]: string }, SchemaIssue.Issue> =>
   Effect.gen(function* () {
-    const scan = yield* Effect.reduce(slots, () => emptyScan, step(data, options))
+    const scan = yield* Effect.reduce(entries, () => emptyScan, step(data, options))
 
     return R.fromEntries(scan.values)
   })
 
-const join = (slots: ReadonlyArray<Slot>, values: { readonly [name: string]: string }): string =>
+const written = (entry: Entry, values: { readonly [name: string]: string }): string =>
+  Predicate.isTagged(entry, "Filler") ? entry.value : O.getOrElse(R.get(values, entry[0]), () => "")
+
+const join = (entries: ReadonlyArray<Entry>, values: { readonly [name: string]: string }): string =>
   A.join(
-    A.map(
-      slots,
-      (slot) =>
-        O.getOrElse(slot.placement.id, () => "") +
-        O.getOrElse(
-          O.orElse(slot.fixed, () => O.flatMap(slot.name, (name) => R.get(values, name))),
-          () => ""
-        )
-    ),
+    A.map(entries, (entry) => O.getOrElse(placed(entry).id, () => "") + written(entry, values)),
     ""
   )
 
@@ -418,8 +405,6 @@ const join = (slots: ReadonlyArray<Slot>, values: { readonly [name: string]: str
  */
 export function layout<const Entries extends ReadonlyArray<Entry>>(entries: Entries): Layout<Entries>
 export function layout(entries: ReadonlyArray<Entry>): S.Top {
-  const slots = A.map(entries, slotOf)
-
   const named = A.filterMap(entries, (entry) =>
     Predicate.isTagged(entry, "Filler") ? Result.failVoid : Result.succeed([entry[0], entry[1].codec] as const)
   )
@@ -428,8 +413,8 @@ export function layout(entries: ReadonlyArray<Entry>): S.Top {
     S.decodeTo(
       S.Struct(R.fromEntries(named)),
       SchemaTransformation.transformEffect({
-        decode: (data: string, options) => slice(slots, data, options),
-        encode: (values: { readonly [name: string]: string }) => Effect.succeed(join(slots, values))
+        decode: (data: string, options) => slice(entries, data, options),
+        encode: (values: { readonly [name: string]: string }) => Effect.succeed(join(entries, values))
       })
     )
   )
