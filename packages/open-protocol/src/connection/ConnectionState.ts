@@ -346,6 +346,17 @@ export const isClosedOrClosing = (state: ConnectionState): boolean =>
  */
 export const isReady = (state: ConnectionState): boolean => Predicate.isTagged(state, "Ready")
 
+/**
+ * Whether the connection is waiting after the first failure of a streak. Its
+ * first attempt failed, or a session that reached `Ready` ended. Either way
+ * the backoff before the next attempt starts over.
+ *
+ * @category predicates
+ * @since 0.0.0
+ */
+export const isStreakStart = (state: ConnectionState): boolean =>
+  Predicate.isTagged(state, "WaitingToReconnect") && state.attempt === 1
+
 /** The result of applying one event: the next state, or why it was refused. */
 type Transitioned = Result.Result<ConnectionState, InvalidTransition>
 

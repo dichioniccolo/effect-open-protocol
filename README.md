@@ -31,9 +31,11 @@ risultato. Poi ho staccato la WLAN del controller e ho fatto un nuovo
 serraggio. Quando la rete è tornata, la libreria si è riconnessa e ha
 recuperato con il MID 0064 il risultato perso. Alla fine l'applicazione aveva
 ricevuto entrambi i risultati, una volta sola ciascuno. La prova ha anche fatto
-emergere un problema che il simulatore non poteva mostrare: il tentativo di
-connessione non ha un timeout, e con la rete giù resta appeso finché la rete
-torna o il sistema operativo rinuncia. Lo correggerò a parte.
+emergere due problemi che il simulatore non poteva mostrare. Il tentativo di
+connessione non aveva un timeout, e con la rete giù restava appeso finché la
+rete tornava o il sistema operativo rinunciava. E il risultato recuperato
+veniva confermato con un MID 0062, che spetta solo a quelli inviati dal
+controller con il MID 0061. Ora sono corretti entrambi.
 
 Se si volesse guardare il codice, consiglierei di partire da
 `DeviceConnection.ts` e `ResultDelivery.ts`, e poi dal test `Chaos.test.ts`.

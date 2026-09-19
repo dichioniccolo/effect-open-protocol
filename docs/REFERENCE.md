@@ -580,10 +580,13 @@ Nexo tightening tool, with the `client` command:
 5. On shutdown: `delivered: 2, duplicates: 0`, identifiers 2635 and 2636, and a
    MID 0003 went out before the socket closed.
 
-The run also showed something the simulator could not: opening the TCP
-connection has no timeout. With the network down, the attempt stayed in
+The run also showed two things the simulator could not. Opening the TCP
+connection had no timeout. With the network down, the attempt stayed in
 `Connecting` for 36 seconds until the WLAN returned, instead of failing and
-retrying on the backoff schedule. See [Known limits](#known-limits).
+retrying on the backoff schedule. An attempt now gives up after
+`connectTimeout` (10 s by default). The library also acknowledged the recovered
+2636 with a MID 0062, which only a pushed MID 0061 takes. It no longer
+acknowledges recovered results.
 
 ## Technical decisions
 
@@ -685,13 +688,6 @@ logged and the state is observable.
 
 ## Known limits
 
-- Opening a TCP connection has no timeout. While the network is down an
-  attempt waits for the operating system to give up, which on Linux is about
-  two minutes. Found on the real controller; to be fixed.
-- A result recovered with MID 0064/0065 is acknowledged with MID 0062, although
-  only a pushed MID 0061 takes an acknowledgement. The Nexo ignores it, but a
-  0062 names no result, so it could acknowledge a pushed result the handler
-  has not taken yet. To be fixed.
 - Duplicate detection and the recovery watermark are in memory: a restart
   forgets both, and results acknowledged just before a crash could be delivered
   again. Idempotent handlers cover this.

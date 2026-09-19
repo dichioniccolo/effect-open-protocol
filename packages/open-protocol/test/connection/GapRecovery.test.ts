@@ -7,6 +7,7 @@ import * as GapRecovery from "../../src/connection/GapRecovery.ts"
 import { resolveSettings } from "../../src/connection/DeviceSettings.ts"
 import * as RequestReply from "../../src/connection/RequestReply.ts"
 import type { Session } from "../../src/connection/Session.ts"
+import type { Pushed } from "../../src/connection/Subscriptions.ts"
 import { decodeFrame, decodeMessage, encodeMessage, OldResult } from "../../src/protocol/Messages.ts"
 import {
   ControllerTimestamp,
@@ -82,12 +83,15 @@ const fixture = Effect.fnUntraced(function* () {
 
   const session: Session = { duplex: { incoming: Stream.empty, send: () => Effect.void }, replies }
 
+  const submit = (result: TighteningResult) =>
+    Effect.andThen(
+      Ref.update(submitted, (current) => A.append(current, result.tighteningId)),
+      dedup.remember(result.tighteningId)
+    )
+
   const pipeline = {
-    submit: (result: TighteningResult) =>
-      Effect.andThen(
-        Ref.update(submitted, (current) => A.append(current, result.tighteningId)),
-        dedup.remember(result.tighteningId)
-      ),
+    submitPushed: (pushed: Pushed<TighteningResult>) => submit(pushed.value),
+    submitRecovered: submit,
     delivered: Effect.succeed(0),
     duplicates: Effect.succeed(0)
   } satisfies ResultDelivery
@@ -104,7 +108,7 @@ describe("what triggers a MID 0064", () => {
       const gap = yield* fixture()
       yield* gap.dedup.markBaseline(TighteningId.make(1))
 
-      yield* gap.recovery.submitResult(gap.session, resultFor(2))
+      yield* gap.recovery.submitPushed(gap.session, { value: resultFor(2), ack: Effect.void })
       yield* Effect.yieldNow
 
       expect(yield* Ref.get(gap.asked)).toEqual([])
@@ -118,7 +122,7 @@ describe("what triggers a MID 0064", () => {
       const gap = yield* fixture()
       yield* gap.dedup.markBaseline(TighteningId.make(1))
 
-      yield* gap.recovery.submitResult(gap.session, resultFor(3))
+      yield* gap.recovery.submitPushed(gap.session, { value: resultFor(3), ack: Effect.void })
       yield* Effect.sleep(Duration.millis(50))
 
       const requests = yield* Ref.get(gap.asked)
@@ -131,7 +135,7 @@ describe("what triggers a MID 0064", () => {
     Effect.gen(function* () {
       const gap = yield* fixture()
 
-      yield* gap.recovery.submitResult(gap.session, resultFor(9))
+      yield* gap.recovery.submitPushed(gap.session, { value: resultFor(9), ack: Effect.void })
       yield* Effect.yieldNow
 
       expect(yield* Ref.get(gap.asked)).toEqual([])

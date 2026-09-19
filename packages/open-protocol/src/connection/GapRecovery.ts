@@ -18,6 +18,7 @@ import type { ResultDelivery } from "../results/ResultDelivery.ts"
 import { runRecovery } from "../results/ResultRecovery.ts"
 import { RequestOldResultMid } from "../protocol/Messages.ts"
 import type { Session } from "./Session.ts"
+import type { Pushed } from "./Subscriptions.ts"
 import type { DeviceSettings } from "./DeviceSettings.ts"
 
 /**
@@ -30,7 +31,7 @@ export interface GapRecovery {
   /** Fetches everything between the last contiguously delivered result and the newest one. */
   readonly recoverGap: (session: Session) => Effect.Effect<void>
   /** Submits a pushed result, starting a recovery pass first when it reveals a gap. */
-  readonly submitResult: (session: Session, result: TighteningResult) => Effect.Effect<void>
+  readonly submitPushed: (session: Session, pushed: Pushed<TighteningResult>) => Effect.Effect<void>
 }
 
 /**
@@ -78,7 +79,7 @@ export const make = Effect.fnUntraced(function* (options: {
               session.replies.request(RequestOldResultMid.rev(1), { tighteningId }, settings.recoveryTimeout),
               (stored) => resultOf(settings.id, stored)
             ),
-          submit: pipeline.submit,
+          submit: pipeline.submitRecovered,
           limit: settings.recoveryLimit
         })
 
@@ -117,15 +118,15 @@ export const make = Effect.fnUntraced(function* (options: {
     })
   }
 
-  const submitResult = Effect.fnUntraced(function* (session: Session, result: TighteningResult) {
+  const submitPushed = Effect.fnUntraced(function* (session: Session, pushed: Pushed<TighteningResult>) {
     const watermark = yield* dedup.lastDelivered
 
-    if (O.isSome(watermark) && result.tighteningId > watermark.value + 1) {
+    if (O.isSome(watermark) && pushed.value.tighteningId > watermark.value + 1) {
       yield* Effect.forkChild(recoverGap(session))
     }
 
-    yield* pipeline.submit(result)
+    yield* pipeline.submitPushed(pushed)
   })
 
-  return { recoverGap, submitResult } satisfies GapRecovery
+  return { recoverGap, submitPushed } satisfies GapRecovery
 })

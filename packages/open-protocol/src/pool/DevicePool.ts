@@ -8,7 +8,7 @@
  *
  * @since 0.0.0
  */
-import { Deferred, Effect, FiberMap, HashMap, Layer, pipe, Ref, SubscriptionRef } from "effect"
+import { Cause, Deferred, Effect, Fiber, FiberMap, HashMap, Layer, Predicate, Ref, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import * as Context from "effect/Context"
 import * as O from "effect/Option"
@@ -59,82 +59,65 @@ export interface DevicePoolService {
   readonly status: Effect.Effect<ReadonlyArray<DeviceStatus>>
 }
 
-/**
- * A device's place in the pool. The slot is taken before the fiber starts, so
- * two concurrent `add` calls for one identifier cannot both win; `connection`
- * fills in once the connection is supervised.
- */
-interface Slot {
-  readonly started: Deferred.Deferred<DeviceConnection.DeviceConnectionService>
-  readonly connection: O.Option<DeviceConnection.DeviceConnectionService>
-}
-
 const make = Effect.fnUntraced(function* () {
   const transport = yield* Transport
   const fibers = yield* FiberMap.make<DeviceId>()
-  const slots = yield* Ref.make(HashMap.empty<DeviceId, Slot>())
+  // A device's place in the pool. The slot is taken before the fiber starts,
+  // so two concurrent `add` calls for one identifier cannot both win; the
+  // connection fills in once it is supervised.
+  const slots = yield* Ref.make(HashMap.empty<DeviceId, O.Option<DeviceConnection.DeviceConnectionService>>())
 
-  const add = (config: DeviceConfig): Effect.Effect<DeviceConnection.DeviceConnectionService, DeviceAlreadyAdded> =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<DeviceConnection.DeviceConnectionService>()
+  /** Runs one device, holding its connection open until a `remove` or the pool closing ends it. */
+  const supervise = Effect.fnUntraced(
+    function* (config: DeviceConfig, started: Deferred.Deferred<DeviceConnection.DeviceConnectionService>) {
+      const connection = yield* Effect.provideService(DeviceConnection.make(config), Transport, transport)
+      yield* Ref.update(slots, HashMap.set(config.id, O.some(connection)))
+      yield* Deferred.succeed(started, connection)
 
-      // Claiming the slot and noticing a duplicate are one atomic step: doing
-      // them apart lets two adds for the same device both pass the check.
-      const claimed = yield* Ref.modify(slots, (current) =>
-        HashMap.has(current, config.id)
-          ? [false, current]
-          : [true, HashMap.set(current, config.id, { started, connection: O.none() })]
+      return yield* Effect.never
+    },
+    Effect.scoped,
+    (effect, config) => Effect.ensuring(effect, Ref.update(slots, HashMap.remove(config.id))),
+    (effect, config) =>
+      Effect.tapCauseIf(effect, Predicate.not(Cause.hasInterruptsOnly), (cause) =>
+        Effect.annotateLogs(Effect.logError("a device connection stopped", cause), { deviceId: config.id })
       )
+  )
 
-      if (!claimed) {
-        return yield* Effect.fail(new DeviceAlreadyAdded({ deviceId: config.id }))
-      }
+  const add = Effect.fnUntraced(function* (config: DeviceConfig) {
+    const started = yield* Deferred.make<DeviceConnection.DeviceConnectionService>()
 
-      yield* FiberMap.run(
-        fibers,
-        config.id,
-        Effect.scoped(
-          Effect.gen(function* () {
-            const connection = yield* Effect.provideService(DeviceConnection.make(config), Transport, transport)
-            yield* Ref.update(slots, (current) =>
-              HashMap.set(current, config.id, { started, connection: O.some(connection) })
-            )
-            yield* Effect.addFinalizer(() => Ref.update(slots, (current) => HashMap.remove(current, config.id)))
-            yield* Deferred.succeed(started, connection)
+    // Claiming the slot and noticing a duplicate are one atomic step: doing
+    // them apart lets two adds for the same device both pass the check.
+    const claimed = yield* Ref.modify(slots, (current) =>
+      HashMap.has(current, config.id) ? [false, current] : [true, HashMap.set(current, config.id, O.none())]
+    )
 
-            // Hold the scope open until the device is removed or the pool closes.
-            return yield* Effect.never
-          })
-        ).pipe(
-          Effect.catchCause((cause) =>
-            pipe(
-              Ref.update(slots, (current) => HashMap.remove(current, config.id)),
-              Effect.andThen(
-                Effect.logError("a device connection stopped", cause).pipe(Effect.annotateLogs({ deviceId: config.id }))
-              )
-            )
-          )
-        )
-      )
+    if (!claimed) {
+      return yield* Effect.fail(new DeviceAlreadyAdded({ deviceId: config.id }))
+    }
 
-      return yield* Deferred.await(started)
-    })
+    const fiber = yield* FiberMap.run(fibers, config.id, supervise(config, started))
+
+    // Only the fiber completes `started`, once the connection is supervised.
+    // A fiber that ends before that (a defect in `make`, or a remove or pool
+    // close that interrupts it) never will, so its exit answers instead.
+    return yield* Effect.raceFirst(Deferred.await(started), Fiber.join(fiber))
+  })
 
   const remove = (deviceId: DeviceId): Effect.Effect<void> => FiberMap.remove(fibers, deviceId)
 
   const get = (deviceId: DeviceId): Effect.Effect<O.Option<DeviceConnection.DeviceConnectionService>> =>
-    Effect.map(Ref.get(slots), (current) => O.flatMap(HashMap.get(current, deviceId), (slot) => slot.connection))
+    Effect.map(Ref.get(slots), (current) => O.flatten(HashMap.get(current, deviceId)))
 
   const status = Effect.flatMap(Ref.get(slots), (current) =>
-    Effect.forEach(
-      A.getSomes(A.map(A.fromIterable(HashMap.values(current)), (slot) => slot.connection)),
-      (connection) =>
-        Effect.all({
-          deviceId: Effect.succeed(connection.deviceId),
-          state: SubscriptionRef.get(connection.state),
-          delivered: connection.delivered,
-          duplicates: connection.duplicates
-        })
+    Effect.forEach(A.getSomes(A.fromIterable(HashMap.values(current))), (connection) =>
+      Effect.all({
+        deviceId: Effect.succeed(connection.deviceId),
+        state: SubscriptionRef.get(connection.state),
+        delivered: connection.delivered,
+        duplicates: connection.duplicates
+      })
     )
   )
 

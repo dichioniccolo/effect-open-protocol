@@ -27,6 +27,8 @@ export interface DeviceConfig {
   readonly endpoint: Endpoint
   /** Backoff between connection attempts. Defaults to jittered exponential, capped at 30 seconds. */
   readonly reconnect?: Schedule.Schedule<unknown> | undefined
+  /** How long opening the connection may take before the attempt fails. Defaults to 10 seconds. */
+  readonly connectTimeout?: Duration.Duration | undefined
   /** Idle time before a keep-alive is sent. Defaults to 10 seconds. */
   readonly keepAliveInterval?: Duration.Duration | undefined
   /** How long to wait for a reply before declaring the session dead. Defaults to 5 seconds. */
@@ -105,6 +107,7 @@ export const defaultHandlerRetry: Schedule.Schedule<Duration.Duration> = pipe(
  */
 export const defaultSettings = {
   reconnect: defaultReconnect,
+  connectTimeout: Duration.seconds(10),
   keepAliveInterval: Duration.seconds(10),
   responseTimeout: Duration.seconds(5),
   stopTimeout: Duration.seconds(1),
@@ -154,6 +157,7 @@ export const resolveSettings = (config: DeviceConfig): DeviceSettings => ({
   // and a handler, so it cannot hold its defaults as a schema.
   ...config,
   reconnect: config.reconnect ?? defaultSettings.reconnect,
+  connectTimeout: config.connectTimeout ?? defaultSettings.connectTimeout,
   keepAliveInterval: config.keepAliveInterval ?? defaultSettings.keepAliveInterval,
   responseTimeout: config.responseTimeout ?? defaultSettings.responseTimeout,
   stopTimeout: config.stopTimeout ?? defaultSettings.stopTimeout,
