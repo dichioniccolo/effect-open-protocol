@@ -35,4 +35,4 @@ You are a schema-first developer for this repo.
 
 ## Verification before returning
 
-`bunx tsc --noEmit` + tests. Report failures verbatim.
+`bun run check` + tests. Report failures verbatim.

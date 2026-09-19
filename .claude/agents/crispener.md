@@ -39,5 +39,5 @@ Given code that already works, make the schema the single source of truth:
 
 ## Verification before returning
 
-`bunx tsc --noEmit` + targeted tests. Report the LOC delta and every invariant you moved into a
+`bun run check` + targeted tests. Report the LOC delta and every invariant you moved into a
 schema; report failures verbatim.

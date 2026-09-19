@@ -1,52 +1,34 @@
 {
-  "name": "effect-open-protocol",
+  "name": "effect-flow",
   "version": "0.0.0",
-  "description": "Open Protocol client for tightening controllers, built with Effect: resilient connections and at-least-once result delivery.",
-  "type": "module",
   "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.14",
   "workspaces": [
-    "store",
-    "ui"
-  ],
-  "engines": {
-    "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
-  },
-  "main": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.mts",
-      "import": "./dist/index.mjs"
-    }
-  },
-  "files": [
-    "dist"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
-    "test": "bunx --bun vitest run",
-    "check": "tsc --noEmit",
-    "build": "tsdown",
-    "demo": "bun run demo/chaos.ts",
-    "controller": "bun run cli/controller.ts",
-    "client": "bun run cli/client.ts",
-    "ui": "bun run --cwd ui dev",
+    "build": "turbo run build",
+    "check": "tsc --noEmit && turbo run check",
+    "test": "turbo run test",
+    "dev": "turbo run dev",
+    "ui": "turbo run dev --filter=@effect-open-protocol/ui",
+    "demo": "bun run packages/cli/src/chaos.ts",
+    "soak": "bun run packages/cli/scripts/soak.ts",
+    "controller": "bun run packages/cli/src/controller.ts",
+    "client": "bun run packages/cli/src/client.ts",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt",
     "format:check": "oxfmt --check"
   },
-  "dependencies": {
-    "@effect/platform-node": "4.0.0-rc.115",
-    "effect": "4.0.0-rc.115"
-  },
   "devDependencies": {
-    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-    "@effect/vitest": "4.0.0-rc.115",
     "@oxlint/plugins": "1.83.0",
     "@types/bun": "latest",
     "oxfmt": "0.68.0",
     "oxlint": "1.83.0",
-    "tsdown": "0.23.0",
+    "turbo": "^2.11.2",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
   }

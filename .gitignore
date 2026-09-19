@@ -37,4 +37,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .repos/*
 
 # Recorded wire traces (bun run controller / client, read by ui/)
-.wire-trace/
+.effect-open-protocol/
+
+# turbo
+.turbo

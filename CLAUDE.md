@@ -21,8 +21,8 @@ Default to using Bun instead of Node.js.
 
 ## Testing
 
-Tests run on Vitest with `@effect/vitest`: `bun run test` (runs
-`vitest run` under Bun). Do not use `bun test` or `bun:test` — Bun's runner does
+Tests run on Vitest with `@effect/vitest`: `bun run test` (turbo runs
+`vitest run` under Bun in each package). Do not use `bun test` or `bun:test` — Bun's runner does
 not support `@effect/vitest`.
 
 ```ts#index.test.ts
@@ -56,9 +56,9 @@ throwaway component state.
 - Validate atom APIs against that source, not training-data priors.
 
 Components come from shadcn/ui (Base UI primitives, `base-nova` style) and live
-in `ui/components/ui/`. Add them with `bunx --bun shadcn@latest add <name>` from
-`ui/` and follow the `shadcn` skill. Colors are shadcn's variable names with
-this project's values, defined once in `ui/app/globals.css`; use the semantic
+in `apps/ui/components/ui/`. Add them with `bunx --bun shadcn@latest add <name>` from
+`apps/ui/` and follow the `shadcn` skill. Colors are shadcn's variable names with
+this project's values, defined once in `apps/ui/app/globals.css`; use the semantic
 utilities (`bg-background`, `text-muted-foreground`, `text-live`, ...), never
 raw palette steps.
 
@@ -106,9 +106,10 @@ Validate Effect v4 APIs against real source, not training-data priors. Run
 
 ### Verification
 
-- Type check: `bunx tsc --noEmit`.
+- Type check: `bun run check` (root tooling, then `tsc --noEmit` in every
+  workspace through turbo).
 - Lint: `bun run lint` (oxlint, config in `.oxlintrc.json`).
 - Format: `bun run format` (oxfmt, config in `.oxfmtrc.json`); CI-style
   check with `bun run format:check`.
 - Tests: `bun run test` (see Testing above); target files with
-  `bun run test <path>`.
+  `bunx --bun vitest run <path>` from the root.

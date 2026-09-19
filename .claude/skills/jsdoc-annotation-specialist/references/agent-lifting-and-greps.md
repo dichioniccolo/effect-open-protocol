@@ -31,7 +31,7 @@ but files whose documentation is touched migrate to titled Example sections.
 ## Grep audits
 
 These commands are heuristics for focusing review. Compiling examples and
-`bunx tsc --noEmit` remain authoritative.
+`bun run check` remain authoritative.
 
 ### Export ownership and required metadata
 
