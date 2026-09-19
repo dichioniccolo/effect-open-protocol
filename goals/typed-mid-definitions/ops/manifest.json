@@ -3,13 +3,13 @@
   "initiative": {
     "id": "typed-mid-definitions",
     "title": "Typed MID Definitions",
-    "status": "active",
+    "status": "completed-retained",
     "created": "2026-09-19",
     "updated": "2026-09-19",
     "packetAnchorDocument": "SPEC.md"
   },
   "packetPath": "goals/typed-mid-definitions",
-  "lifecycle": "active",
+  "lifecycle": "completed-retained",
   "mission": "Code-defined Open Protocol MIDs with one exact Effect Schema type per revision and a declared reply, so request(Def.rev(n), payload) returns exactly the reply type; every built-in MID migrates and the untyped request API is removed.",
   "executionCapable": true,
   "reflectionRequired": true,
@@ -74,12 +74,12 @@
     {
       "id": "P5",
       "name": "PR to mergeable",
-      "status": "in-progress"
+      "status": "complete"
     },
     {
       "id": "P6",
       "name": "Close",
-      "status": "pending"
+      "status": "complete"
     }
   ],
   "verificationCommands": [
@@ -103,5 +103,10 @@
   ],
   "relatedGoals": {
     "followOn": "goals/typed-subscriptions"
+  },
+  "evidence": {
+    "pullRequest": "https://github.com/dichioniccolo/effect-open-protocol/pull/7",
+    "mergeStateStatus": "CLEAN",
+    "reflection": "history/reflections/2026-09-19-claude.md"
   }
 }

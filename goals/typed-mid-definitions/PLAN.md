@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: `in-progress`
+Status: `complete`
 
 ## Phases
 
@@ -13,8 +13,8 @@ Status: `in-progress`
 | P2 Migrate built-ins | complete | Every other built-in becomes a definition. The handshake, keep-alive and `ResultRecovery` use the typed call. `wireFormat`, `decoderFor`, `dataOf`, `midOf`, `revisionOf`, the closed `Mid` literals, `request(message, mid, direct?)` and `expectReply` are removed. `packages/cli` and `apps/ui` are fixed where the break forces it. | No old-path code remains (`rg "wireFormat\|expectReply\|revisionOf" packages` is empty); the whole suite is green. |
 | P3 Decode fallback and simulator | complete | Body decode failures and undefined revisions become `UnknownMessage` plus a warning, and the session survives. A pending dedicated reply at an undefined revision gets `UnexpectedRevision`. The simulator answers `0004` to MIDs it doesn't model. | A test for each path; header errors still end the session (existing tests). |
 | P4 Example MID and docs | complete | One example custom MID (at least two revisions and a declared reply) with codec round trips and a typed request over the in-memory transport. README sections for defining and requesting a MID. JSDoc rubric pass on every new export. | Full verification matrix in `SPEC.md` green. |
-| P5 PR to mergeable | in-progress | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
-| P6 Close | pending | Write the closeout reflection, flip packet state, and resume `typed-subscriptions`. | Packet status and evidence are updated; a closeout reflection exists; `goals/typed-subscriptions` is set `active`. |
+| P5 PR to mergeable | complete | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
+| P6 Close | complete | Write the closeout reflection, flip packet state, and resume `typed-subscriptions`. | Packet status and evidence are updated; a closeout reflection exists; `goals/typed-subscriptions` is set `active`. |
 
 <!--
 Phase ids must match ops/manifest.json `phases[]`. A packet may use its own
@@ -22,7 +22,7 @@ scheme (milestones, sub-phases, prose), but its plan must never contradict its
 own manifest.
 -->
 
-## What Landed So Far
+## What Landed
 
 - **P1 and P2 landed together.** The `Mid` tests had already proven the
   exact per-revision and reply types, so every built-in moved onto the
@@ -52,6 +52,12 @@ own manifest.
   type-checked against the package.
 - **One transient `next build` crash** (SIGILL inside Bun) went away on
   retry; the two runs after it built cleanly.
+- **P5:** [PR 7](https://github.com/dichioniccolo/effect-open-protocol/pull/7)
+  is `CLEAN`/`MERGEABLE`, with zero review threads. The repository has no CI
+  workflows, so there are no required checks; the full matrix ran locally.
+- **P6:** the reflection is at `history/reflections/2026-09-19-claude.md`.
+  Checklist item 4 (activating `typed-subscriptions`) waits for PR 7 to be
+  merged. That packet's resume condition is the merge, not merge-readiness.
 - **Built-in definitions are named `<Message>Mid`**
   (`RequestOldResultMid.rev(1)`), because the message classes keep their
   names.
