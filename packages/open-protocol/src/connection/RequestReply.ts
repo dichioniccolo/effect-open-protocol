@@ -13,26 +13,12 @@
 import { Deferred, Effect, Predicate, Ref, Semaphore } from "effect"
 import * as O from "effect/Option"
 import type { Duration } from "effect"
-import * as S from "effect/Schema"
-import type { CommandAccepted, Message } from "../protocol/Messages.ts"
+import type { Incoming } from "../protocol/Messages.ts"
 import * as Mid from "../protocol/Mid.ts"
-import { PayloadEncodeError, type PayloadDecodeError } from "../protocol/ProtocolError.ts"
+import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
-import type { ConnectionLost } from "../transport/Transport.ts"
-import { CommandRejected, RequestTimeout, UnexpectedRevision } from "./ConnectionError.ts"
-
-/**
- * What a request revision resolves to: the declared reply revision's value,
- * the `0005` acknowledgement, or nothing.
- *
- * @category models
- * @since 0.0.0
- */
-export type ReplyOf<Rev extends Mid.AnyRequestRevision> = Rev["reply"] extends Mid.AnyRevision
-  ? Mid.Type<Rev["reply"]>
-  : Rev["reply"] extends Mid.Accepted
-    ? CommandAccepted
-    : void
+import { ConnectionLost } from "../transport/Transport.ts"
+import { CommandRejected, RequestTimeout } from "./ConnectionError.ts"
 
 /**
  * How a reply can go wrong once the request is on the wire.
@@ -40,7 +26,7 @@ export type ReplyOf<Rev extends Mid.AnyRequestRevision> = Rev["reply"] extends M
  * @category models
  * @since 0.0.0
  */
-export type ReplyError = CommandRejected | UnexpectedRevision | PayloadDecodeError
+export type ReplyError = CommandRejected | Mid.ReplyError
 
 /**
  * Every way a request can fail.
@@ -50,65 +36,26 @@ export type ReplyError = CommandRejected | UnexpectedRevision | PayloadDecodeErr
  */
 export type RequestError = RequestTimeout | ConnectionLost | PayloadEncodeError | ReplyError
 
-type Answer = O.Option<Effect.Effect<unknown, ReplyError>>
+/**
+ * A request revision whose reply resolves to `A`.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export type Expecting<Rev extends Mid.AnyRequestRevision, A> = Rev & { readonly reply: Mid.Reply<A> }
 
-// A plain boolean on purpose: the reply's type is unknown here, and a type
-// guard would narrow `message` to `never` on the other branches.
-const isValueOf = (reply: Mid.AnyRevision, message: Message): boolean => S.is(S.toType(reply.codec))(message)
+const rejected = <A>(request: number, incoming: Incoming): O.Option<Effect.Effect<A, ReplyError, Mid.FrameContext>> => {
+  const message = incoming.message
 
-const rejected = (requestMid: number, message: Message): Answer =>
-  Predicate.isTagged(message, "CommandError") && message.mid === requestMid
-    ? O.some(Effect.fail(new CommandRejected({ mid: requestMid, code: message.code })))
+  return Predicate.isTagged(message, "CommandError") && message.mid === request
+    ? O.some(Effect.fail(new CommandRejected({ mid: request, code: message.code })))
     : O.none()
+}
 
-const dedicated = (reply: Mid.AnyRevision, deviceId: DeviceId, message: Message): Answer =>
-  isValueOf(reply, message)
-    ? O.some(Effect.succeed(message))
-    : Predicate.isTagged(message, "UnknownMessage") && message.mid === reply.mid
-      ? O.some(
-          message.revision === reply.revision
-            ? Mid.decode(reply, message.data, deviceId)
-            : Effect.fail(
-                new UnexpectedRevision({ mid: reply.mid, expected: reply.revision, received: message.revision })
-              )
-        )
-      : Predicate.isTagged(message, reply.tag)
-        ? O.some(
-            Effect.fail(
-              new UnexpectedRevision({ mid: reply.mid, expected: reply.revision, received: message.revision })
-            )
-          )
-        : O.none()
-
-const answerOf =
-  (request: Mid.AnyRequestRevision, deviceId: DeviceId) =>
-  (message: Message): Answer =>
-    O.orElse(rejected(request.mid, message), () =>
-      Predicate.isTagged(request.reply, "Accepted")
-        ? Predicate.isTagged(message, "CommandAccepted") && message.mid === request.mid
-          ? O.some(Effect.succeed(message))
-          : O.none()
-        : Predicate.isTagged(request.reply, "NoReply")
-          ? O.none()
-          : dedicated(request.reply, deviceId, message)
-    )
-
-const frameOf = <Rev extends Mid.AnyRequestRevision>(
-  revision: Rev,
-  payload: Mid.Payload<Rev>
-): Effect.Effect<string, PayloadEncodeError> =>
-  Effect.gen(function* () {
-    const value = yield* Effect.mapError(
-      revision.codec.makeEffect(payload),
-      (issue) => new PayloadEncodeError({ mid: revision.mid, reason: `${issue}` })
-    )
-
-    return yield* Effect.fromResult(Mid.encode(revision, value))
-  })
-
+/** The request in flight: settles itself from its reply, or fails with the session. */
 interface Pending {
-  readonly answer: (message: Message) => Answer
-  readonly deferred: Deferred.Deferred<unknown, ReplyError | ConnectionLost>
+  readonly settle: (incoming: Incoming) => O.Option<Effect.Effect<void>>
+  readonly fail: (error: ConnectionLost) => Effect.Effect<void>
 }
 
 /**
@@ -122,13 +69,13 @@ export interface RequestReply {
    * Sends a value of a request revision and waits for the reply that
    * revision declares, typed accordingly.
    */
-  readonly request: <Rev extends Mid.AnyRequestRevision>(
-    revision: Rev,
+  readonly request: <Rev extends Mid.AnyRequestRevision, A>(
+    revision: Expecting<Rev, A>,
     payload: Mid.Payload<Rev>,
     timeout?: Duration.Duration | undefined
-  ) => Effect.Effect<ReplyOf<Rev>, RequestError>
-  /** Hands an incoming message to the request in flight; `true` if it was its reply. */
-  readonly offer: (message: Message) => Effect.Effect<boolean>
+  ) => Effect.Effect<A, RequestError>
+  /** Hands an incoming frame to the request in flight; `true` if it was its reply. */
+  readonly offer: (incoming: Incoming) => Effect.Effect<boolean>
   /** Fails the request in flight, if any. */
   readonly interruptAll: (error: ConnectionLost) => Effect.Effect<void>
 }
@@ -160,71 +107,133 @@ export const make = Effect.fnUntraced(function* (options: {
   const slot = yield* Ref.make(O.none<Pending>())
   const gate = yield* Semaphore.make(1)
 
-  const exchange = (revision: Mid.AnyRequestRevision, frame: string, timeout: Duration.Duration) =>
-    gate.withPermits(1)(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const deferred = yield* Deferred.make<unknown, ReplyError | ConnectionLost>()
-          yield* Ref.set(slot, O.some({ answer: answerOf(revision, options.deviceId), deferred }))
-          yield* Effect.addFinalizer(() => Ref.set(slot, O.none()))
-          yield* options.send(frame)
+  const exchange = <A>(mid: number, reply: Mid.Reply<A>, frame: string, timeout: Duration.Duration) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const deferred = yield* Deferred.make<A, ReplyError | ConnectionLost>()
 
-          return yield* Effect.timeoutOrElse(Deferred.await(deferred), {
-            duration: timeout,
-            orElse: () => Effect.fail(new RequestTimeout({ mid: revision.mid }))
-          })
+        const pending: Pending = {
+          settle: (incoming) =>
+            O.map(
+              O.orElse(rejected<A>(mid, incoming), () => reply.answer(mid, incoming)),
+              (answer) =>
+                Effect.gen(function* () {
+                  const exit = yield* Effect.exit(
+                    Effect.provideService(answer, Mid.FrameContext, { deviceId: options.deviceId })
+                  )
+
+                  yield* Deferred.done(deferred, exit)
+                })
+            ),
+          fail: (error) => Effect.asVoid(Deferred.fail(deferred, error))
+        }
+
+        yield* Ref.set(slot, O.some(pending))
+        yield* Effect.addFinalizer(() => Ref.set(slot, O.none()))
+        yield* options.send(frame)
+
+        return yield* Effect.timeoutOrElse(Deferred.await(deferred), {
+          duration: timeout,
+          orElse: () => Effect.fail(new RequestTimeout({ mid }))
         })
-      )
+      })
     )
 
-  const request = <Rev extends Mid.AnyRequestRevision>(
-    revision: Rev,
+  const request = <Rev extends Mid.AnyRequestRevision, A>(
+    revision: Expecting<Rev, A>,
     payload: Mid.Payload<Rev>,
     timeout?: Duration.Duration | undefined
-  ): Effect.Effect<ReplyOf<Rev>, RequestError> =>
+  ): Effect.Effect<A, RequestError> =>
     Effect.gen(function* () {
-      const frame = yield* frameOf(revision, payload)
+      const frame = yield* Mid.frame(revision, payload)
+      const reply: Mid.Reply<A> = revision.reply
 
-      const reply = Predicate.isTagged(revision.reply, "NoReply")
-        ? yield* gate.withPermits(1)(options.send(frame))
-        : yield* exchange(revision, frame, timeout ?? options.responseTimeout)
-
-      // SAFETY: `answerOf` resolves the deferred only with what `revision.reply`
-      // declares: a value of the reply revision (checked by its schema or decoded
-      // by its codec), the `0005` acknowledgement, or nothing for `NoReply`.
-      // That is `ReplyOf<Rev>`; TypeScript cannot follow the runtime branch.
-      return reply as ReplyOf<Rev>
+      return yield* gate.withPermits(1)(
+        O.match(reply.settled, {
+          onSome: (value) => Effect.as(options.send(frame), value),
+          onNone: () => exchange(revision.mid, reply, frame, timeout ?? options.responseTimeout)
+        })
+      )
     })
 
-  const offer = (message: Message): Effect.Effect<boolean> =>
+  const offer = (incoming: Incoming): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       const pending = yield* Ref.get(slot)
 
-      const answered = O.gen(function* () {
-        const current = yield* pending
-        const reply = yield* current.answer(message)
-
-        return { current, reply }
-      })
-
-      if (O.isNone(answered)) {
-        return false
-      }
-
-      const exit = yield* Effect.exit(answered.value.reply)
-      yield* Deferred.done(answered.value.current.deferred, exit)
-
-      return true
+      return yield* O.match(
+        O.flatMap(pending, (current) => current.settle(incoming)),
+        {
+          onNone: () => Effect.succeed(false),
+          onSome: (settle) => Effect.as(settle, true)
+        }
+      )
     })
 
   const interruptAll = (error: ConnectionLost): Effect.Effect<void> =>
     Effect.gen(function* () {
       const pending = yield* Ref.get(slot)
-      yield* O.match(pending, {
-        onNone: () => Effect.void,
-        onSome: (current) => Effect.asVoid(Deferred.fail(current.deferred, error))
-      })
+      yield* O.match(pending, { onNone: () => Effect.void, onSome: (current) => current.fail(error) })
     })
 
   return { request, offer, interruptAll } satisfies RequestReply
 })
+
+/**
+ * `catchTags` handlers that turn every way a request can fail into the
+ * `ConnectionLost` of a session step. Spread them and override a tag to keep
+ * one failure distinct, as the handshake does with a refusal.
+ *
+ * **Example** (Keeping a refusal, losing the session on anything else)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { CommunicationStartMid, HandshakeRejected, RequestReply } from "effect-open-protocol"
+ *
+ * declare const replies: RequestReply.RequestReply
+ *
+ * const accepted = Effect.catchTags(replies.request(CommunicationStartMid.rev(1), {}), {
+ *   ...RequestReply.lostOn("handshake"),
+ *   CommandRejected: (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))
+ * })
+ * ```
+ *
+ * @category combinators
+ * @since 0.0.0
+ */
+export const lostOn = (step: string) => {
+  const lost = (reason: string): Effect.Effect<never, ConnectionLost> =>
+    Effect.fail(new ConnectionLost({ reason: `${step} ${reason}` }))
+
+  const failed = (error: ReplyError | PayloadEncodeError) => lost(`failed: ${error._tag}`)
+
+  return {
+    RequestTimeout: () => lost("timed out"),
+    CommandRejected: (error: CommandRejected) => lost(`refused with code ${error.code}`),
+    UnexpectedRevision: failed,
+    PayloadDecodeError: failed,
+    PayloadEncodeError: failed
+  }
+}
+
+/**
+ * Turns every way a request can fail into the `ConnectionLost` of a session
+ * step, for the library's own requests: whatever goes wrong with them, the
+ * session cannot go on.
+ *
+ * **Example** (Subscribing, or losing the session)
+ *
+ * ```ts
+ * import { RequestReply, SubscribeResultsMid } from "effect-open-protocol"
+ *
+ * declare const replies: RequestReply.RequestReply
+ *
+ * const subscribed = RequestReply.orLost("subscribe")(replies.request(SubscribeResultsMid.rev(1), {}))
+ * ```
+ *
+ * @category combinators
+ * @since 0.0.0
+ */
+export const orLost =
+  (step: string) =>
+  <A, R>(self: Effect.Effect<A, RequestError, R>): Effect.Effect<A, ConnectionLost, R> =>
+    Effect.catchTags(self, lostOn(step))

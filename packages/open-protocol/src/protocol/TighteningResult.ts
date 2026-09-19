@@ -11,7 +11,9 @@ import type { Effect } from "effect"
 import * as A from "effect/Array"
 import * as S from "effect/Schema"
 import type * as SchemaIssue from "effect/SchemaIssue"
+import * as SchemaTransformation from "effect/SchemaTransformation"
 import * as Str from "effect/String"
+import * as Struct from "effect/Struct"
 import * as Field from "./Field.ts"
 
 /**
@@ -161,6 +163,27 @@ export class TighteningResult extends S.Class<TighteningResult>("TighteningResul
 const limitStatus = (id: string) => Field.enumerated({ id, width: 1, literals: LimitStatus })
 
 /**
+ * A torque in newton metres, written on the wire in hundredths.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export const TorqueHundredths = S.Number.pipe(
+  S.decodeTo(
+    S.Number,
+    SchemaTransformation.transform({
+      decode: (hundredths: number) => hundredths / 100,
+      encode: (newtonMetres: number) => Math.round(newtonMetres * 100)
+    })
+  )
+).annotate({
+  identifier: "TorqueHundredths",
+  description: "A torque in newton metres, carried as an integer count of hundredths"
+})
+
+const torque = (id: string) => Field.digits({ id, width: 6, schema: TorqueHundredths })
+
+/**
  * The MID 0061 revision 1 data field. Parameters this library does not model
  * are fillers; parameter 21 (last change of the parameter set) is written with
  * the tightening timestamp and ignored on decode.
@@ -174,7 +197,7 @@ const limitStatus = (id: string) => Field.enumerated({ id, width: 1, literals: L
  *
  * declare const data: string
  *
- * const torque = Effect.map(S.decodeEffect(LastResultBody)(data), (fields) => fields.torque / 100)
+ * const torque = Effect.map(S.decodeEffect(LastResultBody)(data), (fields) => fields.torque)
  * ```
  *
  * @category layouts
@@ -195,7 +218,7 @@ export const LastResultBody = Field.layout([
   Field.filler({ id: "12", width: 6 }),
   Field.filler({ id: "13", width: 6 }),
   Field.filler({ id: "14", width: 6 }),
-  ["torque", Field.digits({ id: "15", width: 6 })],
+  ["torque", torque("15")],
   Field.filler({ id: "16", width: 5 }),
   Field.filler({ id: "17", width: 5 }),
   Field.filler({ id: "18", width: 5 }),
@@ -232,7 +255,7 @@ export const OldResultBody = Field.layout([
   ["status", Field.enumerated({ id: "05", width: 1, literals: TighteningStatus })],
   ["torqueStatus", limitStatus("06")],
   ["angleStatus", limitStatus("07")],
-  ["torque", Field.digits({ id: "08", width: 6 })],
+  ["torque", torque("08")],
   ["angle", Field.digits({ id: "09", width: 5 })],
   ["timestamp", Field.raw({ id: "10", width: 19, schema: ControllerTimestamp })],
   Field.filler({ id: "11", width: 1, value: "2" })
@@ -240,26 +263,16 @@ export const OldResultBody = Field.layout([
 
 /**
  * What both layouts carry of a result: everything but the device, which never
- * travels on the wire, with the torque in hundredths of a newton metre.
+ * travels on the wire.
  *
  * @category models
  * @since 0.0.0
  */
-export interface ResultFields {
-  readonly tighteningId: TighteningId
-  readonly vin: string
-  readonly parameterSetId: number
-  readonly status: TighteningStatus
-  readonly torqueStatus: LimitStatus
-  readonly angleStatus: LimitStatus
-  readonly torque: number
-  readonly angle: number
-  readonly timestamp: ControllerTimestamp
-}
+export type ResultFields = Omit<TighteningResult, "deviceId">
 
 /**
  * Builds the domain result from what a layout decoded, stamping the device it
- * came from.
+ * came from. Fields of the layout that are not part of a result are dropped.
  *
  * **Example** (Building a result from decoded fields)
  *
@@ -279,22 +292,10 @@ export interface ResultFields {
 export const resultOf = (
   deviceId: DeviceId,
   fields: ResultFields
-): Effect.Effect<TighteningResult, SchemaIssue.Issue> =>
-  TighteningResult.makeEffect({
-    deviceId,
-    tighteningId: fields.tighteningId,
-    vin: fields.vin,
-    parameterSetId: fields.parameterSetId,
-    status: fields.status,
-    torqueStatus: fields.torqueStatus,
-    angleStatus: fields.angleStatus,
-    torque: fields.torque / 100,
-    angle: fields.angle,
-    timestamp: fields.timestamp
-  })
+): Effect.Effect<TighteningResult, SchemaIssue.Issue> => TighteningResult.makeEffect({ ...fields, deviceId })
 
 /**
- * The layout fields of a domain result, torque back in hundredths.
+ * The layout fields of a domain result.
  *
  * **Example** (Writing a result back as a MID 0065 data field)
  *
@@ -310,14 +311,4 @@ export const resultOf = (
  * @category encoding
  * @since 0.0.0
  */
-export const fieldsOf = (result: TighteningResult): ResultFields => ({
-  tighteningId: result.tighteningId,
-  vin: result.vin,
-  parameterSetId: result.parameterSetId,
-  status: result.status,
-  torqueStatus: result.torqueStatus,
-  angleStatus: result.angleStatus,
-  torque: Math.round(result.torque * 100),
-  angle: result.angle,
-  timestamp: result.timestamp
-})
+export const fieldsOf = (result: TighteningResult): ResultFields => Struct.omit(result, ["deviceId"])

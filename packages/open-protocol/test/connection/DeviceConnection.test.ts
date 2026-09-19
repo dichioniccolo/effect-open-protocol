@@ -3,7 +3,7 @@ import { Duration, Effect, Fiber, pipe, Predicate, Ref, Result, Schedule, Stream
 import * as O from "effect/Option"
 import { TestClock } from "effect/testing"
 import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
-import { KeepAlive } from "../../src/protocol/Messages.ts"
+import { KeepAliveMid } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
@@ -152,7 +152,7 @@ describe("DeviceConnection", () => {
       Effect.gen(function* () {
         const connection = yield* DeviceConnection.make({ id: deviceId, endpoint })
 
-        const outcome = yield* Effect.result(connection.send(new KeepAlive()))
+        const outcome = yield* Effect.result(connection.send(KeepAliveMid.rev(1), {}))
 
         expect(Result.isFailure(outcome)).toBe(true)
       })
@@ -169,7 +169,7 @@ describe("DeviceConnection", () => {
         yield* connection.close
 
         expect(Predicate.isTagged(yield* SubscriptionRef.get(connection.state), "Closed")).toBe(true)
-        const afterClose = yield* Effect.result(connection.send(new KeepAlive()))
+        const afterClose = yield* Effect.result(connection.send(KeepAliveMid.rev(1), {}))
         expect(Result.isFailure(afterClose)).toBe(true)
       })
     )

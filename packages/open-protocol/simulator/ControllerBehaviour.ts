@@ -8,15 +8,14 @@
  * @since 0.0.0
  */
 import { Match } from "effect"
-import * as A from "effect/Array"
 import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
 import {
-  builtIns,
   CommandAccepted,
   CommandError,
   CommunicationStartAccepted,
   KeepAlive,
+  isBuiltIn,
   type Message,
   OldResult,
   type UnknownMessage
@@ -120,9 +119,7 @@ export const refusalCodes = { unknownMid: 99, unsupportedRevision: 97 } as const
 const refuse = (message: UnknownMessage): CommandError =>
   new CommandError({
     mid: message.mid,
-    code: A.some(builtIns, (definition) => definition.mid === message.mid)
-      ? refusalCodes.unsupportedRevision
-      : refusalCodes.unknownMid
+    code: isBuiltIn(message.mid) ? refusalCodes.unsupportedRevision : refusalCodes.unknownMid
   })
 
 /**

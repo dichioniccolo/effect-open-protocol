@@ -10,10 +10,12 @@
  */
 import { Duration, Effect, Ref, Stream } from "effect"
 import { frames } from "../protocol/Framer.ts"
-import { decodeMessage, encodeMessage, KeepAliveMid, type Message } from "../protocol/Messages.ts"
+import { decodeFrame, KeepAliveMid, type Message } from "../protocol/Messages.ts"
+import * as Mid from "../protocol/Mid.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
+import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
 import { ConnectionLost, type Duplex } from "../transport/Transport.ts"
-import type { RequestReply } from "./RequestReply.ts"
+import { orLost, type RequestReply } from "./RequestReply.ts"
 
 /**
  * The socket and the correlation slot that belong to one connection attempt.
@@ -34,11 +36,11 @@ const encoder = new TextEncoder()
  * **Example** (Writing a keep-alive frame)
  *
  * ```ts
- * import { encodeMessage, KeepAlive, sendFrame, type Duplex } from "effect-open-protocol"
+ * import { encodeFrame, sendFrame, type Duplex } from "effect-open-protocol"
  *
  * declare const duplex: Duplex
  *
- * const sent = sendFrame(duplex, encodeMessage(new KeepAlive()))
+ * const sent = sendFrame(duplex, encodeFrame(9999, 1, ""))
  * ```
  *
  * @category sending
@@ -48,23 +50,32 @@ export const sendFrame = (duplex: Duplex, frame: string): Effect.Effect<void, Co
   duplex.send(encoder.encode(frame))
 
 /**
- * Sends one modelled message, without waiting for anything.
+ * Builds a value of a revision and writes its frame straight to the socket,
+ * without waiting for anything and without taking the correlation slot.
  *
  * **Example** (Acknowledging a result without waiting)
  *
  * ```ts
- * import { AcknowledgeResult, sendRaw, type Duplex } from "effect-open-protocol"
+ * import { AcknowledgeResultMid, sendPayload, type Duplex } from "effect-open-protocol"
  *
  * declare const duplex: Duplex
  *
- * const sent = sendRaw(duplex, new AcknowledgeResult())
+ * const sent = sendPayload(duplex, AcknowledgeResultMid.rev(1), {})
  * ```
  *
  * @category sending
  * @since 0.0.0
  */
-export const sendRaw = (duplex: Duplex, message: Message): Effect.Effect<void, ConnectionLost> =>
-  sendFrame(duplex, encodeMessage(message))
+export const sendPayload = <Rev extends Mid.AnyRevision>(
+  duplex: Duplex,
+  revision: Rev,
+  payload: Mid.Payload<Rev>
+): Effect.Effect<void, ConnectionLost | PayloadEncodeError> =>
+  Effect.gen(function* () {
+    const frame = yield* Mid.frame(revision, payload)
+
+    yield* sendFrame(duplex, frame)
+  })
 
 const protocolLost = (tag: string): Effect.Effect<never, ConnectionLost> =>
   Effect.fail(new ConnectionLost({ reason: `protocol error: ${tag}` }))
@@ -85,11 +96,11 @@ export const readLoop = (
 ): Effect.Effect<never, ConnectionLost> =>
   Effect.gen(function* () {
     const onFrame = Effect.fnUntraced(function* (frame: string) {
-      const message = yield* decodeMessage(frame, deviceId)
-      const consumed = yield* session.replies.offer(message)
+      const incoming = yield* decodeFrame(frame, deviceId)
+      const consumed = yield* session.replies.offer(incoming)
 
       if (!consumed) {
-        yield* onUnsolicited(message)
+        yield* onUnsolicited(incoming.message)
       }
     })
 
@@ -127,13 +138,7 @@ export const keepAliveLoop = (
         return
       }
 
-      yield* Effect.catchTags(session.replies.request(KeepAliveMid.rev(1), {}), {
-        RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" })),
-        CommandRejected: () => Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" })),
-        UnexpectedRevision: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` })),
-        PayloadDecodeError: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` })),
-        PayloadEncodeError: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` }))
-      })
+      yield* orLost("keep-alive")(session.replies.request(KeepAliveMid.rev(1), {}))
       yield* Ref.set(lastSent, now)
     })
   )

@@ -2,11 +2,19 @@ import { describe, expect, it } from "@effect/vitest"
 import { Duration, Effect, Ref } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import { CommandRejected, UnexpectedRevision } from "../../src/connection/ConnectionError.ts"
+import { CommandRejected } from "../../src/connection/ConnectionError.ts"
 import * as RequestReply from "../../src/connection/RequestReply.ts"
 import * as Field from "../../src/protocol/Field.ts"
-import { CommandAccepted, CommandError, type Message, UnknownMessage } from "../../src/protocol/Messages.ts"
+import {
+  CommandAccepted,
+  CommandError,
+  decodeFrame,
+  encodeMessage,
+  type Message,
+  UnknownMessage
+} from "../../src/protocol/Messages.ts"
 import * as Mid from "../../src/protocol/Mid.ts"
+import { UnexpectedRevision } from "../../src/protocol/ProtocolError.ts"
 import { DeviceId } from "../../src/protocol/TighteningResult.ts"
 
 const deviceId = DeviceId.make("tool-1")
@@ -25,26 +33,20 @@ const Status = Mid.define({
   }
 })
 
-const AskStatus = Mid.request({
-  tag: "AskStatus",
-  mid: 7000,
-  revisions: { 1: Field.layout([]) },
-  replies: { 1: Status.rev(1) }
+const AskStatus = Mid.request(Mid.define({ tag: "AskStatus", mid: 7000, revisions: { 1: Field.layout([]) } }), {
+  1: Status.rev(1)
 })
 
-const Reset = Mid.request({
-  tag: "Reset",
-  mid: 7002,
-  revisions: { 1: Field.layout([["level", Field.digits({ width: 4 })]]) },
-  replies: { 1: Mid.accepted }
+const Reset = Mid.request(
+  Mid.define({ tag: "Reset", mid: 7002, revisions: { 1: Field.layout([["level", Field.digits({ width: 4 })]]) } }),
+  { 1: Mid.accepted }
+)
+
+const Notify = Mid.request(Mid.define({ tag: "Notify", mid: 7003, revisions: { 1: Field.layout([]) } }), {
+  1: Mid.noReply
 })
 
-const Notify = Mid.request({
-  tag: "Notify",
-  mid: 7003,
-  revisions: { 1: Field.layout([]) },
-  replies: { 1: Mid.noReply }
-})
+const incomingOf = (message: Message) => Effect.orDie(decodeFrame(encodeMessage(message), deviceId))
 
 /**
  * A slot whose peer answers every frame with `answer`, and remembers what was
@@ -67,7 +69,7 @@ const peer = (answer: O.Option<Message>) =>
 
           yield* O.match(O.all([current, answer]), {
             onNone: () => Effect.void,
-            onSome: ([replyReply, message]) => Effect.asVoid(replyReply.offer(message))
+            onSome: ([slotted, message]) => Effect.asVoid(Effect.flatMap(incomingOf(message), slotted.offer))
           })
         })
     })
@@ -156,7 +158,7 @@ describe("RequestReply", () => {
     Effect.gen(function* () {
       const setup = yield* peer(O.none())
 
-      expect(yield* setup.replies.offer(new CommandAccepted({ mid: 60 }))).toBe(false)
+      expect(yield* setup.replies.offer(yield* incomingOf(new CommandAccepted({ mid: 60 })))).toBe(false)
     })
   )
 })

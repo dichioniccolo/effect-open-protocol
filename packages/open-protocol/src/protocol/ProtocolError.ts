@@ -89,6 +89,35 @@ export class PayloadEncodeError extends S.TaggedError<PayloadEncodeError>()("Pay
 }) {}
 
 /**
+ * A reply arrived at a revision its request did not declare, so it cannot be
+ * read as the promised type.
+ *
+ * **Example** (A controller answering 0065 at revision 2)
+ *
+ * ```ts
+ * import { UnexpectedRevision } from "effect-open-protocol"
+ *
+ * const error = new UnexpectedRevision({ mid: 65, expected: 1, received: 2 })
+ * ```
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class UnexpectedRevision extends S.TaggedError<UnexpectedRevision>()("UnexpectedRevision", {
+  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
+  expected: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
+  received: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 }))
+}) {}
+
+/**
+ * What can break the framing of a byte stream.
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export type FramingError = InvalidLength | MalformedHeader | MissingTerminator
+
+/**
  * Every failure the codec can produce.
  *
  * @category errors

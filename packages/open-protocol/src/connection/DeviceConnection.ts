@@ -17,8 +17,9 @@
 import { Effect, Fiber, Layer, Match, pipe, Ref, SubscriptionRef } from "effect"
 import * as Context from "effect/Context"
 import * as O from "effect/Option"
-import { AcknowledgeResult, CommunicationStop, type Message } from "../protocol/Messages.ts"
+import { AcknowledgeResultMid, CommunicationStopMid, type Message } from "../protocol/Messages.ts"
 import type * as Mid from "../protocol/Mid.ts"
+import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
 import type { DeviceId, TighteningResult } from "../protocol/TighteningResult.ts"
 import * as Dedup from "../results/Dedup.ts"
 import * as ResultDelivery from "../results/ResultDelivery.ts"
@@ -45,7 +46,7 @@ import { type DeviceConfig, type DeviceSettings, resolveSettings } from "./Devic
 import * as GapRecovery from "./GapRecovery.ts"
 import { startCommunication, subscribeResults } from "./Handshake.ts"
 import * as RequestReply from "./RequestReply.ts"
-import { keepAliveLoop, readLoop, sendFrame, sendRaw, type Session } from "./Session.ts"
+import { keepAliveLoop, readLoop, sendFrame, sendPayload, type Session } from "./Session.ts"
 
 /**
  * A live connection as the rest of the library sees it.
@@ -58,12 +59,15 @@ export interface DeviceConnectionService {
   /** Current state, observable as a stream of changes. */
   readonly state: SubscriptionRef.SubscriptionRef<ConnectionState>
   /** Sends a message and waits for its reply; fails fast when not `Ready`. */
-  readonly request: <Rev extends Mid.AnyRequestRevision>(
+  readonly request: <Rev extends Mid.AnyRequestRevision, A>(
+    revision: RequestReply.Expecting<Rev, A>,
+    payload: Mid.Payload<Rev>
+  ) => Effect.Effect<A, NotReady | RequestReply.RequestError>
+  /** Sends a value of a revision without waiting for anything; fails fast when not `Ready`. */
+  readonly send: <Rev extends Mid.AnyRevision>(
     revision: Rev,
     payload: Mid.Payload<Rev>
-  ) => Effect.Effect<RequestReply.ReplyOf<Rev>, NotReady | RequestReply.RequestError>
-  /** Sends a message without expecting a reply. */
-  readonly send: (message: Message) => Effect.Effect<void, NotReady | ConnectionLost>
+  ) => Effect.Effect<void, NotReady | ConnectionLost | PayloadEncodeError>
   /** Stops the connection and returns once every resource is released. */
   readonly close: Effect.Effect<void>
   /** Results handed to the handler, duplicates excluded. */
@@ -181,7 +185,12 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       return yield* Effect.fail(new ConnectionLost({ reason: "no session to acknowledge on" }))
     }
 
-    yield* sendRaw(open.value.duplex, new AcknowledgeResult())
+    // An empty payload always fits: failing to encode it would be a bug here.
+    yield* Effect.catchTag(
+      sendPayload(open.value.duplex, AcknowledgeResultMid.rev(1), {}),
+      "PayloadEncodeError",
+      Effect.die
+    )
     yield* Effect.logDebug("acknowledged a result").pipe(
       Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
     )
@@ -334,7 +343,9 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       return
     }
 
-    yield* sendRaw(open.value.duplex, new CommunicationStop()).pipe(Effect.timeoutOption(settings.stopTimeout))
+    yield* sendPayload(open.value.duplex, CommunicationStopMid.rev(1), {}).pipe(
+      Effect.timeoutOption(settings.stopTimeout)
+    )
   }).pipe(Effect.ignore)
 
   const closeOnce = Effect.gen(function* () {
@@ -361,7 +372,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     deviceId: settings.id,
     state,
     request: (revision, payload) => withSession((current) => current.replies.request(revision, payload)),
-    send: (message) => withSession((current) => sendRaw(current.duplex, message)),
+    send: (revision, payload) => withSession((current) => sendPayload(current.duplex, revision, payload)),
     close,
     delivered: results.delivery.delivered,
     duplicates: results.delivery.duplicates

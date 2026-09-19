@@ -39,15 +39,17 @@ const ToolStatus = Mid.define({
 })
 
 /** MID 9100: asks for a tool's status, answered at the same revision. */
-const ToolStatusRequest = Mid.request({
-  tag: "ToolStatusRequest",
-  mid: 9100,
-  revisions: {
-    1: Field.layout([["toolId", Field.digits({ width: 3 })]]),
-    2: Field.layout([["toolId", Field.digits({ width: 3 })]])
-  },
-  replies: { 1: ToolStatus.rev(1), 2: ToolStatus.rev(2) }
-})
+const ToolStatusRequest = Mid.request(
+  Mid.define({
+    tag: "ToolStatusRequest",
+    mid: 9100,
+    revisions: {
+      1: Field.layout([["toolId", Field.digits({ width: 3 })]]),
+      2: Field.layout([["toolId", Field.digits({ width: 3 })]])
+    }
+  }),
+  { 1: ToolStatus.rev(1), 2: ToolStatus.rev(2) }
+)
 
 // --- A controller that knows MID 9100 ---------------------------------------
 

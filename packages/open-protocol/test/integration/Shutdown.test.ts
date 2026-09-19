@@ -20,7 +20,7 @@ import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
 import * as DeviceConnection from "../../src/connection/DeviceConnection.ts"
 import * as DevicePool from "../../src/pool/DevicePool.ts"
-import { KeepAlive, KeepAliveMid } from "../../src/protocol/Messages.ts"
+import { KeepAliveMid } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
@@ -156,7 +156,7 @@ describe("shutdown", () => {
 
         yield* connection.close
         const again = yield* Effect.result(connection.close)
-        const request = yield* Effect.result(connection.send(new KeepAlive()))
+        const request = yield* Effect.result(connection.send(KeepAliveMid.rev(1), {}))
 
         expect(Result.isSuccess(again)).toBe(true)
         expect(Result.isFailure(request)).toBe(true)

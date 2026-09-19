@@ -2,14 +2,14 @@
  * Fixed-width Open Protocol fields as Effect Schemas.
  *
  * Every data field on the wire is a fixed number of ASCII characters, optionally
- * preceded by a two-digit parameter id. Each constructor here returns a real
- * `Schema` between exactly that string and a typed value, annotated with its
- * width and parameter id. `layout` strings an ordered list of them into the
- * codec of a whole data field.
+ * preceded by a two-digit parameter id. Each constructor here returns a
+ * `Field`: a real `Schema` between exactly that string and a typed value, next
+ * to its width and parameter id. `layout` strings an ordered list of them into
+ * the codec of a whole data field.
  *
  * @since 0.0.0
  */
-import { Effect } from "effect"
+import { Data, Effect, Predicate, Result } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as R from "effect/Record"
@@ -20,19 +20,9 @@ import * as SchemaTransformation from "effect/SchemaTransformation"
 import * as Str from "effect/String"
 import { isDigits, padNumber, padText } from "./Ascii.ts"
 
-declare module "effect/Schema" {
-  namespace Annotations {
-    // oxlint-disable-next-line no-shadow -- augmentation must reopen Effect's own interface
-    interface Annotations {
-      /** Where a field sits on the wire; read by {@link layout}. */
-      readonly openProtocolField?: FieldPlacement | undefined
-    }
-  }
-}
-
 /**
- * How a field is placed on the wire: its width, its parameter id when the
- * layout carries ids, and the characters a filler field always writes.
+ * Where a field sits on the wire: its width, and its parameter id when the
+ * layout carries ids.
  *
  * @category models
  * @since 0.0.0
@@ -40,25 +30,50 @@ declare module "effect/Schema" {
 export interface FieldPlacement {
   readonly width: number
   readonly id: O.Option<string>
-  readonly filler: O.Option<string>
 }
 
 /**
- * A field's codec: exactly `width` characters on the wire, a typed value in
- * memory.
+ * A field: its codec (exactly `width` characters on the wire, a typed value
+ * in memory) and where it sits.
+ *
+ * **Example** (Decoding one field on its own)
+ *
+ * ```ts
+ * import * as S from "effect/Schema"
+ * import { Field } from "effect-open-protocol"
+ *
+ * const cellId = Field.digits({ width: 4 })
+ *
+ * const decoded = S.decodeEffect(cellId.codec)("0042")
+ * ```
  *
  * @category models
  * @since 0.0.0
  */
-export interface Field<T> extends S.Codec<T, string> {}
+export class Field<T> extends Data.TaggedClass("Field")<{
+  readonly codec: S.Codec<T, string>
+  readonly placement: FieldPlacement
+}> {}
 
 /**
- * A filler: on the wire, never in the decoded value.
+ * A filler: written on the wire, checked on decode, never in the decoded
+ * value.
+ *
+ * **Example** (A reserved two-digit parameter)
+ *
+ * ```ts
+ * import { Field } from "effect-open-protocol"
+ *
+ * console.log(Field.filler({ id: "05", width: 2 }).value) // "00"
+ * ```
  *
  * @category models
  * @since 0.0.0
  */
-export interface Filler extends S.Codec<string, string> {}
+export class Filler extends Data.TaggedClass("Filler")<{
+  readonly placement: FieldPlacement
+  readonly value: string
+}> {}
 
 /**
  * Where a field goes, shared by every constructor.
@@ -76,10 +91,13 @@ export interface Placement {
 const invalid = (message: string, input: string, options: ParseOptions): Effect.Effect<never, SchemaIssue.Issue> =>
   Effect.fail(new SchemaIssue.InvalidValue({ message }, input, options))
 
-const place = <C extends S.Top>(codec: C, placement: Placement, filler: O.Option<string> = O.none()) =>
-  codec.annotate({
-    openProtocolField: { width: placement.width, id: O.fromNullishOr(placement.id), filler }
-  })
+const placementOf = (placement: Placement): FieldPlacement => ({
+  width: placement.width,
+  id: O.fromNullishOr(placement.id)
+})
+
+const place = <T>(codec: S.Codec<T, string>, placement: Placement): Field<T> =>
+  new Field({ codec, placement: placementOf(placement) })
 
 const exactly = (width: number) =>
   S.String.check(
@@ -273,11 +291,10 @@ export const enumerated = <const L extends ReadonlyArray<string>>(
  * @since 0.0.0
  */
 export const filler = (placement: Placement & { readonly value?: string | undefined }): Filler =>
-  place(
-    exactly(placement.width),
-    placement,
-    O.some(O.getOrElse(O.fromNullishOr(placement.value), () => padNumber(0, placement.width)))
-  )
+  new Filler({
+    placement: placementOf(placement),
+    value: O.getOrElse(O.fromNullishOr(placement.value), () => padNumber(0, placement.width))
+  })
 
 /**
  * One entry of a layout: a named field that ends up in the decoded value, or a
@@ -286,7 +303,7 @@ export const filler = (placement: Placement & { readonly value?: string | undefi
  * @category models
  * @since 0.0.0
  */
-export type Entry = readonly [name: string, field: S.Codec<unknown, string, unknown, unknown>] | Filler
+export type Entry = readonly [name: string, field: Field<unknown>] | Filler
 
 /**
  * The struct fields a layout decodes into, one per named entry.
@@ -296,8 +313,8 @@ export type Entry = readonly [name: string, field: S.Codec<unknown, string, unkn
  */
 export type Fields<Entries extends ReadonlyArray<Entry>> = {
   readonly [
-    E in Entries[number] as E extends readonly [infer Name extends string, S.Top] ? Name : never
-  ]: E extends readonly [string, infer Codec extends S.Top] ? Codec : never
+    E in Entries[number] as E extends readonly [infer Name extends string, Field<unknown>] ? Name : never
+  ]: E extends readonly [string, Field<infer T>] ? S.Codec<T, string> : never
 }
 
 /**
@@ -309,21 +326,17 @@ export type Fields<Entries extends ReadonlyArray<Entry>> = {
 export interface Layout<Entries extends ReadonlyArray<Entry>> extends S.decodeTo<S.Struct<Fields<Entries>>, S.String> {}
 
 interface Slot {
-  readonly name: O.Option<string>
   readonly placement: FieldPlacement
+  /** The property a named field decodes into; `None` for a filler. */
+  readonly name: O.Option<string>
+  /** What a filler always writes; `None` for a named field. */
+  readonly fixed: O.Option<string>
 }
 
-const placementOf = (codec: S.Top): FieldPlacement =>
-  O.getOrElse(O.fromNullishOr(S.resolveAnnotations(codec)?.openProtocolField), () => ({
-    width: 0,
-    id: O.none(),
-    filler: O.none()
-  }))
-
 const slotOf = (entry: Entry): Slot =>
-  S.isSchema(entry)
-    ? { name: O.none(), placement: placementOf(entry) }
-    : { name: O.some(entry[0]), placement: placementOf(entry[1]) }
+  Predicate.isTagged(entry, "Filler")
+    ? { placement: entry.placement, name: O.none(), fixed: O.some(entry.value) }
+    : { placement: entry[1].placement, name: O.some(entry[0]), fixed: O.none() }
 
 interface Scan {
   readonly offset: number
@@ -333,11 +346,10 @@ interface Scan {
 const step =
   (data: string, options: ParseOptions) =>
   (scan: Scan, slot: Slot): Effect.Effect<Scan, SchemaIssue.Issue> => {
-    const idWidth = O.match(slot.placement.id, { onNone: () => 0, onSome: Str.length })
-    const id = Str.substring(scan.offset, scan.offset + idWidth)(data)
-    const start = scan.offset + idWidth
-    const value = Str.substring(start, start + slot.placement.width)(data)
     const expected = O.getOrElse(slot.placement.id, () => "")
+    const id = Str.substring(scan.offset, scan.offset + Str.length(expected))(data)
+    const start = scan.offset + Str.length(expected)
+    const value = Str.substring(start, start + slot.placement.width)(data)
 
     return id !== expected
       ? invalid(`expected parameter ${expected} at offset ${scan.offset}, found "${id}"`, data, options)
@@ -372,7 +384,7 @@ const join = (slots: ReadonlyArray<Slot>, values: { readonly [name: string]: str
       (slot) =>
         O.getOrElse(slot.placement.id, () => "") +
         O.getOrElse(
-          O.orElse(slot.placement.filler, () => O.flatMap(slot.name, (name) => O.fromNullishOr(values[name]))),
+          O.orElse(slot.fixed, () => O.flatMap(slot.name, (name) => R.get(values, name))),
           () => ""
         )
     ),
@@ -408,10 +420,8 @@ export function layout<const Entries extends ReadonlyArray<Entry>>(entries: Entr
 export function layout(entries: ReadonlyArray<Entry>): S.Top {
   const slots = A.map(entries, slotOf)
 
-  const named = A.getSomes(
-    A.map(entries, (entry): O.Option<readonly [string, S.Codec<unknown, string, unknown, unknown>]> =>
-      S.isSchema(entry) ? O.none() : O.some(entry)
-    )
+  const named = A.filterMap(entries, (entry) =>
+    Predicate.isTagged(entry, "Filler") ? Result.failVoid : Result.succeed([entry[0], entry[1].codec] as const)
   )
 
   return S.String.pipe(

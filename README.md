@@ -341,15 +341,18 @@ const ToolStatus = Mid.define({
   }
 })
 
-const ToolStatusRequest = Mid.request({
-  tag: "ToolStatusRequest",
-  mid: 9100,
-  revisions: {
-    1: Field.layout([["toolId", Field.digits({ width: 3 })]]),
-    2: Field.layout([["toolId", Field.digits({ width: 3 })]])
-  },
-  replies: { 1: ToolStatus.rev(1), 2: ToolStatus.rev(2) }
-})
+// A request is a definition plus the reply each revision expects.
+const ToolStatusRequest = Mid.request(
+  Mid.define({
+    tag: "ToolStatusRequest",
+    mid: 9100,
+    revisions: {
+      1: Field.layout([["toolId", Field.digits({ width: 3 })]]),
+      2: Field.layout([["toolId", Field.digits({ width: 3 })]])
+    }
+  }),
+  { 1: ToolStatus.rev(1), 2: ToolStatus.rev(2) }
+)
 
 const program = Effect.gen(function* () {
   const connection = yield* DeviceConnection.DeviceConnection
@@ -358,9 +361,9 @@ const program = Effect.gen(function* () {
 })
 ```
 
-- **Fields.** `Field.digits`, `text`, `raw`, `enumerated` and `filler` each
-  return a Schema between exactly `width` characters and a typed value, with
-  an optional two-digit parameter id. `Field.layout` takes them as an ordered
+- **Fields.** `Field.digits`, `text`, `raw` and `enumerated` each return a
+  `Field`: a Schema between exactly `width` characters and a typed value
+  (its `codec`), with its width and an optional two-digit parameter id. `Field.layout` takes them as an ordered
   array, so wire order never depends on object key order. A bare `filler` is
   written on the wire and never shows up in the value. `digits` and `raw`
   take a `schema` to decode into a branded or refined type.
@@ -368,9 +371,12 @@ const program = Effect.gen(function* () {
   struct), `Mid.as(Class, layout)` (the value is an instance of your class),
   or `Mid.custom(codec)` for anything shaped differently from the wire. `rev(n)`
   only accepts a revision the definition declares.
-- **Replies.** Each request revision names its reply: a revision of another
-  definition, `Mid.accepted` (the generic 0005, with 0004 as a rejection), or
-  `Mid.noReply`. `request` returns exactly that type.
+- **Replies.** `Mid.request(definition, replies)` names the reply of each
+  revision: a revision of any definition (the request's own, for a message the
+  controller mirrors), `Mid.accepted` (the generic 0005, with 0004 as a
+  rejection), or `Mid.noReply`. `request` returns exactly that type. A reply
+  is recognised by the MID in the frame header, so a MID the library does not
+  model is decoded straight into its declared revision.
 - **Errors.** Besides `NotReady`, `RequestTimeout` and `ConnectionLost`, a
   request can fail with:
   - `CommandRejected`: the controller answered 0004.
