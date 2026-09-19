@@ -16,6 +16,7 @@ import { Command, Flag } from "effect/unstable/cli"
 import { Duration, Effect, pipe, Predicate, Random, Ref, Schedule } from "effect"
 import * as A from "effect/Array"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import * as Faults from "../simulator/Faults.ts"
 import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
 import { DevicePool, layer as devicePoolLayer } from "../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
@@ -87,7 +88,7 @@ const runChaos = Effect.fnUntraced(function* (options: {
         resultInterval: options.resultInterval,
         ackTimeout: Duration.seconds(2),
         ackAttempts: 3,
-        faults: { rate: options.faultRate }
+        faults: new Faults.FaultConfig({ rate: options.faultRate })
       })
 
       yield* pool.add({

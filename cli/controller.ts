@@ -19,6 +19,7 @@ import { Duration, Effect, pipe, Random, Stdio, Stream } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { Command, Flag } from "effect/unstable/cli"
+import * as Faults from "../simulator/Faults.ts"
 import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
 import { layer as simulatorOnTcp } from "../simulator/TcpListener.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
@@ -127,7 +128,7 @@ const run = Effect.fnUntraced(function* (config: {
     endpoint,
     controllerName: config.controllerName,
     resultInterval: config.resultInterval > 0 ? Duration.millis(config.resultInterval) : undefined,
-    faults: config.faultRate > 0 ? { rate: config.faultRate } : undefined
+    faults: config.faultRate > 0 ? new Faults.FaultConfig({ rate: config.faultRate }) : undefined
   }).pipe(Effect.provide(network))
 
   yield* Effect.logInfo("controller listening").pipe(
