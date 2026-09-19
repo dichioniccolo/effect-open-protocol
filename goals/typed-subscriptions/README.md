@@ -2,7 +2,7 @@
 
 ## Status
 
-Lifecycle: `paused`
+Lifecycle: `active`
 
 Source: [`ops/manifest.json`](./ops/manifest.json)
 
@@ -36,12 +36,20 @@ follow the instructions in goals/typed-subscriptions/GOAL.md
 
 ## Current Phase
 
-Paused before P0. Next action once resumed: P0 re-baseline against the merged
-`typed-mid-definitions` code.
+P5 PR to mergeable. P0 to P4 are done on branch `feat/typed-subscriptions`.
 
 ## Latest Evidence
 
-Not started.
+2026-09-19, branch `feat/typed-subscriptions`:
+
+- `bun run check`, `bun run test` (131 tests in `open-protocol`, all green on
+  three runs), `bun run lint`, `bun run format:check` and `bun run build` pass.
+- The Delivery, Chaos, GapRecovery, Shutdown and ResultDelivery suites are
+  unchanged (`git diff --stat` on them is empty) and pass with results now
+  delivered through `subscribe(LastResults)`.
+- The new tests are in `test/example/ToolStatus.test.ts`: typed values, ack on
+  demand, an unacked resend, unsubscribe on stop, `AlreadySubscribed`, a
+  refusal, and the same stream across a reconnect.
 
 ## Notes
 

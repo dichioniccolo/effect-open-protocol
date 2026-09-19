@@ -264,7 +264,7 @@ connection code.
 | --- | --- |
 | `src/protocol` | Header, framer, `Field` (fixed-width fields as Schemas), `Mid` (message definitions), the built-in messages, tightening results |
 | `src/transport` | The `Transport` service, TCP and in-memory implementations |
-| `src/connection` | State machine, session lifecycle, request/reply correlation |
+| `src/connection` | State machine, session lifecycle, request/reply correlation, subscriptions |
 | `src/results` | Duplicate detection, delivery, gap recovery |
 | `src/pool` | Many devices in one process |
 | `simulator` | A simulated controller with seeded faults, imported as `effect-open-protocol/simulator/*` |
@@ -386,10 +386,64 @@ const program = Effect.gen(function* () {
   - `PayloadEncodeError`: the payload does not fit its fields. Nothing is
     sent.
 - **Limits.**
-  - A custom MID the controller pushes on its own arrives as `UnknownMessage`
-    for now.
+  - A custom MID the controller pushes arrives typed only while it is
+    subscribed (see below); otherwise it is an `UnknownMessage`.
   - The simulator answers any MID it does not model with 0004: code 99 for an
     unknown MID, code 97 for an unsupported revision.
+
+### Subscribing to pushed MIDs
+
+A MID the controller pushes on its own is subscribed to. `Mid.subscription`
+names, for each revision of the data MID, the request that starts the pushes,
+the MID that acknowledges each one, and the request that stops them (the last
+two are optional where the protocol has none). `connection.subscribe` returns
+a `Stream` whose elements are `{ value, ack }`, with `value` typed exactly.
+
+```ts
+import { Effect, Stream } from "effect"
+import { commandAccepted, DeviceConnection, Field, Mid } from "effect-open-protocol"
+
+// Illustrative MIDs, like 9100 and 9101 above.
+const bare = (tag: string, mid: number) => Mid.define({ tag, mid, revisions: { 1: Field.layout([]) } })
+
+const SubscribeToolStatus = Mid.request(
+  Mid.define({ tag: "SubscribeToolStatus", mid: 9102, revisions: { 1: Field.layout([]), 2: Field.layout([]) } }),
+  { 1: commandAccepted, 2: commandAccepted }
+)
+
+const ToolStatusSubscription = Mid.subscription(ToolStatus, {
+  1: { subscribe: SubscribeToolStatus.rev(1), ack: bare("AcknowledgeToolStatus", 9103).rev(1) },
+  2: { subscribe: SubscribeToolStatus.rev(2), ack: bare("AcknowledgeToolStatus", 9103).rev(1) }
+})
+
+const watch = Effect.gen(function* () {
+  const connection = yield* DeviceConnection.DeviceConnection
+
+  yield* Stream.runForEach(connection.subscribe(ToolStatusSubscription.rev(2)), (pushed) =>
+    // `pushed.value.motorHours` is a number. Acknowledge once it is handled.
+    Effect.andThen(Effect.log(pushed.value.motorHours), pushed.ack)
+  )
+})
+```
+
+- **Acknowledging.** Nothing is acknowledged for you: run `ack` once the value
+  is handled. It is a plain send, never a request, so it never waits behind
+  one. A value never acknowledged is sent again by the controller, and the
+  stream delivers the resend too: consumers stay idempotent.
+- **Lifetime.** Subscribing works in any state: a subscription made while no
+  session is up is sent at the next handshake. Every active subscription is
+  sent again after each reconnect, and the same stream keeps emitting. It ends
+  when the consumer stops, which sends the unsubscribe MID, or when the
+  connection closes.
+- **Errors.** The stream fails with `CommandRejected` when the controller
+  refuses the subscription on a live session, and with `AlreadySubscribed`
+  when the data MID already has a consumer on the connection. A refusal while
+  restoring subscriptions after a reconnect costs the session, as a refused
+  MID 0060 always has, and the connection reconnects.
+- **Routing.** A frame goes to the request waiting for a reply first, then to
+  the subscription of its MID. Pushed values wait in a bounded queue per
+  subscription (`resultBuffer`, 16 by default); a slow consumer slows the
+  reader.
 
 The full example runs as a test, `packages/open-protocol/test/example/ToolStatus.test.ts`,
 against a scripted controller on the in-memory transport.
@@ -409,6 +463,14 @@ If the connection dies between step 4's record and its acknowledgement, the
 controller resends and step 2 catches it. If your handler keeps failing, the
 result is never acknowledged. The controller resends it three times and then
 drops the session.
+
+Tightening results run on the same subscription any MID gets: the connection
+subscribes to `LastResults` (MIDs 0060 to 0063) for as long as it lives and
+feeds what it pushes into these steps. The acknowledgement is that
+subscription's MID 0062, sent after step 4 and never before. Subscribing to
+`LastResults` yourself instead of passing `onResult` gets you the raw stream
+without any of this: no duplicate detection, no gap recovery, and the
+acknowledgement is yours to send.
 
 **A result the controller gives up on is gone**, which is why gap recovery
 exists. The library asks for missing results by identifier (MID 0064) and
@@ -571,6 +633,10 @@ acknowledgement becomes a guess.
 
 **Trade-off.** Less composable than a stream for consumers who just want to
 watch results. Correctness won.
+
+Since then `subscribe` returns a stream for any pushed MID, and it answers the
+objection by putting an `ack` on every element. The handler stays for results
+because dedup and gap recovery sit between the stream and the application.
 
 ### ADR 6: Infinite reconnection with jittered backoff
 
