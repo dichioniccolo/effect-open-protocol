@@ -101,32 +101,30 @@ describe("Recording", () => {
         [2, "recv", "frame", "0002"]
       ])
       expect(stored.events[1]?.raw).toBe("00200001001         \\0")
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+    }).pipe(Effect.provide(NodeServices.layer))
   )
 
   it.effect("never fails a send when the store cannot be written", () =>
     Effect.gen(function* () {
       const filename = yield* tempDatabase
+      const recording = yield* Recording.make("client", runInto(filename))
+      // Another process breaks the file under the recorder.
       yield* Effect.gen(function* () {
-        const recording = yield* Recording.make("client", runInto(filename))
-        // Another process breaks the file under the recorder.
-        yield* Effect.gen(function* () {
-          const sql = yield* SqlClient
-          yield* sql`drop table events`
-        }).pipe(Effect.provide(SqliteClient.layer({ filename })))
+        const sql = yield* SqlClient
+        yield* sql`drop table events`
+      }).pipe(Effect.provide(SqliteClient.layer({ filename })))
 
-        const setup = yield* fixture
+      const setup = yield* fixture
 
-        const traced = yield* instrument(setup.duplex, {
-          source: "client",
-          recording,
-          latency: latencyOf({ latency: 0, jitter: 0 })
-        })
+      const traced = yield* instrument(setup.duplex, {
+        source: "client",
+        recording,
+        latency: latencyOf({ latency: 0, jitter: 0 })
+      })
 
-        yield* traced.send(handshake)
-        expect(yield* Ref.get(setup.written)).toEqual([handshake])
-      }).pipe(Effect.scoped)
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+      yield* traced.send(handshake)
+      expect(yield* Ref.get(setup.written)).toEqual([handshake])
+    }).pipe(Effect.provide(NodeServices.layer))
   )
 
   it.effect("still traces when the store cannot be opened", () =>
@@ -137,19 +135,17 @@ describe("Recording", () => {
       // A file where the store's directory should be.
       const blocker = path.join(directory, "blocker")
       yield* fs.writeFileString(blocker, "")
-      yield* Effect.gen(function* () {
-        const recording = yield* Recording.make("client", runInto(path.join(blocker, "traces.sqlite")))
-        const setup = yield* fixture
+      const recording = yield* Recording.make("client", runInto(path.join(blocker, "traces.sqlite")))
+      const setup = yield* fixture
 
-        const traced = yield* instrument(setup.duplex, {
-          source: "client",
-          recording,
-          latency: latencyOf({ latency: 0, jitter: 0 })
-        })
+      const traced = yield* instrument(setup.duplex, {
+        source: "client",
+        recording,
+        latency: latencyOf({ latency: 0, jitter: 0 })
+      })
 
-        yield* traced.send(handshake)
-        expect(yield* Ref.get(setup.written)).toEqual([handshake])
-      }).pipe(Effect.scoped)
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+      yield* traced.send(handshake)
+      expect(yield* Ref.get(setup.written)).toEqual([handshake])
+    }).pipe(Effect.provide(NodeServices.layer))
   )
 })

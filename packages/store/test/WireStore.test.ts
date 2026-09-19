@@ -102,7 +102,7 @@ describe("WireStore", () => {
 
         assertNone(yield* store.findRun(RunId.make(id + 1)))
       }).pipe(Effect.provide(storeAt(filename)))
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+    }).pipe(Effect.provide(NodeServices.layer))
   )
 
   it.effect("lists runs newest first and ignores an empty batch", () =>
@@ -117,7 +117,7 @@ describe("WireStore", () => {
         expect(A.map(runs, (run) => run.id)).toEqual([second, first])
         expect(A.map(runs, (run) => run.eventCount)).toEqual([0, 0])
       }).pipe(Effect.provide(storeAt(filename)))
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+    }).pipe(Effect.provide(NodeServices.layer))
   )
 
   it.effect("keeps its data when the migrations run again", () =>
@@ -130,7 +130,7 @@ describe("WireStore", () => {
 
       const runs = yield* WireStore.WireStore.use((store) => store.listRuns).pipe(Effect.provide(storeAt(filename)))
       expect(A.map(runs, (run) => run.id)).toEqual([id])
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+    }).pipe(Effect.provide(NodeServices.layer))
   )
 
   it.effect(
@@ -159,7 +159,7 @@ describe("WireStore", () => {
           [0, "ok 0", ""],
           [0, "ok 0", ""]
         ])
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 30_000 }
   )
 })

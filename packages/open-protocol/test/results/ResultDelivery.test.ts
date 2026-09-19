@@ -49,233 +49,211 @@ const pushedFor = (seen: Recorder, id: number) => {
 
 describe("ResultDelivery", () => {
   it.effect("acknowledges only after the handler succeeded", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const seen = yield* recorder
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const seen = yield* recorder
+      const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* ResultDelivery.make({
-          dedup,
-          ...defaults,
-          handler: (result) => record(seen.handled, result)
-        })
-
-        yield* delivery.submitPushed(pushedFor(seen, 1))
-        yield* Effect.yieldNow
-
-        expect(yield* Ref.get(seen.handled)).toEqual([1])
-        expect(yield* Ref.get(seen.acked)).toEqual([1])
-        expect(yield* delivery.delivered).toBe(1)
+      const delivery = yield* ResultDelivery.make({
+        dedup,
+        ...defaults,
+        handler: (result) => record(seen.handled, result)
       })
-    )
+
+      yield* delivery.submitPushed(pushedFor(seen, 1))
+      yield* Effect.yieldNow
+
+      expect(yield* Ref.get(seen.handled)).toEqual([1])
+      expect(yield* Ref.get(seen.acked)).toEqual([1])
+      expect(yield* delivery.delivered).toBe(1)
+    })
   )
 
   it.effect("does not acknowledge when the handler keeps failing", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const seen = yield* recorder
-        const attempts = yield* Ref.make(0)
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const seen = yield* recorder
+      const attempts = yield* Ref.make(0)
+      const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* ResultDelivery.make({
-          dedup,
-          ...defaults,
-          handler: () =>
-            Effect.andThen(
-              Ref.update(attempts, (n) => n + 1),
-              Effect.fail("nope")
-            ),
-          handlerRetry: Schedule.recurs(2)
-        })
-
-        yield* delivery.submitPushed(pushedFor(seen, 1))
-        yield* Effect.yieldNow
-
-        expect(yield* Ref.get(seen.acked)).toEqual([])
-        expect(yield* Ref.get(attempts)).toBe(3)
-        expect(yield* delivery.delivered).toBe(0)
-        expect(yield* dedup.seen(TighteningId.make(1))).toBe(false)
+      const delivery = yield* ResultDelivery.make({
+        dedup,
+        ...defaults,
+        handler: () =>
+          Effect.andThen(
+            Ref.update(attempts, (n) => n + 1),
+            Effect.fail("nope")
+          ),
+        handlerRetry: Schedule.recurs(2)
       })
-    )
+
+      yield* delivery.submitPushed(pushedFor(seen, 1))
+      yield* Effect.yieldNow
+
+      expect(yield* Ref.get(seen.acked)).toEqual([])
+      expect(yield* Ref.get(attempts)).toBe(3)
+      expect(yield* delivery.delivered).toBe(0)
+      expect(yield* dedup.seen(TighteningId.make(1))).toBe(false)
+    })
   )
 
   it.effect("retries a flaky handler and then acknowledges", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const seen = yield* recorder
-        const attempts = yield* Ref.make(0)
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const seen = yield* recorder
+      const attempts = yield* Ref.make(0)
+      const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* ResultDelivery.make({
-          dedup,
-          ...defaults,
-          handler: (result) =>
-            pipe(
-              Ref.updateAndGet(attempts, (n) => n + 1),
-              Effect.flatMap((count) => (count < 2 ? Effect.fail("flaky") : record(seen.handled, result)))
-            ),
-          handlerRetry: Schedule.recurs(3)
-        })
-
-        yield* delivery.submitPushed(pushedFor(seen, 7))
-        yield* Effect.yieldNow
-
-        expect(yield* Ref.get(seen.handled)).toEqual([7])
-        expect(yield* Ref.get(seen.acked)).toEqual([7])
+      const delivery = yield* ResultDelivery.make({
+        dedup,
+        ...defaults,
+        handler: (result) =>
+          pipe(
+            Ref.updateAndGet(attempts, (n) => n + 1),
+            Effect.flatMap((count) => (count < 2 ? Effect.fail("flaky") : record(seen.handled, result)))
+          ),
+        handlerRetry: Schedule.recurs(3)
       })
-    )
+
+      yield* delivery.submitPushed(pushedFor(seen, 7))
+      yield* Effect.yieldNow
+
+      expect(yield* Ref.get(seen.handled)).toEqual([7])
+      expect(yield* Ref.get(seen.acked)).toEqual([7])
+    })
   )
 
   it.effect("acknowledges a resend without calling the handler twice", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const seen = yield* recorder
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const seen = yield* recorder
+      const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* ResultDelivery.make({
-          dedup,
-          ...defaults,
-          handler: (result) => record(seen.handled, result)
-        })
-
-        yield* delivery.submitPushed(pushedFor(seen, 3))
-        yield* Effect.yieldNow
-        yield* delivery.submitPushed(pushedFor(seen, 3))
-        yield* Effect.yieldNow
-
-        expect(yield* Ref.get(seen.handled)).toEqual([3])
-        expect(yield* Ref.get(seen.acked)).toEqual([3, 3])
-        expect(yield* delivery.duplicates).toBe(1)
-        expect(yield* delivery.delivered).toBe(1)
+      const delivery = yield* ResultDelivery.make({
+        dedup,
+        ...defaults,
+        handler: (result) => record(seen.handled, result)
       })
-    )
+
+      yield* delivery.submitPushed(pushedFor(seen, 3))
+      yield* Effect.yieldNow
+      yield* delivery.submitPushed(pushedFor(seen, 3))
+      yield* Effect.yieldNow
+
+      expect(yield* Ref.get(seen.handled)).toEqual([3])
+      expect(yield* Ref.get(seen.acked)).toEqual([3, 3])
+      expect(yield* delivery.duplicates).toBe(1)
+      expect(yield* delivery.delivered).toBe(1)
+    })
   )
 
   it.effect("applies backpressure when the handler is slow", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const seen = yield* recorder
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const seen = yield* recorder
+      const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* ResultDelivery.make({
-          dedup,
-          ...defaults,
-          handler: (result) => Effect.andThen(Effect.sleep(Duration.seconds(1)), record(seen.handled, result)),
-          bufferSize: 1
-        })
-
-        const submitting = yield* Effect.forkChild(
-          Effect.forEach(A.range(1, 4), (id) => delivery.submitPushed(pushedFor(seen, id)), { discard: true })
-        )
-
-        yield* TestClock.adjust(Duration.seconds(1))
-        expect(yield* Ref.get(seen.handled)).not.toEqual([1, 2, 3, 4])
-
-        yield* TestClock.adjust(Duration.seconds(10))
-        yield* Fiber.join(submitting)
-        yield* Effect.yieldNow
-
-        expect(yield* Ref.get(seen.handled)).toEqual([1, 2, 3, 4])
-        expect(yield* Ref.get(seen.acked)).toEqual([1, 2, 3, 4])
+      const delivery = yield* ResultDelivery.make({
+        dedup,
+        ...defaults,
+        handler: (result) => Effect.andThen(Effect.sleep(Duration.seconds(1)), record(seen.handled, result)),
+        bufferSize: 1
       })
-    )
+
+      const submitting = yield* Effect.forkChild(
+        Effect.forEach(A.range(1, 4), (id) => delivery.submitPushed(pushedFor(seen, id)), { discard: true })
+      )
+
+      yield* TestClock.adjust(Duration.seconds(1))
+      expect(yield* Ref.get(seen.handled)).not.toEqual([1, 2, 3, 4])
+
+      yield* TestClock.adjust(Duration.seconds(10))
+      yield* Fiber.join(submitting)
+      yield* Effect.yieldNow
+
+      expect(yield* Ref.get(seen.handled)).toEqual([1, 2, 3, 4])
+      expect(yield* Ref.get(seen.acked)).toEqual([1, 2, 3, 4])
+    })
   )
 
   it.effect("still knows an evicted identifier delivered above a gap", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const dedup = yield* Dedup.make(2)
-        yield* dedup.markBaseline(TighteningId.make(0))
+    Effect.gen(function* () {
+      const dedup = yield* Dedup.make(2)
+      yield* dedup.markBaseline(TighteningId.make(0))
 
-        // 1 is missing, so 2, 3 and 4 wait above the watermark, and the window
-        // of two has already evicted 2.
-        yield* dedup.remember(TighteningId.make(2))
-        yield* dedup.remember(TighteningId.make(3))
-        yield* dedup.remember(TighteningId.make(4))
+      // 1 is missing, so 2, 3 and 4 wait above the watermark, and the window
+      // of two has already evicted 2.
+      yield* dedup.remember(TighteningId.make(2))
+      yield* dedup.remember(TighteningId.make(3))
+      yield* dedup.remember(TighteningId.make(4))
 
-        expect(yield* dedup.seen(TighteningId.make(2))).toBe(true)
-      })
-    )
+      expect(yield* dedup.seen(TighteningId.make(2))).toBe(true)
+    })
   )
 
   it.effect("still knows an evicted identifier below the watermark", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const dedup = yield* Dedup.make(2)
-        yield* dedup.markBaseline(TighteningId.make(0))
+    Effect.gen(function* () {
+      const dedup = yield* Dedup.make(2)
+      yield* dedup.markBaseline(TighteningId.make(0))
 
-        yield* dedup.remember(TighteningId.make(1))
-        yield* dedup.remember(TighteningId.make(2))
-        yield* dedup.remember(TighteningId.make(3))
+      yield* dedup.remember(TighteningId.make(1))
+      yield* dedup.remember(TighteningId.make(2))
+      yield* dedup.remember(TighteningId.make(3))
 
-        expect(yield* dedup.seen(TighteningId.make(1))).toBe(true)
-      })
-    )
+      expect(yield* dedup.seen(TighteningId.make(1))).toBe(true)
+    })
   )
 
   it.effect("lets recovery fetch again a result whose handler failed", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const seen = yield* recorder
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const seen = yield* recorder
+      const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* ResultDelivery.make({
-          dedup,
-          ...defaults,
-          handler: () => Effect.fail("nope"),
-          handlerRetry: Schedule.recurs(0)
-        })
-
-        yield* delivery.submitRecovered(resultFor(5))
-        yield* Effect.yieldNow
-
-        expect(yield* dedup.known(TighteningId.make(5))).toBe(false)
-        expect(yield* Ref.get(seen.acked)).toEqual([])
+      const delivery = yield* ResultDelivery.make({
+        dedup,
+        ...defaults,
+        handler: () => Effect.fail("nope"),
+        handlerRetry: Schedule.recurs(0)
       })
-    )
+
+      yield* delivery.submitRecovered(resultFor(5))
+      yield* Effect.yieldNow
+
+      expect(yield* dedup.known(TighteningId.make(5))).toBe(false)
+      expect(yield* Ref.get(seen.acked)).toEqual([])
+    })
   )
 
   it.effect("waits for a baseline before trusting an identifier", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const dedup = yield* Dedup.make(16)
 
-        // A controller that has results we have not seen: until it tells us
-        // where it is, a delivered result says nothing about what came before.
-        yield* dedup.remember(TighteningId.make(4712004))
+      // A controller that has results we have not seen: until it tells us
+      // where it is, a delivered result says nothing about what came before.
+      yield* dedup.remember(TighteningId.make(4712004))
 
-        assertNone(yield* dedup.lastDelivered)
-      })
-    )
+      assertNone(yield* dedup.lastDelivered)
+    })
   )
 
   it.effect("takes the baseline from the controller, wherever it counts from", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const dedup = yield* Dedup.make(16)
 
-        yield* dedup.markBaseline(TighteningId.make(4712003))
-        yield* dedup.remember(TighteningId.make(4712004))
+      yield* dedup.markBaseline(TighteningId.make(4712003))
+      yield* dedup.remember(TighteningId.make(4712004))
 
-        assertSome(yield* dedup.lastDelivered, TighteningId.make(4712004))
-      })
-    )
+      assertSome(yield* dedup.lastDelivered, TighteningId.make(4712004))
+    })
   )
 
   it.effect("waits for the floor of an empty controller before trusting a result", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const dedup = yield* Dedup.make(16)
+    Effect.gen(function* () {
+      const dedup = yield* Dedup.make(16)
 
-        // A late reply can arrive before the results below it, so the first
-        // result delivered says nothing about where the controller starts.
-        yield* dedup.markNoHistory
-        yield* dedup.remember(TighteningId.make(7))
-        assertNone(yield* dedup.lastDelivered)
+      // A late reply can arrive before the results below it, so the first
+      // result delivered says nothing about where the controller starts.
+      yield* dedup.markNoHistory
+      yield* dedup.remember(TighteningId.make(7))
+      assertNone(yield* dedup.lastDelivered)
 
-        yield* dedup.markBaseline(TighteningId.make(6))
-        assertSome(yield* dedup.lastDelivered, TighteningId.make(7))
-      })
-    )
+      yield* dedup.markBaseline(TighteningId.make(6))
+      assertSome(yield* dedup.lastDelivered, TighteningId.make(7))
+    })
   )
 })

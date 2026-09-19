@@ -148,21 +148,19 @@ describe("DeviceConnection", () => {
   )
 
   it.effect("gives up on a connection that does not open and backs off", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const connection = yield* DeviceConnection.make({
-          id: deviceId,
-          endpoint,
-          connectTimeout: Duration.seconds(3),
-          reconnect: Schedule.spaced(Duration.seconds(1))
-        })
-
-        const waiting = yield* Effect.forkChild(awaitState(connection.state, "WaitingToReconnect"))
-        yield* TestClock.adjust(Duration.seconds(3))
-
-        expect(yield* Fiber.join(waiting)).toMatchObject({ reason: "no connection within 3s" })
+    Effect.gen(function* () {
+      const connection = yield* DeviceConnection.make({
+        id: deviceId,
+        endpoint,
+        connectTimeout: Duration.seconds(3),
+        reconnect: Schedule.spaced(Duration.seconds(1))
       })
-    ).pipe(
+
+      const waiting = yield* Effect.forkChild(awaitState(connection.state, "WaitingToReconnect"))
+      yield* TestClock.adjust(Duration.seconds(3))
+
+      expect(yield* Fiber.join(waiting)).toMatchObject({ reason: "no connection within 3s" })
+    }).pipe(
       // A host that is down never answers the connection request.
       Effect.provide(Layer.succeed(Transport)({ connect: () => Effect.never }))
     )
@@ -180,21 +178,17 @@ describe("DeviceConnection", () => {
           )
       })
 
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const connection = yield* DeviceConnection.make({
-            id: deviceId,
-            endpoint,
-            reconnect: Schedule.spaced(Duration.seconds(1))
-          })
+      const connection = yield* DeviceConnection.make({
+        id: deviceId,
+        endpoint,
+        reconnect: Schedule.spaced(Duration.seconds(1))
+      }).pipe(Effect.provide(transport))
 
-          const waiting = yield* awaitState(connection.state, "WaitingToReconnect")
-          expect(waiting).toMatchObject({ reason: "defect: transport bug" })
+      const waiting = yield* awaitState(connection.state, "WaitingToReconnect")
+      expect(waiting).toMatchObject({ reason: "defect: transport bug" })
 
-          yield* TestClock.adjust(Duration.millis(500))
-          expect(yield* Ref.get(connects)).toBe(1)
-        })
-      ).pipe(Effect.provide(transport))
+      yield* TestClock.adjust(Duration.millis(500))
+      expect(yield* Ref.get(connects)).toBe(1)
     })
   )
 
