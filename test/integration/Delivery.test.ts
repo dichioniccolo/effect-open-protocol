@@ -1,18 +1,20 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Duration, Effect, pipe, Ref, Schedule, Stream, SubscriptionRef } from "effect"
+import { Duration, Effect, pipe, Predicate, Ref, Schedule, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
+import * as O from "effect/Option"
 import { TestClock } from "effect/testing"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
-import { makeDeviceConnection } from "../../src/connection/DeviceConnection.ts"
+import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { layerComplete } from "../../src/transport/InMemoryTransport.ts"
+import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 
 const deviceId = DeviceId.make("tool-1")
+
 const endpoint = new Endpoint({ host: "simulator", port: 4545 })
 
-const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.scoped(effect).pipe(Effect.provide(layerComplete))
+const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.scoped(effect).pipe(Effect.provide(layerSimulated))
 
 const awaitState = (
   state: SubscriptionRef.SubscriptionRef<ConnectionState>,
@@ -20,9 +22,9 @@ const awaitState = (
 ): Effect.Effect<ConnectionState> =>
   pipe(
     SubscriptionRef.changes(state),
-    Stream.filter((current) => current._tag === tag),
+    Stream.filter((current) => Predicate.isTagged(current, tag)),
     Stream.runHead,
-    Effect.flatMap((head) => (head._tag === "Some" ? Effect.succeed(head.value) : Effect.never))
+    Effect.flatMap(O.match({ onNone: () => Effect.never, onSome: Effect.succeed }))
   )
 
 /** Lets fibers run until a condition holds, without waiting on wall-clock time. */
@@ -35,8 +37,7 @@ const settle = <A>(effect: Effect.Effect<A>, predicate: (value: A) => boolean, a
 
 const sink = Effect.map(Ref.make<ReadonlyArray<number>>([]), (received) => ({
   received,
-  onResult: (result: TighteningResult) =>
-    Ref.update(received, (current) => A.append(current, result.tighteningId as number))
+  onResult: (result: TighteningResult) => Ref.update(received, (current) => A.append(current, result.tighteningId))
 }))
 
 describe("result delivery over a connection", () => {
@@ -45,7 +46,7 @@ describe("result delivery over a connection", () => {
       Effect.gen(function* () {
         const simulator = yield* makeSimulator({ endpoint })
         const handler = yield* sink
-        const connection = yield* makeDeviceConnection({ id: deviceId, endpoint, onResult: handler.onResult })
+        const connection = yield* makeConnection({ id: deviceId, endpoint, onResult: handler.onResult })
         yield* awaitState(connection.state, "Ready")
 
         yield* simulator.produce
@@ -64,11 +65,13 @@ describe("result delivery over a connection", () => {
       Effect.gen(function* () {
         const simulator = yield* makeSimulator({ endpoint, ackTimeout: Duration.seconds(2) })
         const handler = yield* sink
-        const connection = yield* makeDeviceConnection({
+
+        const connection = yield* makeConnection({
           id: deviceId,
           endpoint,
           onResult: (result) => Effect.andThen(Effect.sleep(Duration.seconds(5)), handler.onResult(result))
         })
+
         yield* awaitState(connection.state, "Ready")
 
         yield* simulator.produce
@@ -89,12 +92,14 @@ describe("result delivery over a connection", () => {
       Effect.gen(function* () {
         const simulator = yield* makeSimulator({ endpoint })
         const handler = yield* sink
-        const connection = yield* makeDeviceConnection({
+
+        const connection = yield* makeConnection({
           id: deviceId,
           endpoint,
           reconnect: Schedule.spaced(Duration.millis(100)),
           onResult: handler.onResult
         })
+
         yield* awaitState(connection.state, "Ready")
 
         yield* simulator.produce

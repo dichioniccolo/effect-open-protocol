@@ -34,6 +34,7 @@ export interface LatencyOptions {
 export const nextDelay = (options: LatencyOptions): Effect.Effect<Duration.Duration> => {
   const centre = Duration.toMillis(options.latency)
   const spread = Duration.toMillis(options.jitter)
+
   return spread <= 0
     ? Effect.succeed(Duration.millis(Math.max(0, centre)))
     : Effect.map(Random.nextIntBetween(0, spread * 2 + 1), (offset) =>

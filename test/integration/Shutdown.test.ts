@@ -1,18 +1,33 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Context, Duration, Effect, Fiber, Layer, pipe, Ref, Scope, Stream, SubscriptionRef } from "effect"
+import {
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  pipe,
+  Predicate,
+  Ref,
+  Result,
+  Scope,
+  Stream,
+  SubscriptionRef
+} from "effect"
 import * as A from "effect/Array"
+import * as O from "effect/Option"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
-import { makeDeviceConnection } from "../../src/connection/DeviceConnection.ts"
-import { DevicePool } from "../../src/pool/DevicePool.ts"
+import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
+import { DevicePool, layer as devicePoolLayer } from "../../src/pool/DevicePool.ts"
 import { KeepAlive } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { layerComplete } from "../../src/transport/InMemoryTransport.ts"
+import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 
 const endpoint = new Endpoint({ host: "shutdown", port: 4545 })
 
-const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.provide(Effect.scoped(effect), layerComplete)
+const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.provide(Effect.scoped(effect), layerSimulated)
 
 const awaitState = (
   state: SubscriptionRef.SubscriptionRef<ConnectionState>,
@@ -20,9 +35,9 @@ const awaitState = (
 ): Effect.Effect<ConnectionState> =>
   pipe(
     SubscriptionRef.changes(state),
-    Stream.filter((current) => current._tag === tag),
+    Stream.filter((current) => Predicate.isTagged(current, tag)),
     Stream.runHead,
-    Effect.flatMap((head) => (head._tag === "Some" ? Effect.succeed(head.value) : Effect.never))
+    Effect.flatMap(O.match({ onNone: () => Effect.never, onSome: Effect.succeed }))
   )
 
 const settle = <A>(effect: Effect.Effect<A>, predicate: (value: A) => boolean, attempts = 500): Effect.Effect<A> =>
@@ -38,18 +53,20 @@ describe("shutdown", () => {
       Effect.gen(function* () {
         const simulator = yield* makeSimulator({ endpoint })
         const scope = yield* Scope.make()
+
         const connection = yield* Scope.provide(
-          makeDeviceConnection({ id: DeviceId.make("tool-1"), endpoint, onResult: () => Effect.void }),
+          makeConnection({ id: DeviceId.make("tool-1"), endpoint, onResult: () => Effect.void }),
           scope
         )
+
         yield* awaitState(connection.state, "Ready")
         expect(yield* simulator.isSubscribed).toBe(true)
 
-        yield* Scope.close(scope, Effect.void as never)
+        yield* Scope.close(scope, Exit.void)
 
         yield* settle(simulator.isSubscribed, (subscribed) => !subscribed)
         expect(yield* simulator.isSubscribed).toBe(false)
-        expect((yield* SubscriptionRef.get(connection.state))._tag).toBe("Closed")
+        expect(Predicate.isTagged(yield* SubscriptionRef.get(connection.state), "Closed")).toBe(true)
       })
     )
   )
@@ -60,28 +77,31 @@ describe("shutdown", () => {
         const received = yield* Ref.make<ReadonlyArray<number>>([])
         const simulator = yield* makeSimulator({ endpoint })
         const scope = yield* Scope.make()
+
         const pool = yield* Scope.provide(
-          Effect.map(Layer.build(DevicePool.layer), (context) => Context.get(context, DevicePool)),
+          Effect.map(Layer.build(devicePoolLayer), (context) => Context.get(context, DevicePool)),
           scope
         )
+
         const connection = yield* pool.add({
           id: DeviceId.make("tool-1"),
           endpoint,
           onResult: (result: TighteningResult) =>
-            Ref.update(received, (current) => A.append(current, result.tighteningId as number))
+            Ref.update(received, (current) => A.append(current, result.tighteningId))
         })
+
         yield* awaitState(connection.state, "Ready")
         yield* simulator.produce
         yield* settle(Ref.get(received), (current) => A.length(current) === 1)
 
-        yield* Scope.close(scope, Effect.void as never)
+        yield* Scope.close(scope, Exit.void)
         yield* settle(simulator.isSubscribed, (subscribed) => !subscribed)
         yield* simulator.produce
         yield* Effect.yieldNow
         yield* Effect.yieldNow
 
         expect(yield* Ref.get(received)).toEqual([1])
-        expect((yield* SubscriptionRef.get(connection.state))._tag).toBe("Closed")
+        expect(Predicate.isTagged(yield* SubscriptionRef.get(connection.state), "Closed")).toBe(true)
       })
     )
   )
@@ -90,7 +110,7 @@ describe("shutdown", () => {
     provided(
       Effect.gen(function* () {
         const simulator = yield* makeSimulator({ endpoint })
-        const connection = yield* makeDeviceConnection({ id: DeviceId.make("tool-1"), endpoint })
+        const connection = yield* makeConnection({ id: DeviceId.make("tool-1"), endpoint })
         yield* awaitState(connection.state, "Ready")
         expect(yield* simulator.stops).toBe(0)
 
@@ -106,11 +126,13 @@ describe("shutdown", () => {
     provided(
       Effect.gen(function* () {
         const simulator = yield* makeSimulator({ endpoint, silent: true })
-        const connection = yield* makeDeviceConnection({
+
+        const connection = yield* makeConnection({
           id: DeviceId.make("tool-1"),
           endpoint,
           responseTimeout: Duration.minutes(5)
         })
+
         yield* awaitState(connection.state, "Ready")
 
         // The controller never answers, so this request would sit for five
@@ -120,7 +142,7 @@ describe("shutdown", () => {
         yield* simulator.drop
 
         const outcome = yield* Fiber.join(pending)
-        expect(outcome._tag).toBe("Failure")
+        expect(Result.isFailure(outcome)).toBe(true)
       })
     )
   )
@@ -129,15 +151,15 @@ describe("shutdown", () => {
     provided(
       Effect.gen(function* () {
         const simulator = yield* makeSimulator({ endpoint })
-        const connection = yield* makeDeviceConnection({ id: DeviceId.make("tool-1"), endpoint })
+        const connection = yield* makeConnection({ id: DeviceId.make("tool-1"), endpoint })
         yield* awaitState(connection.state, "Ready")
 
         yield* connection.close
         const again = yield* Effect.result(connection.close)
         const request = yield* Effect.result(connection.send(new KeepAlive()))
 
-        expect(again._tag).toBe("Success")
-        expect(request._tag).toBe("Failure")
+        expect(Result.isSuccess(again)).toBe(true)
+        expect(Result.isFailure(request)).toBe(true)
         yield* settle(simulator.isSubscribed, (subscribed) => !subscribed)
         expect(yield* simulator.isSubscribed).toBe(false)
       })

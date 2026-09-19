@@ -9,11 +9,11 @@
  * @since 0.0.0
  */
 import { NodeSocket } from "@effect/platform-node"
-import { Effect, Layer, pipe, Stream } from "effect"
+import { Effect, Layer, pipe, Predicate, Stream } from "effect"
 import { ConnectionFailed, ConnectionLost, type Duplex, type Endpoint, Transport } from "./Transport.ts"
 
 const toBytes = (chunk: Uint8Array | string): Uint8Array =>
-  typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk
+  Predicate.isString(chunk) ? new TextEncoder().encode(chunk) : chunk
 
 /**
  * Opens TCP connections with `@effect/platform-node`.
@@ -36,10 +36,12 @@ export const layer: Layer.Layer<Transport> = Layer.succeed(Transport)({
       NodeSocket.makeNet({ host: endpoint.host, port: endpoint.port }),
       Effect.mapError((error) => new ConnectionFailed({ endpoint, reason: `${error}` }))
     )
+
     const reader = yield* pipe(
       socket.reader,
       Effect.mapError((error) => new ConnectionFailed({ endpoint, reason: `${error}` }))
     )
+
     const writer = yield* socket.writer
 
     const incoming: Stream.Stream<Uint8Array, ConnectionLost> = pipe(

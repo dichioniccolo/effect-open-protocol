@@ -287,7 +287,7 @@ export class EventQuery extends S.Class<EventQuery>("EventQuery")(
  * @category services
  * @since 0.0.0
  */
-export interface WireStoreShape {
+export interface WireStoreService {
   /** Records the start of a run and returns its id. */
   readonly startRun: (start: RunStart) => Effect.Effect<RunId, SqlError | S.SchemaError>
   /** Stamps the time a run stopped recording. */
@@ -396,7 +396,7 @@ export const make = Effect.gen(function* () {
 }).pipe(Effect.withSpan("WireStore.make"))
 
 /**
- * The recorded wire trace as a service, built by `WireStore.layer` over
+ * The recorded wire trace as a service, built by this module's `layer` over
  * whichever `SqlClient` the caller provides.
  *
  * **Example** (Listing recorded runs)
@@ -410,14 +410,20 @@ export const make = Effect.gen(function* () {
  *   const store = yield* WireStore
  *   return yield* store.listRuns
  * }).pipe(
- *   Effect.provide(WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename: "traces.sqlite" }))))
+ *   Effect.provide(layer.pipe(Layer.provide(SqliteClient.layer({ filename: "traces.sqlite" }))))
  * )
  * ```
  *
  * @category services
  * @since 0.0.0
  */
-export class WireStore extends Context.Service<WireStore, WireStoreShape>()("wire-trace/WireStore") {
-  static readonly layer: Layer.Layer<WireStore, SqlError | Migrator.MigrationError, SqlClient> =
-    Layer.effect(WireStore)(make)
-}
+export class WireStore extends Context.Service<WireStore, WireStoreService>()("wire-trace/WireStore") {}
+
+/**
+ * Opens the store over a `SqlClient`, running its migrations first.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layer: Layer.Layer<WireStore, SqlError | Migrator.MigrationError, SqlClient> =
+  Layer.effect(WireStore)(make)

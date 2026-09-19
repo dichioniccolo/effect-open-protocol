@@ -18,7 +18,7 @@
  *
  * @since 0.0.0
  */
-import { Match, Result } from "effect"
+import { Match, Predicate, Result } from "effect"
 import * as S from "effect/Schema"
 
 /**
@@ -320,7 +320,7 @@ export const initial: ConnectionState = new Disconnected()
  * @category predicates
  * @since 0.0.0
  */
-export const isFinal = (state: ConnectionState): boolean => state._tag === "Closed"
+export const isFinal = (state: ConnectionState): boolean => Predicate.isTagged(state, "Closed")
 
 /**
  * Whether the connection can carry application traffic.
@@ -328,7 +328,7 @@ export const isFinal = (state: ConnectionState): boolean => state._tag === "Clos
  * @category predicates
  * @since 0.0.0
  */
-export const isReady = (state: ConnectionState): boolean => state._tag === "Ready"
+export const isReady = (state: ConnectionState): boolean => Predicate.isTagged(state, "Ready")
 
 /** The result of applying one event: the next state, or why it was refused. */
 type Transitioned = Result.Result<ConnectionState, InvalidTransition>
@@ -360,7 +360,9 @@ export const transition = (state: ConnectionState, event: ConnectionEvent): Tran
     ? invalid(state, event)
     : Match.value(event).pipe(
         Match.tag("CloseRequested", () => moveTo(new Closing())),
-        Match.tag("Released", () => (state._tag === "Closing" ? moveTo(new Closed()) : invalid(state, event))),
+        Match.tag("Released", () =>
+          Predicate.isTagged(state, "Closing") ? moveTo(new Closed()) : invalid(state, event)
+        ),
         Match.tag("AttemptStarted", () =>
           Match.value(state).pipe(
             Match.tag("Disconnected", () => moveTo(new Connecting({ attempt: 1 }))),
@@ -369,20 +371,22 @@ export const transition = (state: ConnectionState, event: ConnectionEvent): Tran
           )
         ),
         Match.tag("Opened", () =>
-          state._tag === "Connecting" ? moveTo(new Handshaking({ attempt: state.attempt })) : invalid(state, event)
+          Predicate.isTagged(state, "Connecting")
+            ? moveTo(new Handshaking({ attempt: state.attempt }))
+            : invalid(state, event)
         ),
         Match.tag("Accepted", (accepted) =>
-          state._tag === "Handshaking"
+          Predicate.isTagged(state, "Handshaking")
             ? moveTo(new Subscribing({ attempt: state.attempt, controllerName: accepted.controllerName }))
             : invalid(state, event)
         ),
         Match.tag("Subscribed", () =>
-          state._tag === "Subscribing"
+          Predicate.isTagged(state, "Subscribing")
             ? moveTo(new Recovering({ attempt: state.attempt, controllerName: state.controllerName }))
             : invalid(state, event)
         ),
         Match.tag("Recovered", () =>
-          state._tag === "Recovering"
+          Predicate.isTagged(state, "Recovering")
             ? moveTo(new Ready({ controllerName: state.controllerName }))
             : invalid(state, event)
         ),

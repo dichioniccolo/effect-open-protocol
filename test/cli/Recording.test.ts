@@ -6,15 +6,16 @@ import { Effect, Exit, FileSystem, Layer, Path, Ref, Scope, Stream } from "effec
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { SqlClient } from "effect/unstable/sql/SqlClient"
-import { makeRecording } from "../../cli/Recording.ts"
+import { make as makeRecording } from "../../cli/Recording.ts"
 import { instrument, latencyOf } from "../../cli/Wire.ts"
-import { EventQuery, RunId, WireStore } from "../../store/src/WireStore.ts"
+import { EventQuery, layer as storeLayer, RunId, WireStore } from "../../store/src/WireStore.ts"
 import { terminator } from "../../src/protocol/Header.ts"
 import type { Duplex } from "../../src/transport/Transport.ts"
 
 const encoder = new TextEncoder()
 
 const handshake = encoder.encode(`00200001001         ${terminator}`)
+
 const reply = encoder.encode(`00200002001         ${terminator}`)
 
 const start = { side: "client", host: "127.0.0.1", port: 4545, seed: 1, latency: 0, jitter: 0 } as const
@@ -23,16 +24,19 @@ const tempDatabase = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
   const directory = yield* fs.makeTempDirectoryScoped()
+
   return path.join(directory, "nested", "traces.sqlite")
 })
 
 /** A duplex that replies once and keeps what it was sent. */
 const fixture = Effect.gen(function* () {
   const written = yield* Ref.make<ReadonlyArray<Uint8Array>>([])
+
   const duplex: Duplex = {
     incoming: Stream.make(reply),
     send: (bytes) => Ref.update(written, (current) => A.append(current, bytes))
   }
+
   return { duplex, written }
 })
 
@@ -40,11 +44,13 @@ const readBack = (filename: string) =>
   Effect.gen(function* () {
     const store = yield* WireStore
     const runs = yield* store.listRuns
+
     const events = yield* store.events(
       new EventQuery({ runId: RunId.make(1), kind: O.none(), direction: O.none(), mid: O.none() })
     )
+
     return { runs, events }
-  }).pipe(Effect.provide(WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)))
+  }).pipe(Effect.provide(storeLayer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)))
 
 describe("Recording", () => {
   it.effect("records every traced event of a run, in order, and ends the run on close", () =>
@@ -54,6 +60,7 @@ describe("Recording", () => {
       yield* Effect.gen(function* () {
         const recording = yield* makeRecording({ traceDb: filename, file: O.none(), start })
         const latency = latencyOf({ latency: 0, jitter: 0 })
+
         for (const _ of [1, 2]) {
           const { duplex } = yield* fixture
           const traced = yield* instrument(duplex, { source: "client", recording, latency })
@@ -101,11 +108,13 @@ describe("Recording", () => {
         }).pipe(Effect.provide(SqliteClient.layer({ filename })))
 
         const { duplex, written } = yield* fixture
+
         const traced = yield* instrument(duplex, {
           source: "client",
           recording,
           latency: latencyOf({ latency: 0, jitter: 0 })
         })
+
         yield* traced.send(handshake)
         expect(yield* Ref.get(written)).toEqual([handshake])
       }).pipe(Effect.scoped)
@@ -123,11 +132,13 @@ describe("Recording", () => {
       yield* Effect.gen(function* () {
         const recording = yield* makeRecording({ traceDb: path.join(blocker, "traces.sqlite"), file: O.none(), start })
         const { duplex, written } = yield* fixture
+
         const traced = yield* instrument(duplex, {
           source: "client",
           recording,
           latency: latencyOf({ latency: 0, jitter: 0 })
         })
+
         yield* traced.send(handshake)
         expect(yield* Ref.get(written)).toEqual([handshake])
       }).pipe(Effect.scoped)

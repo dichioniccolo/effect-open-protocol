@@ -9,7 +9,7 @@
  *
  * @since 0.0.0
  */
-import { Match, pipe, Result } from "effect"
+import { Match, pipe, Predicate, Result } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as Rec from "effect/Record"
@@ -272,6 +272,7 @@ const decodeStartAccepted = (data: string): Result.Result<CommunicationStartAcce
     const cellId = yield* numberAt(2, data, 2, 6, "cellId")
     const channelId = yield* numberAt(2, data, 8, 10, "channelId")
     const controllerName = Str.substring(12, 37)(data)
+
     return new CommunicationStartAccepted({ cellId, channelId, controllerName: Str.trimEnd(controllerName) })
   })
 
@@ -279,6 +280,7 @@ const decodeCommandError = (data: string): Result.Result<CommandError, PayloadDe
   Result.gen(function* () {
     const mid = yield* numberAt(4, data, 0, 4, "mid")
     const code = yield* numberAt(4, data, 4, 6, "code")
+
     return new CommandError({ mid, code })
   })
 
@@ -378,10 +380,10 @@ export const decodeMessage = (frame: string, deviceId: DeviceId): Result.Result<
     Result.flatMap((header) => decodeBody(header, Str.substring(headerLength, Str.length(frame))(frame), deviceId))
   )
 
-const revisionOf = (message: Message): number => (message._tag === "UnknownMessage" ? message.revision : 1)
+const revisionOf = (message: Message): number => (Predicate.isTagged(message, "UnknownMessage") ? message.revision : 1)
 
 const midOf = (message: Message): number =>
-  message._tag === "UnknownMessage" ? message.mid : wireFormat[message._tag].mid
+  Predicate.isTagged(message, "UnknownMessage") ? message.mid : wireFormat[message._tag].mid
 
 const dataOf = (message: Message): string =>
   Match.value(message).pipe(
@@ -423,6 +425,7 @@ const dataOf = (message: Message): string =>
  */
 export const encodeMessage = (message: Message): string => {
   const data = dataOf(message)
+
   const header = new Header({
     length: headerLength + Str.length(data),
     mid: midOf(message),
@@ -431,5 +434,6 @@ export const encodeMessage = (message: Message): string => {
     stationId: 1,
     spindleId: 1
   })
+
   return encodeHeader(header) + data + terminator
 }

@@ -102,7 +102,8 @@ export const replyTo = (
     Match.tag("UnsubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 63 }))),
     Match.tag("CommunicationStop", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 3 }))),
     Match.tag("RequestOldResult", (request): O.Option<Message> => {
-      const wanted = request.tighteningId === 0 ? latest : O.some(request.tighteningId as number)
+      const wanted = request.tighteningId === 0 ? latest : O.some<number>(request.tighteningId)
+
       return O.some(
         O.match(
           O.flatMap(wanted, (id) => MutableHashMap.get(store, id)),

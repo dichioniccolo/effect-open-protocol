@@ -18,7 +18,7 @@ import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import { Command, Flag } from "effect/unstable/cli"
-import { makeDeviceConnection } from "../src/connection/DeviceConnection.ts"
+import { make as makeConnection } from "../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
 import { layer as tcpLayer } from "../src/transport/TcpTransport.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
@@ -29,12 +29,11 @@ import {
   latency,
   latencyOf,
   port,
+  recordingOf,
   seed,
   traceDb,
-  traceFile,
-  traceSink
+  traceFile
 } from "./Wire.ts"
-import { makeRecording } from "./Recording.ts"
 
 const deviceId = Flag.String("device-id").pipe(
   Flag.withDescription("Identifier stamped on every result this client receives"),
@@ -71,31 +70,26 @@ const run = Effect.fnUntraced(function* (config: {
   readonly deviceId: string
   readonly recoveryInterval: number
 }) {
-  const recording = yield* makeRecording({
-    traceDb: config.traceDb,
-    file: yield* traceSink(config.traceFile),
-    start: {
-      side: "client",
-      host: config.host,
-      port: config.port,
-      seed: config.seed,
-      latency: config.latency,
-      jitter: config.jitter
-    }
-  })
   const received = yield* Ref.make<ReadonlyArray<string>>([])
   const id = yield* Effect.orDie(S.decodeEffect(DeviceId)(config.deviceId))
 
-  const connection = yield* makeDeviceConnection({
+  const connection = yield* makeConnection({
     id,
     endpoint: new Endpoint({ host: config.host, port: config.port }),
-    ...(config.recoveryInterval > 0 ? { recoveryInterval: Duration.millis(config.recoveryInterval) } : {}),
+    recoveryInterval: config.recoveryInterval > 0 ? Duration.millis(config.recoveryInterval) : undefined,
     onResult: (result) =>
       pipe(
         Ref.update(received, (current) => A.append(current, `${result.tighteningId}`)),
         Effect.andThen(report(result))
       )
-  }).pipe(Effect.provide(instrumentedTransport({ source: "client", recording, latency: latencyOf(config) })))
+  }).pipe(
+    Effect.provide(
+      instrumentedTransport({
+        source: "client",
+        latency: latencyOf(config)
+      })
+    )
+  )
 
   yield* Effect.logInfo("client started").pipe(
     Effect.annotateLogs({
@@ -131,13 +125,32 @@ const run = Effect.fnUntraced(function* (config: {
   })
 
   yield* watch
+
   return yield* Effect.onExit(Effect.never, () => summary)
 })
 
 const command = Command.make(
   "client",
-  { host, port, seed, latency, jitter, traceFile, traceDb, deviceId, recoveryInterval },
-  (config) => pipe(run(config), Random.withSeed(config.seed), Effect.scoped, Effect.provide(tcpLayer), Effect.asVoid)
+  {
+    host,
+    port,
+    seed,
+    latency,
+    jitter,
+    traceFile,
+    traceDb,
+    deviceId,
+    recoveryInterval
+  },
+  (config) =>
+    pipe(
+      run(config),
+      Random.withSeed(config.seed),
+      Effect.provide(recordingOf("client", config)),
+      Effect.scoped,
+      Effect.provide(tcpLayer),
+      Effect.asVoid
+    )
 ).pipe(Command.withDescription("Connect to an Open Protocol controller and trace every byte it exchanges"))
 
 Command.run(command, { version: "0.0.0" }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

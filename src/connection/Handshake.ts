@@ -8,7 +8,7 @@
  *
  * @since 0.0.0
  */
-import { Effect, pipe } from "effect"
+import { Effect, pipe, Predicate } from "effect"
 import { CommunicationStart, SubscribeResults } from "../protocol/Messages.ts"
 import { ConnectionLost } from "../transport/Transport.ts"
 import { HandshakeRejected } from "./ConnectionError.ts"
@@ -28,7 +28,9 @@ import type { Session } from "./Session.ts"
 export const startCommunication = (session: Session): Effect.Effect<string, ConnectionLost | HandshakeRejected> =>
   pipe(
     session.replies.request(new CommunicationStart(), 1, expectReply(1, "CommunicationStartAccepted")),
-    Effect.map((accepted) => (accepted._tag === "CommunicationStartAccepted" ? accepted.controllerName : "")),
+    Effect.map((accepted) =>
+      Predicate.isTagged(accepted, "CommunicationStartAccepted") ? accepted.controllerName : ""
+    ),
     Effect.catchTag("CommandRejected", (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))),
     Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })))
   )

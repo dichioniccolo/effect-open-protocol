@@ -7,7 +7,7 @@
  *
  * @since 0.0.0
  */
-import { Duration, Effect, Match, pipe, Ref } from "effect"
+import { Duration, Effect, Match, Ref } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { CommandError, encodeMessage, type Message } from "../src/protocol/Messages.ts"
@@ -31,8 +31,10 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
   const joined = new Uint8Array(total)
   A.reduce(chunks, 0, (offset, chunk) => {
     joined.set(chunk, offset)
+
     return offset + chunk.length
   })
+
   return joined
 }
 
@@ -69,64 +71,63 @@ export const sendWithFaults = (
   Effect.gen(function* () {
     const bytes = encoder.encode(encodeMessage(message))
     const quiet = yield* Effect.map(Ref.get(state), (current) => current.quiet)
+
     const fault = yield* O.match(quiet ? O.none() : O.fromNullishOr(faults), {
-      onNone: () => Effect.succeed<Faults.Fault>({ _tag: "None" }),
+      onNone: () => Effect.succeed(Faults.Fault.None()),
       onSome: (config) => Faults.next(config)
     })
 
     /** Writes whatever a coalesce fault held back, in front of this frame. */
-    const flush = (frame: Uint8Array): Effect.Effect<void> =>
-      pipe(
-        Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }]),
-        Effect.flatMap((pending) =>
-          Effect.ignore(connection.send(A.length(pending) === 0 ? frame : concat(A.append(pending, frame))))
-        )
-      )
+    const flush = Effect.fnUntraced(function* (frame: Uint8Array) {
+      const pending = yield* Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }])
+
+      yield* Effect.ignore(connection.send(A.length(pending) === 0 ? frame : concat(A.append(pending, frame))))
+    })
 
     return yield* Match.value(fault).pipe(
       Match.tag("None", () => flush(bytes)),
-      Match.tag("DropConnection", () =>
-        pipe(
-          Ref.update(state, (current) => forget(current, connection)),
-          Effect.andThen(connection.close("the controller dropped the connection"))
-        )
+      Match.tag(
+        "DropConnection",
+        Effect.fnUntraced(function* () {
+          yield* Ref.update(state, (current) => forget(current, connection))
+          yield* connection.close("the controller dropped the connection")
+        })
       ),
       Match.tag("GoSilent", (silent) => Effect.sleep(silent.duration)),
       Match.tag("DelayReply", (delayed) => Effect.andThen(Effect.sleep(delayed.duration), flush(bytes))),
-      Match.tag("SplitFrame", (split) =>
-        pipe(
-          Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }]),
-          Effect.flatMap((pending) =>
-            Effect.forEach(
-              A.appendAll(pending, Faults.split(bytes, split.pieces)),
-              (piece) => Effect.ignore(connection.send(piece)),
-              { discard: true }
-            )
+      Match.tag(
+        "SplitFrame",
+        Effect.fnUntraced(function* (split) {
+          const pending = yield* Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }])
+
+          yield* Effect.forEach(
+            A.appendAll(pending, Faults.split(bytes, split.pieces)),
+            (piece) => Effect.ignore(connection.send(piece)),
+            { discard: true }
           )
-        )
+        })
       ),
       // The frame is held back so it rides along with the next one and the
       // client sees two messages inside a single read. A short timer flushes it
       // anyway: coalescing delays frames, it does not eat them, and a quiet
       // link would otherwise hold a result until the session died.
-      Match.tag("CoalesceFrames", () =>
-        pipe(
-          Ref.update(state, (current) => ({ ...current, pending: A.append(current.pending, bytes) })),
-          Effect.andThen(
-            Effect.forkChild(
-              Effect.andThen(
-                Effect.sleep(coalesceFlushDelay),
-                pipe(
-                  Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }]),
-                  Effect.flatMap((held) =>
-                    A.length(held) === 0 ? Effect.void : Effect.ignore(connection.send(concat(held)))
-                  )
-                )
-              )
-            )
-          ),
-          Effect.asVoid
-        )
+      Match.tag(
+        "CoalesceFrames",
+        Effect.fnUntraced(function* () {
+          yield* Ref.update(state, (current) => ({ ...current, pending: A.append(current.pending, bytes) }))
+
+          const flushLater = Effect.gen(function* () {
+            yield* Effect.sleep(coalesceFlushDelay)
+
+            const held = yield* Ref.modify(state, (current) => [current.pending, { ...current, pending: [] }])
+
+            if (A.length(held) > 0) {
+              yield* Effect.ignore(connection.send(concat(held)))
+            }
+          })
+
+          yield* Effect.forkChild(flushLater)
+        })
       ),
       Match.tag("RejectCommand", (rejected) =>
         O.match(rejectionFor(message, rejected.code), {

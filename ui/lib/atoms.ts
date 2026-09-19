@@ -132,16 +132,19 @@ export const liveAtom = Atom.family((runId: RunId) =>
   runtime
     .atom((get) => {
       const events = eventsAtom(runId)
+
       const append = (page: ReadonlyArray<StoredEvent>) =>
         Effect.sync(() =>
           get.registry.update(events, (held) => {
             const after = cursorOf(held)
+
             return A.appendAll(
               held,
               A.filter(page, (event) => event.id > after)
             )
           })
         )
+
       return pipe(
         // Read the cursor when each connection opens, not once for the atom.
         Stream.unwrap(Effect.sync(() => connection(runId, cursorOf(get.once(events))))),

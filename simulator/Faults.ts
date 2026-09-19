@@ -9,8 +9,9 @@
  *
  * @since 0.0.0
  */
-import { Duration, Effect, Match, Random } from "effect"
+import { Data, Duration, Effect, Match, Random } from "effect"
 import * as A from "effect/Array"
+import * as O from "effect/Option"
 import * as S from "effect/Schema"
 
 /**
@@ -61,17 +62,26 @@ export interface FaultConfig {
  * @category models
  * @since 0.0.0
  */
-export type Fault =
-  | { readonly _tag: "None" }
-  | { readonly _tag: "DropConnection" }
-  | { readonly _tag: "GoSilent"; readonly duration: Duration.Duration }
-  | { readonly _tag: "DelayReply"; readonly duration: Duration.Duration }
-  | { readonly _tag: "SplitFrame"; readonly pieces: number }
-  | { readonly _tag: "CoalesceFrames" }
-  | { readonly _tag: "RejectCommand"; readonly code: number }
-  | { readonly _tag: "RefuseConnections"; readonly duration: Duration.Duration }
+export type Fault = Data.TaggedEnum<{
+  None: {}
+  DropConnection: {}
+  GoSilent: { readonly duration: Duration.Duration }
+  DelayReply: { readonly duration: Duration.Duration }
+  SplitFrame: { readonly pieces: number }
+  CoalesceFrames: {}
+  RejectCommand: { readonly code: number }
+  RefuseConnections: { readonly duration: Duration.Duration }
+}>
 
-const none: Fault = { _tag: "None" }
+/**
+ * Constructors for each `Fault` variant.
+ *
+ * @category constructors
+ * @since 0.0.0
+ */
+export const Fault = Data.taggedEnum<Fault>()
+
+const none = Fault.None()
 
 const allKinds: ReadonlyArray<FaultKind> = FaultKind.literals
 
@@ -81,21 +91,22 @@ const pickDuration = (max: Duration.Duration): Effect.Effect<Duration.Duration> 
 const faultOf = (kind: FaultKind, config: FaultConfig): Effect.Effect<Fault> => {
   const maxDelay = config.maxDelay ?? Duration.seconds(8)
   const maxOutage = config.maxOutage ?? Duration.seconds(5)
+
   return Match.value(kind).pipe(
-    Match.when("dropConnection", (): Effect.Effect<Fault> => Effect.succeed({ _tag: "DropConnection" })),
+    Match.when("dropConnection", (): Effect.Effect<Fault> => Effect.succeed(Fault.DropConnection())),
     Match.when("goSilent", (): Effect.Effect<Fault> =>
-      Effect.map(pickDuration(maxOutage), (duration) => ({ _tag: "GoSilent", duration }))
+      Effect.map(pickDuration(maxOutage), (duration) => Fault.GoSilent({ duration }))
     ),
     Match.when("delayReply", (): Effect.Effect<Fault> =>
-      Effect.map(pickDuration(maxDelay), (duration) => ({ _tag: "DelayReply", duration }))
+      Effect.map(pickDuration(maxDelay), (duration) => Fault.DelayReply({ duration }))
     ),
     Match.when("splitFrame", (): Effect.Effect<Fault> =>
-      Effect.map(Random.nextIntBetween(2, 5), (pieces) => ({ _tag: "SplitFrame", pieces }))
+      Effect.map(Random.nextIntBetween(2, 5), (pieces) => Fault.SplitFrame({ pieces }))
     ),
-    Match.when("coalesceFrames", (): Effect.Effect<Fault> => Effect.succeed({ _tag: "CoalesceFrames" })),
-    Match.when("rejectCommand", (): Effect.Effect<Fault> => Effect.succeed({ _tag: "RejectCommand", code: 79 })),
+    Match.when("coalesceFrames", (): Effect.Effect<Fault> => Effect.succeed(Fault.CoalesceFrames())),
+    Match.when("rejectCommand", (): Effect.Effect<Fault> => Effect.succeed(Fault.RejectCommand({ code: 79 }))),
     Match.when("refuseConnections", (): Effect.Effect<Fault> =>
-      Effect.map(pickDuration(maxOutage), (duration) => ({ _tag: "RefuseConnections", duration }))
+      Effect.map(pickDuration(maxOutage), (duration) => Fault.RefuseConnections({ duration }))
     ),
     Match.exhaustive
   )
@@ -120,12 +131,15 @@ export const next = (config: FaultConfig): Effect.Effect<Fault> =>
   Effect.gen(function* () {
     const kinds = config.kinds ?? allKinds
     const roll = yield* Random.next
+
     if (roll >= config.rate || A.length(kinds) === 0) {
       return none
     }
+
     const index = yield* Random.nextIntBetween(0, A.length(kinds))
     const kind = A.get(A.fromIterable(kinds), index)
-    return kind._tag === "Some" ? yield* faultOf(kind.value, config) : none
+
+    return yield* O.match(kind, { onNone: () => Effect.succeed(none), onSome: (value) => faultOf(value, config) })
   })
 
 /**
@@ -136,6 +150,7 @@ export const next = (config: FaultConfig): Effect.Effect<Fault> =>
  */
 export const split = (bytes: Uint8Array, pieces: number): ReadonlyArray<Uint8Array> => {
   const size = Math.max(1, Math.ceil(bytes.length / pieces))
+
   return A.map(A.range(0, Math.max(0, Math.ceil(bytes.length / size) - 1)), (index) =>
     bytes.slice(index * size, Math.min(bytes.length, (index + 1) * size))
   )

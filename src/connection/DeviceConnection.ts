@@ -14,13 +14,14 @@
  *
  * @since 0.0.0
  */
-import { Context, Effect, Fiber, Layer, Match, pipe, Ref, type Scope, SubscriptionRef } from "effect"
+import { Effect, Fiber, Layer, Match, pipe, Predicate, Ref, SubscriptionRef } from "effect"
+import * as Context from "effect/Context"
 import * as O from "effect/Option"
 import { AcknowledgeResult, CommunicationStop, type Message } from "../protocol/Messages.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
-import { makeDedup } from "../results/Dedup.ts"
-import { dropping, makeResultDelivery, type ResultDelivery } from "../results/ResultDelivery.ts"
-import { ConnectionLost, Transport } from "../transport/Transport.ts"
+import { Dedup, layer as dedupLayer } from "../results/Dedup.ts"
+import { layer as deliveryLayer, layerDropping as deliveryDropping, ResultDelivery } from "../results/ResultDelivery.ts"
+import { type ConnectionFailed, ConnectionLost, Transport } from "../transport/Transport.ts"
 import { CommandRejected, HandshakeRejected, NotReady, RequestTimeout } from "./ConnectionError.ts"
 import {
   Accepted,
@@ -30,6 +31,7 @@ import {
   type ConnectionState,
   Failed,
   initial,
+  type InvalidTransition,
   isReady,
   Opened,
   Recovered,
@@ -38,9 +40,9 @@ import {
   transition
 } from "./ConnectionState.ts"
 import { type DeviceConfig, resolveSettings } from "./DeviceSettings.ts"
-import { makeGapRecovery } from "./GapRecovery.ts"
+import { GapRecovery, layer as recoveryLayer } from "./GapRecovery.ts"
 import { startCommunication, subscribeResults } from "./Handshake.ts"
-import { expectReply, makeRequestReply } from "./RequestReply.ts"
+import { expectReply, make as makeReplies } from "./RequestReply.ts"
 import { keepAliveLoop, readLoop, sendRaw, type Session } from "./Session.ts"
 
 /**
@@ -49,7 +51,7 @@ import { keepAliveLoop, readLoop, sendRaw, type Session } from "./Session.ts"
  * @category models
  * @since 0.0.0
  */
-export interface DeviceConnectionShape {
+export interface DeviceConnectionService {
   readonly deviceId: DeviceId
   /** Current state, observable as a stream of changes. */
   readonly state: SubscriptionRef.SubscriptionRef<ConnectionState>
@@ -69,12 +71,12 @@ export interface DeviceConnectionShape {
   readonly duplicates: Effect.Effect<number>
 }
 
-const reasonOf = (error: unknown): string =>
-  error instanceof ConnectionLost
-    ? error.reason
-    : error instanceof HandshakeRejected
-      ? `handshake rejected with code ${error.code}`
-      : "connection attempt failed"
+const reasonOf = (error: ConnectionFailed | ConnectionLost | HandshakeRejected): string =>
+  Match.valueTags(error, {
+    ConnectionLost: (lost) => lost.reason,
+    HandshakeRejected: (rejected) => `handshake rejected with code ${rejected.code}`,
+    ConnectionFailed: () => "connection attempt failed"
+  })
 
 /**
  * Opens a supervised connection that reconnects until it is closed.
@@ -86,10 +88,10 @@ const reasonOf = (error: unknown): string =>
  *
  * ```ts
  * import { Effect, Stream } from "effect"
- * import { DeviceId, Endpoint, makeDeviceConnection } from "effect-open-protocol"
+ * import { DeviceConnection, DeviceId, Endpoint } from "effect-open-protocol"
  *
  * const program = Effect.gen(function* () {
- *   const connection = yield* makeDeviceConnection({
+ *   const connection = yield* DeviceConnection.make({
  *     id: DeviceId.make("line-1-tool-3"),
  *     endpoint: new Endpoint({ host: "10.0.0.31", port: 4545 })
  *   })
@@ -100,42 +102,48 @@ const reasonOf = (error: unknown): string =>
  * @category constructors
  * @since 0.0.0
  */
-export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceConfig) {
+export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const settings = resolveSettings(config)
   const transport = yield* Transport
   const state = yield* SubscriptionRef.make(initial)
   const session = yield* Ref.make(O.none<Session>())
-  const dedup = yield* makeDedup(settings.dedupCapacity)
-
   // No handler means nothing is listening: the connection still runs, but it
   // neither subscribes nor recovers, and every result that arrives is dropped.
   const collectsResults = settings.onResult !== undefined
 
-  const delivery = yield* O.match(O.fromNullishOr(settings.onResult), {
-    onNone: (): Effect.Effect<ResultDelivery, never, Scope.Scope> => Effect.succeed(dropping),
+  const delivering = O.match(O.fromNullishOr(settings.onResult), {
+    onNone: (): Layer.Layer<ResultDelivery, never, Dedup> => deliveryDropping,
     onSome: (handler) =>
-      makeResultDelivery({
-        delivery: { handler, handlerRetry: settings.handlerRetry, bufferSize: settings.resultBuffer },
-        dedup,
-        acknowledge: (result) =>
-          pipe(
-            Ref.get(session),
-            Effect.flatMap((open) =>
-              O.match(open, {
-                onNone: () => Effect.fail(new ConnectionLost({ reason: "no session to acknowledge on" })),
-                onSome: (current) => sendRaw(current.duplex, new AcknowledgeResult())
-              })
-            ),
-            Effect.tap(() =>
-              Effect.logDebug("acknowledged a result").pipe(
-                Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
-              )
-            )
+      deliveryLayer({
+        delivery: {
+          handler,
+          handlerRetry: settings.handlerRetry,
+          bufferSize: settings.resultBuffer
+        },
+        acknowledge: Effect.fnUntraced(function* (result) {
+          const open = yield* Ref.get(session)
+
+          if (O.isNone(open)) {
+            return yield* Effect.fail(new ConnectionLost({ reason: "no session to acknowledge on" }))
+          }
+
+          yield* sendRaw(open.value.duplex, new AcknowledgeResult())
+          yield* Effect.logDebug("acknowledged a result").pipe(
+            Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
           )
+        })
       })
   })
 
-  const recovery = yield* makeGapRecovery({ settings, dedup })
+  // One window, one queue and one gap policy per connection: the layers are
+  // built in this connection's scope, so two devices never share them and both
+  // consumers of the window see the same one.
+  const services = yield* Layer.build(
+    recoveryLayer({ settings }).pipe(Layer.provideMerge(delivering), Layer.provide(dedupLayer(settings.dedupCapacity)))
+  )
+
+  const delivery = Context.get(services, ResultDelivery)
+  const recovery = Context.get(services, GapRecovery)
 
   /**
    * Applies an event to the state machine. A transition the machine refuses is
@@ -144,18 +152,15 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
    * application is already closing, and the state machine is the one place
    * that decides whether that is worth recording.
    */
-  const emitWith = (onRefused: (error: unknown) => Effect.Effect<void>) => (event: ConnectionEvent) =>
-    pipe(
-      SubscriptionRef.get(state),
-      Effect.flatMap((current) =>
-        pipe(
-          transition(current, event),
-          Effect.fromResult,
-          Effect.flatMap((next) => SubscriptionRef.set(state, next)),
-          Effect.catchTag("InvalidTransition", onRefused)
-        )
+  const emitWith = (onRefused: (error: InvalidTransition) => Effect.Effect<void>) =>
+    Effect.fnUntraced(function* (event: ConnectionEvent) {
+      const current = yield* SubscriptionRef.get(state)
+
+      yield* Effect.fromResult(transition(current, event)).pipe(
+        Effect.flatMap((next) => SubscriptionRef.set(state, next)),
+        Effect.catchTag("InvalidTransition", onRefused)
       )
-    )
+    })
 
   const emit = emitWith((error) => Effect.die(error))
 
@@ -163,7 +168,7 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
 
   const routeUnsolicited = (current: Session, message: Message): Effect.Effect<void> =>
     Match.value(message).pipe(
-      Match.tag("LastResult", (carrier) => recovery.submitResult(current, delivery, carrier.result)),
+      Match.tag("LastResult", (carrier) => recovery.submitResult(current, carrier.result)),
       Match.tag("OldResult", (carrier) => delivery.submit(carrier.result)),
       Match.orElse((other) =>
         Effect.logWarning("unsolicited message dropped").pipe(
@@ -174,12 +179,15 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
 
   const attempt = Effect.gen(function* () {
     yield* emit(new AttemptStarted())
+
     const duplex = yield* transport
       .connect(settings.endpoint)
       .pipe(Effect.tapError((error) => emit(new Failed({ reason: error.reason }))))
+
     yield* emit(new Opened())
     const lastSent = yield* Ref.make(0)
-    const replies = yield* makeRequestReply({
+
+    const replies = yield* makeReplies({
       send: (message) =>
         pipe(
           sendRaw(duplex, message),
@@ -189,6 +197,7 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
         ),
       responseTimeout: settings.responseTimeout
     })
+
     const current: Session = { duplex, replies }
     yield* Ref.set(session, O.some(current))
     yield* Effect.addFinalizer(() =>
@@ -203,6 +212,7 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
     const reader = yield* Effect.forkChild(
       readLoop(current, settings.id, (message) => routeUnsolicited(current, message))
     )
+
     // A socket that dies during the handshake, the subscription or recovery
     // must fail the attempt immediately instead of waiting for a timeout.
     const readerFailed = Effect.flatMap(Fiber.join(reader), () =>
@@ -216,7 +226,7 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
 
         // Recovery runs before the subscription: a result produced between the
         // two would otherwise be treated as history by the first baseline.
-        yield* collectsResults ? recovery.recoverGap(current, delivery) : Effect.void
+        yield* collectsResults ? recovery.recoverGap(current) : Effect.void
 
         yield* collectsResults ? subscribeResults(current) : Effect.void
         yield* emit(new Subscribed())
@@ -227,6 +237,7 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
     )
 
     const keepAlive = yield* Effect.forkChild(keepAliveLoop(current, lastSent, settings.keepAliveInterval))
+
     // Recovery is driven by events: a session starting, and a pushed result
     // whose identifier sits above the watermark. A caller who also wants the
     // line polled asks for it with `recoveryInterval`, and pays one MID 0064
@@ -235,19 +246,18 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
     const reconcile = yield* Effect.forkChild(
       O.match(collectsResults ? O.fromNullishOr(settings.recoveryInterval) : O.none(), {
         onNone: (): Effect.Effect<never> => Effect.never,
-        onSome: (interval) =>
-          Effect.forever(Effect.andThen(Effect.sleep(interval), recovery.recoverGap(current, delivery)))
+        onSome: (interval) => Effect.forever(Effect.andThen(Effect.sleep(interval), recovery.recoverGap(current)))
       })
     )
-    return yield* pipe(
-      readerFailed,
+
+    return yield* readerFailed.pipe(
       Effect.raceFirst(Fiber.join(keepAlive)),
-      Effect.onExit(() =>
-        pipe(
-          Fiber.interrupt(reconcile),
-          Effect.andThen(Fiber.interrupt(keepAlive)),
-          Effect.andThen(Fiber.interrupt(reader))
-        )
+      Effect.onExit(
+        Effect.fnUntraced(function* () {
+          yield* Fiber.interrupt(reconcile)
+          yield* Fiber.interrupt(keepAlive)
+          yield* Fiber.interrupt(reader)
+        })
       )
     )
   }).pipe(Effect.scoped)
@@ -266,11 +276,13 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
     Effect.gen(function* () {
       const current = yield* SubscriptionRef.get(state)
       const open = yield* Ref.get(session)
+
       const found = yield* O.match(open, {
         onNone: (): Effect.Effect<Session, NotReady> => Effect.fail(new NotReady({ state: current._tag })),
         onSome: (value): Effect.Effect<Session, NotReady> =>
           isReady(current) ? Effect.succeed(value) : Effect.fail(new NotReady({ state: current._tag }))
       })
+
       return yield* use(found)
     })
 
@@ -279,42 +291,44 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
    * instead of waiting for its own 15 second idle timeout. Best effort: the
    * socket may already be gone, and shutdown must not block on it.
    */
-  const sayGoodbye = pipe(
-    Ref.get(session),
-    Effect.flatMap((open) =>
-      O.match(open, {
-        onNone: () => Effect.void,
-        onSome: (current) =>
-          pipe(
-            sendRaw(current.duplex, new CommunicationStop()),
-            Effect.timeoutOption(settings.stopTimeout),
-            Effect.asVoid
-          )
-      })
-    ),
-    Effect.ignore
-  )
+  const sayGoodbye = Effect.gen(function* () {
+    const open = yield* Ref.get(session)
 
-  const closeOnce = pipe(
-    emit(new CloseRequested()),
-    Effect.andThen(sayGoodbye),
-    Effect.andThen(Fiber.interrupt(fiber)),
-    Effect.andThen(emit(new Released()))
-  )
+    if (O.isNone(open)) {
+      return
+    }
+
+    yield* sendRaw(open.value.duplex, new CommunicationStop()).pipe(Effect.timeoutOption(settings.stopTimeout))
+  }).pipe(Effect.ignore)
+
+  const closeOnce = Effect.gen(function* () {
+    yield* emit(new CloseRequested())
+    yield* sayGoodbye
+    yield* Fiber.interrupt(fiber)
+    yield* emit(new Released())
+  })
 
   // Closing an already closed connection is a normal thing for an application
   // to do (a scope finalizer and an explicit close can both fire), so it is a
   // no-op rather than a defect.
-  const close = pipe(
-    SubscriptionRef.get(state),
-    Effect.flatMap((current) => (current._tag === "Closed" || current._tag === "Closing" ? Effect.void : closeOnce))
-  )
+  const close = Effect.gen(function* () {
+    const current = yield* SubscriptionRef.get(state)
 
-  yield* Effect.addFinalizer(() =>
-    pipe(
-      SubscriptionRef.get(state),
-      Effect.flatMap((current) => (current._tag === "Closed" ? Effect.void : Effect.ignore(close)))
-    )
+    if (Predicate.isTagged(current, "Closed") || Predicate.isTagged(current, "Closing")) {
+      return
+    }
+
+    yield* closeOnce
+  })
+
+  yield* Effect.addFinalizer(
+    Effect.fnUntraced(function* () {
+      const current = yield* SubscriptionRef.get(state)
+
+      if (!Predicate.isTagged(current, "Closed")) {
+        yield* Effect.ignore(close)
+      }
+    })
   )
 
   return {
@@ -326,16 +340,16 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
     close,
     delivered: delivery.delivered,
     duplicates: delivery.duplicates
-  } satisfies DeviceConnectionShape
+  } satisfies DeviceConnectionService
 })
 
 /**
  * One controller, as a service.
  *
- * A pool holds many connections, so `makeDeviceConnection` stays the way to
- * build them: a service has one instance per context. This class is for the
- * other case, an application that talks to a single controller and wants it
- * wired like any other dependency.
+ * A pool holds many connections, so `make` stays the way to build them: a
+ * service has one instance per context. This class is for the other case, an
+ * application that talks to a single controller and wants it wired like any
+ * other dependency.
  *
  * **Example** (A single controller as a dependency)
  *
@@ -349,7 +363,7 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
  * })
  *
  * const program = Effect.gen(function* () {
- *   const connection = yield* DeviceConnection
+ *   const connection = yield* DeviceConnection.DeviceConnection
  *   return yield* connection.state
  * }).pipe(Effect.provide(layer), Effect.provide(TcpTransport.layer))
  * ```
@@ -357,15 +371,16 @@ export const makeDeviceConnection = Effect.fnUntraced(function* (config: DeviceC
  * @category services
  * @since 0.0.0
  */
-export class DeviceConnection extends Context.Service<DeviceConnection, DeviceConnectionShape>()(
+export class DeviceConnection extends Context.Service<DeviceConnection, DeviceConnectionService>()(
   "effect-open-protocol/DeviceConnection"
-) {
-  /**
-   * Provides one supervised connection for the lifetime of the layer, closing
-   * it gracefully when the layer goes away.
-   *
-   * @since 0.0.0
-   */
-  static readonly layer = (config: DeviceConfig): Layer.Layer<DeviceConnection, never, Transport> =>
-    Layer.effect(DeviceConnection)(makeDeviceConnection(config))
-}
+) {}
+
+/**
+ * Provides one supervised connection for the lifetime of the layer, closing it
+ * gracefully when the layer goes away.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layer = (config: DeviceConfig): Layer.Layer<DeviceConnection, never, Transport> =>
+  Layer.effect(DeviceConnection)(make(config))

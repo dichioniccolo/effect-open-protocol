@@ -16,10 +16,11 @@
 import { NodeRuntime } from "@effect/platform-node"
 import { Duration, Effect, Random, Ref, Schedule } from "effect"
 import * as A from "effect/Array"
+import * as O from "effect/Option"
 import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
-import { DevicePool } from "../src/pool/DevicePool.ts"
+import { DevicePool, layer as devicePoolLayer } from "../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
-import { layerComplete } from "../src/transport/InMemoryTransport.ts"
+import { layerSimulated } from "../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
 
 interface Outcome {
@@ -48,9 +49,11 @@ const runOnce = (options: {
   Effect.gen(function* () {
     const delivered = yield* Ref.make<ReadonlyArray<string>>([])
     const pool = yield* DevicePool
+
     const simulators = yield* Effect.forEach(A.range(1, options.devices), (index) =>
       Effect.gen(function* () {
         const endpoint = new Endpoint({ host: `soak-${options.seed}`, port: 4700 + index })
+
         const simulator = yield* makeSimulator({
           endpoint,
           controllerName: `Controller-${index}`,
@@ -63,6 +66,7 @@ const runOnce = (options: {
             maxOutage: Duration.seconds(2)
           }
         })
+
         yield* pool.add({
           id: DeviceId.make(`tool-${index}`),
           endpoint,
@@ -70,6 +74,7 @@ const runOnce = (options: {
           onResult: (result: TighteningResult) =>
             Ref.update(delivered, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
         })
+
         return simulator
       })
     )
@@ -90,12 +95,14 @@ const runOnce = (options: {
               ? Effect.void
               : Effect.andThen(Effect.sleep(Duration.millis(100)), settleFor(remaining - 1))
           )
+
     yield* settleFor(Math.ceil(Duration.toMillis(options.settle) / 100))
 
     const abandoned = yield* Effect.map(
       Effect.forEach(simulators, (simulator: Simulator) => simulator.abandoned),
       (lists) => A.reduce(lists, 0, (sum, list) => sum + A.length(list))
     )
+
     const finalGenerated = yield* generated
     const finalDelivered = yield* Ref.get(delivered)
 
@@ -108,11 +115,15 @@ const runOnce = (options: {
       unique: A.length(A.dedupe(finalDelivered)),
       abandoned
     } satisfies Outcome
-  }).pipe(Random.withSeed(options.seed), Effect.scoped, Effect.provide(DevicePool.layer), Effect.provide(layerComplete))
+  }).pipe(Random.withSeed(options.seed), Effect.scoped, Effect.provide(devicePoolLayer), Effect.provide(layerSimulated))
 
 const flag = (name: string, fallback: number): number => {
   const index = A.findFirstIndex(process.argv, (value) => value === `--${name}`)
-  return index._tag === "Some" ? Number(process.argv[index.value + 1] ?? fallback) : fallback
+
+  return O.match(index, {
+    onNone: () => fallback,
+    onSome: (at) => Number(process.argv[at + 1] ?? fallback)
+  })
 }
 
 const program = Effect.gen(function* () {

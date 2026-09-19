@@ -42,6 +42,7 @@ export function RunView({ run, events }: { readonly run: string; readonly events
       }),
     [run, events]
   )
+
   return O.match(decoded, {
     onNone: () => (
       <main className="flex-1 p-8 text-sm text-destructive">
@@ -132,6 +133,7 @@ function FilterBar({
   const [filters, setFilters] = useAtom(filtersAtom)
   const mids = useAtomValue(midsAtom(runId))
   const set = (change: Partial<Filters>) => setFilters(new Filters({ ...filters, ...change }))
+
   const midItems = A.prepend(
     A.map(mids, (mid): MidItem => ({ label: mid, value: mid })),
     { label: "Any", value: null } satisfies MidItem
@@ -199,13 +201,20 @@ const arrow = (event: StoredEvent) =>
 
 /** Moves focus between packet rows with the arrow keys, so the table is usable without a mouse. */
 const moveWithArrows = (event: KeyboardEvent<HTMLTableSectionElement>) => {
-  const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0
+  const step = Match.value(event.key).pipe(
+    Match.when("ArrowDown", () => 1),
+    Match.when("ArrowUp", () => -1),
+    Match.orElse(() => 0)
+  )
+
   if (step === 0) return
   const rows = A.fromIterable(event.currentTarget.querySelectorAll<HTMLButtonElement>("button[data-row]"))
+
   const at = O.getOrElse(
     A.findFirstIndex(rows, (row) => row === document.activeElement),
     () => -1
   )
+
   O.map(A.get(rows, Num.clamp(at + step, { minimum: 0, maximum: rows.length - 1 })), (next) => {
     event.preventDefault()
     next.focus()
@@ -273,6 +282,7 @@ function PacketTable({
               {A.map(rows, (event) => {
                 const isOpen = O.contains(openId, event.id)
                 const quiet = isOpen ? "text-subtle-foreground" : "text-muted-foreground"
+
                 return (
                   <TableRow
                     key={event.id}
@@ -358,6 +368,7 @@ const SectionTitle = ({ children }: { readonly children: string }) => (
 
 function DetailPane({ runId }: { readonly runId: Run["id"] }) {
   const open = useAtomValue(selectedEventAtom(runId))
+
   return (
     <aside aria-label="Event detail" className="min-h-0 overflow-auto border-t bg-card/40 px-6 py-5 lg:border-t-0">
       {O.match(open, {

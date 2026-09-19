@@ -14,6 +14,7 @@ const firstPage = 5000
 
 export default async function Page({ params }: { readonly params: Promise<{ readonly id: string }> }) {
   const { id } = await params
+
   const loaded = await runtime.runPromise(
     pipe(
       S.decodeUnknownOption(RunIdFromString)(id),
@@ -23,9 +24,11 @@ export default async function Page({ params }: { readonly params: Promise<{ read
           WireStore.use((store) =>
             Effect.gen(function* () {
               const run = yield* store.findRun(runId)
+
               const events = yield* store.events(
                 new EventQuery({ runId, limit: firstPage, kind: O.none(), direction: O.none(), mid: O.none() })
               )
+
               return yield* O.match(run, {
                 onNone: () => Effect.succeedNone,
                 onSome: (found) =>
@@ -42,6 +45,7 @@ export default async function Page({ params }: { readonly params: Promise<{ read
       })
     )
   )
+
   return O.match(loaded, {
     onNone: () => notFound(),
     onSome: (page) => <RunView run={page.run} events={page.events} />

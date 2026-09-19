@@ -9,13 +9,14 @@
  *
  * @since 0.0.0
  */
-import { Duration, Effect, FileSystem, Layer, pipe, type Scope } from "effect"
+import { Duration, Effect, FileSystem, Layer, Path, pipe, type Scope } from "effect"
 import * as O from "effect/Option"
 import { Flag } from "effect/unstable/cli"
+import type { RunSide } from "../store/src/WireStore.ts"
 import { type Duplex, Transport } from "../src/transport/Transport.ts"
 import { delayedDuplex, type LatencyOptions } from "../src/transport/WireLatency.ts"
 import { tracedDuplex, type WireEvent, wireEventLine, type WireSink } from "../src/transport/WireTrace.ts"
-import type { Recording } from "./Recording.ts"
+import { layer as recordingLayer, Recording, type RecordingService } from "./Recording.ts"
 
 /**
  * Seed for every random decision, so a run can be replayed.
@@ -121,6 +122,7 @@ export const traceSink = Effect.fnUntraced(function* (path: O.Option<string>) {
         const fs = yield* FileSystem.FileSystem
         const file = yield* fs.open(target, { flag: "a" })
         const encoder = new TextEncoder()
+
         const sink: WireSink = (event: WireEvent) =>
           pipe(
             wireEventLine(event),
@@ -129,14 +131,54 @@ export const traceSink = Effect.fnUntraced(function* (path: O.Option<string>) {
             // A trace that cannot be written must never take the run with it.
             Effect.catchCause((cause) => Effect.logWarning("could not append to the trace file", cause))
           )
+
         return O.some(sink)
       }).pipe(Effect.orDie)
   })
 })
 
 /**
+ * The recording for one command run, as a layer: the JSONL file when the flags
+ * asked for one, and the trace store both commands write into.
+ *
+ * Every byte channel a command instruments takes its sink from this one
+ * recording, so the run ends up as a single numbered story in the store.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const recordingOf = (
+  side: typeof RunSide.Type,
+  config: {
+    readonly host: string
+    readonly port: number
+    readonly seed: number
+    readonly latency: number
+    readonly jitter: number
+    readonly traceFile: O.Option<string>
+    readonly traceDb: string
+  }
+): Layer.Layer<Recording, never, FileSystem.FileSystem | Path.Path> =>
+  Layer.unwrap(
+    Effect.map(traceSink(config.traceFile), (file) =>
+      recordingLayer({
+        traceDb: config.traceDb,
+        file,
+        start: {
+          side,
+          host: config.host,
+          port: config.port,
+          seed: config.seed,
+          latency: config.latency,
+          jitter: config.jitter
+        }
+      })
+    )
+  )
+
+/**
  * Stacks the tracer and the latency decorator over one byte channel, tracing
- * into a fresh sink from the recording so the connection gets its own number.
+ * into a fresh sink from the recording, so the connection gets its own number.
  *
  * @category constructors
  * @since 0.0.0
@@ -145,12 +187,13 @@ export const instrument = Effect.fnUntraced(function* (
   duplex: Duplex,
   options: {
     readonly source: string
-    readonly recording: Recording
+    readonly recording: RecordingService
     readonly latency: LatencyOptions
   }
 ) {
   const sink = yield* options.recording.nextConnection
   const traced = yield* tracedDuplex(duplex, { source: options.source, sink })
+
   return delayedDuplex(traced, options.latency)
 })
 
@@ -163,11 +206,16 @@ export const instrument = Effect.fnUntraced(function* (
  */
 export const instrumentedTransport = (options: {
   readonly source: string
-  readonly recording: Recording
   readonly latency: LatencyOptions
-}): Layer.Layer<Transport, never, Transport> =>
+}): Layer.Layer<Transport, never, Transport | Recording> =>
   Layer.effect(Transport)(
-    Effect.map(Transport, (transport) => ({
-      connect: (endpoint) => Effect.flatMap(transport.connect(endpoint), (duplex) => instrument(duplex, options))
-    }))
+    Effect.gen(function* () {
+      const transport = yield* Transport
+      const recording = yield* Recording
+
+      return {
+        connect: (endpoint) =>
+          Effect.flatMap(transport.connect(endpoint), (duplex) => instrument(duplex, { ...options, recording }))
+      }
+    })
   )

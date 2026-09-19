@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { assertFailure, assertSuccess } from "@effect/vitest/utils"
-import { pipe, Result } from "effect"
+import { pipe, Predicate, Result } from "effect"
 import * as A from "effect/Array"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
@@ -89,7 +89,9 @@ const messages: ReadonlyArray<Message> = [
 const withoutTerminator = (frame: string): string => Str.substring(0, Str.length(frame) - 1)(frame)
 
 const torqueValue = S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 999999 }))
+
 const angleValue = S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99999 }))
+
 const idValue = S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 4294967295 }))
 
 describe("Header", () => {
@@ -133,9 +135,10 @@ describe("Messages", () => {
 
   it("gives every modelled message its own MID from the supported domain", () => {
     const mids = A.map(
-      A.filter(messages, (message) => message._tag !== "UnknownMessage"),
+      A.filter(messages, (message) => !Predicate.isTagged(message, "UnknownMessage")),
       (message) => Number(Str.substring(4, 8)(encodeMessage(message)))
     )
+
     A.forEach(mids, (mid) => expect(S.is(Mid)(mid)).toBe(true))
     expect(A.length(A.dedupe(mids))).toBe(A.length(mids))
   })
@@ -166,6 +169,7 @@ describe("Messages", () => {
         parameterSetId: 12
       })
     })
+
     assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
   })
 
@@ -182,6 +186,7 @@ describe("Messages", () => {
         parameterSetId: 0
       })
     })
+
     assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
   })
 

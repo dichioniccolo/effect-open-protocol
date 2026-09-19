@@ -1,30 +1,35 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Duration, Effect, pipe, Ref, Schedule, Stream, SubscriptionRef } from "effect"
+import { Duration, Effect, pipe, Predicate, Ref, Result, Schedule, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
+import * as O from "effect/Option"
 import * as Str from "effect/String"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
-import type { DeviceConnectionShape } from "../../src/connection/DeviceConnection.ts"
+import type { DeviceConnectionService } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { layerComplete } from "../../src/transport/InMemoryTransport.ts"
+import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
-import { DevicePool } from "../../src/pool/DevicePool.ts"
+import { DevicePool, layer as devicePoolLayer } from "../../src/pool/DevicePool.ts"
 
 const toolOne = DeviceId.make("tool-1")
+
 const toolTwo = DeviceId.make("tool-2")
+
 const endpointOne = new Endpoint({ host: "sim", port: 4545 })
+
 const endpointTwo = new Endpoint({ host: "sim", port: 4546 })
+
 const missing = new Endpoint({ host: "sim", port: 9999 })
 
 const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(DevicePool.layer), Effect.provide(layerComplete))
+  Effect.scoped(effect).pipe(Effect.provide(devicePoolLayer), Effect.provide(layerSimulated))
 
-const awaitReady = (connection: DeviceConnectionShape): Effect.Effect<ConnectionState> =>
+const awaitReady = (connection: DeviceConnectionService): Effect.Effect<ConnectionState> =>
   pipe(
     SubscriptionRef.changes(connection.state),
-    Stream.filter((current) => current._tag === "Ready"),
+    Stream.filter((current) => Predicate.isTagged(current, "Ready")),
     Stream.runHead,
-    Effect.flatMap((head) => (head._tag === "Some" ? Effect.succeed(head.value) : Effect.never))
+    Effect.flatMap(O.match({ onNone: () => Effect.never, onSome: Effect.succeed }))
   )
 
 const settle = <A>(effect: Effect.Effect<A>, predicate: (value: A) => boolean, attempts = 500): Effect.Effect<A> =>
@@ -49,7 +54,7 @@ describe("DevicePool", () => {
 
         const status = yield* pool.status
         expect(A.length(status)).toBe(2)
-        expect(A.every(status, (device) => device.state._tag === "Ready")).toBe(true)
+        expect(A.every(status, (device) => Predicate.isTagged(device.state, "Ready"))).toBe(true)
       })
     )
   )
@@ -61,19 +66,21 @@ describe("DevicePool", () => {
         const pool = yield* DevicePool
 
         const healthy = yield* pool.add({ id: toolOne, endpoint: endpointOne })
+
         const broken = yield* pool.add({
           id: toolTwo,
           endpoint: missing,
           reconnect: Schedule.spaced(Duration.seconds(1))
         })
+
         yield* awaitReady(healthy)
 
-        const brokenState = yield* settle(
-          SubscriptionRef.get(broken.state),
-          (current) => current._tag === "WaitingToReconnect"
+        const brokenState = yield* settle(SubscriptionRef.get(broken.state), (current) =>
+          Predicate.isTagged(current, "WaitingToReconnect")
         )
-        expect(brokenState._tag).toBe("WaitingToReconnect")
-        expect((yield* SubscriptionRef.get(healthy.state))._tag).toBe("Ready")
+
+        expect(Predicate.isTagged(brokenState, "WaitingToReconnect")).toBe(true)
+        expect(Predicate.isTagged(yield* SubscriptionRef.get(healthy.state), "Ready")).toBe(true)
       })
     )
   )
@@ -87,7 +94,7 @@ describe("DevicePool", () => {
 
         const again = yield* Effect.result(pool.add({ id: toolOne, endpoint: endpointOne }))
 
-        expect(again._tag).toBe("Failure")
+        expect(Result.isFailure(again)).toBe(true)
       })
     )
   )
@@ -106,8 +113,8 @@ describe("DevicePool", () => {
           { concurrency: "unbounded" }
         )
 
-        expect(A.length(A.filter(both, (outcome) => outcome._tag === "Success"))).toBe(1)
-        expect(A.length(A.filter(both, (outcome) => outcome._tag === "Failure"))).toBe(1)
+        expect(A.length(A.filter(both, (outcome) => Result.isSuccess(outcome)))).toBe(1)
+        expect(A.length(A.filter(both, (outcome) => Result.isFailure(outcome)))).toBe(1)
         expect(A.length(yield* pool.status)).toBe(1)
       })
     )
@@ -125,7 +132,7 @@ describe("DevicePool", () => {
         yield* settle(pool.status, (status) => A.length(status) === 0)
 
         expect(A.fromIterable(yield* pool.status)).toEqual([])
-        expect((yield* pool.get(toolOne))._tag).toBe("None")
+        expect(O.isNone(yield* pool.get(toolOne))).toBe(true)
       })
     )
   )
@@ -136,8 +143,10 @@ describe("DevicePool", () => {
         const first = yield* makeSimulator({ endpoint: endpointOne })
         const second = yield* makeSimulator({ endpoint: endpointTwo })
         const received = yield* Ref.make<ReadonlyArray<string>>([])
+
         const onResult = (result: TighteningResult) =>
           Ref.update(received, (current) => A.append(current, `${result.deviceId}:${result.tighteningId}`))
+
         const pool = yield* DevicePool
 
         const one = yield* pool.add({ id: toolOne, endpoint: endpointOne, onResult })

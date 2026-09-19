@@ -234,6 +234,7 @@ const readSlots = (
       Result.flatMap(accumulated, ({ offset, values }) => {
         const id = Str.substring(offset, offset + 2)(data)
         const value = Str.substring(offset + 2, offset + 2 + current.width)(data)
+
         return id !== current.id
           ? Result.fail(
               new PayloadDecodeError({
@@ -283,15 +284,18 @@ const decodeWith = (mid: number, slots: ReadonlyArray<Slot>) => {
   const positions = new Map(
     A.getSomes(A.map(slots, (slot, index) => O.map(slot.field, (field) => [field, index] as const)))
   )
+
   return (deviceId: DeviceId, data: string): Result.Result<TighteningResult, PayloadDecodeError> =>
     Result.gen(function* () {
       const values = yield* readSlots(mid, data, slots)
+
       const at = (field: Field): string =>
         pipe(
           O.fromNullishOr(positions.get(field)),
           O.flatMap((index) => A.get(values, index)),
           O.getOrElse(() => "")
         )
+
       const tighteningId = yield* digitsValue(mid, "tighteningId", at("tighteningId"))
       const parameterSetId = yield* digitsValue(mid, "parameterSetId", at("parameterSetId"))
       const status = yield* enumValue(mid, "status", at("status"), TighteningStatus.literals)
@@ -299,6 +303,7 @@ const decodeWith = (mid: number, slots: ReadonlyArray<Slot>) => {
       const angleStatus = yield* enumValue(mid, "angleStatus", at("angleStatus"), LimitStatus.literals)
       const torqueCentiNm = yield* digitsValue(mid, "torque", at("torque"))
       const angle = yield* digitsValue(mid, "angle", at("angle"))
+
       return yield* pipe(
         S.decodeResult(TighteningResult)({
           deviceId,

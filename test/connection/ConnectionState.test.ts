@@ -32,10 +32,11 @@ import {
 const run = (
   state: ConnectionState,
   events: ReadonlyArray<ConnectionEvent>
-): Result.Result<ConnectionState, InvalidTransition> =>
-  A.reduce(events, Result.succeed(state) as Result.Result<ConnectionState, InvalidTransition>, (current, event) =>
-    Result.flatMap(current, (value) => transition(value, event))
-  )
+): Result.Result<ConnectionState, InvalidTransition> => {
+  const start: Result.Result<ConnectionState, InvalidTransition> = Result.succeed(state)
+
+  return A.reduce(events, start, (current, event) => Result.flatMap(current, (value) => transition(value, event)))
+}
 
 const toReady: ReadonlyArray<ConnectionEvent> = [
   new AttemptStarted(),
@@ -73,6 +74,7 @@ describe("ConnectionState", () => {
       new AttemptStarted(),
       new Failed({ reason: "refused again" })
     ])
+
     assertSuccess(secondAttempt, new WaitingToReconnect({ attempt: 2, reason: "refused again" }))
 
     const afterReady = run(initial, [...toReady, new Failed({ reason: "socket closed" })])
@@ -86,7 +88,7 @@ describe("ConnectionState", () => {
         new Handshaking({ attempt: 3 }),
         new Subscribing({ attempt: 3, controllerName: "c" }),
         new Recovering({ attempt: 3, controllerName: "c" })
-      ] as ReadonlyArray<ConnectionState>,
+      ],
       (state) => {
         assertSuccess(
           transition(state, new Failed({ reason: "boom" })),
@@ -106,7 +108,7 @@ describe("ConnectionState", () => {
         new Recovering({ attempt: 1, controllerName: "c" }),
         new Ready({ controllerName: "c" }),
         new WaitingToReconnect({ attempt: 1, reason: "boom" })
-      ] as ReadonlyArray<ConnectionState>,
+      ],
       (state) => {
         assertSuccess(transition(state, new CloseRequested()), new Closing())
       }
@@ -117,12 +119,9 @@ describe("ConnectionState", () => {
   it("treats Closed as final", () => {
     const closed = new Closed()
     expect(isFinal(closed)).toBe(true)
-    A.forEach(
-      [new AttemptStarted(), new CloseRequested(), new Released()] as ReadonlyArray<ConnectionEvent>,
-      (event) => {
-        assertFailure(transition(closed, event), new InvalidTransition({ state: "Closed", event: event._tag }))
-      }
-    )
+    A.forEach([new AttemptStarted(), new CloseRequested(), new Released()], (event) => {
+      assertFailure(transition(closed, event), new InvalidTransition({ state: "Closed", event: event._tag }))
+    })
   })
 
   it("rejects out of order events", () => {

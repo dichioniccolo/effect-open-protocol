@@ -41,6 +41,7 @@ export function RunList({ initial, renderedAt }: { readonly initial: string; rea
       ),
     [initial, renderedAt]
   )
+
   const runs = AsyncResult.getOrElse(useAtomValue(runsAtom), () => rendered)
 
   return (

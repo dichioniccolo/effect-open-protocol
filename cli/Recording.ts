@@ -16,7 +16,7 @@ import { Context, Effect, Fiber, FileSystem, Layer, Path, pipe, Queue, Ref } fro
 import * as A from "effect/Array"
 import * as DateTime from "effect/DateTime"
 import * as O from "effect/Option"
-import { NewEvent, type RunId, RunStart, WireStore } from "../store/src/WireStore.ts"
+import { layer as storeLayer, NewEvent, type RunId, RunStart, WireStore } from "../store/src/WireStore.ts"
 import type { WireEvent, WireSink } from "../src/transport/WireTrace.ts"
 
 /**
@@ -26,7 +26,7 @@ import type { WireEvent, WireSink } from "../src/transport/WireTrace.ts"
  * @category models
  * @since 0.0.0
  */
-export interface Recording {
+export interface RecordingService {
   readonly nextConnection: Effect.Effect<WireSink>
 }
 
@@ -61,7 +61,7 @@ const openDatabase = Effect.fnUntraced(function* (filename: string, start: RunSt
   const path = yield* Path.Path
   yield* fs.makeDirectory(path.dirname(filename), { recursive: true })
 
-  const context = yield* Layer.build(WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename }))))
+  const context = yield* Layer.build(storeLayer.pipe(Layer.provide(SqliteClient.layer({ filename }))))
   const store = Context.get(context, WireStore)
   const runId = yield* store.startRun(start)
   const queue = yield* Queue.unbounded<NewEvent>()
@@ -103,16 +103,14 @@ const openDatabase = Effect.fnUntraced(function* (filename: string, start: RunSt
  *
  * A store that cannot be opened costs a warning and nothing else; the command
  * still runs and still logs every frame.
- *
- * @category constructors
- * @since 0.0.0
  */
-export const makeRecording = Effect.fnUntraced(function* (options: {
+export const make = Effect.fnUntraced(function* (options: {
   readonly traceDb: string
   readonly file: O.Option<WireSink>
   readonly start: Omit<RunStart, "startedAt">
 }) {
   const startedAt = yield* now
+
   const database = yield* pipe(
     openDatabase(options.traceDb, new RunStart({ ...options.start, startedAt })),
     Effect.map(O.some),
@@ -120,16 +118,65 @@ export const makeRecording = Effect.fnUntraced(function* (options: {
       Effect.as(Effect.logWarning("recording disabled, could not open the trace store", cause), O.none())
     )
   )
+
   const connections = yield* Ref.make(0)
 
-  const recording: Recording = {
+  const recording: RecordingService = {
     nextConnection: Effect.map(
       Ref.updateAndGet(connections, (n) => n + 1),
       (connection) => {
         const sinks = A.getSomes([options.file, O.map(database, (forConnection) => forConnection(connection))])
+
         return (event: WireEvent) => Effect.forEach(sinks, (sink) => sink(event), { discard: true })
       }
     )
   }
+
   return recording
 })
+
+/**
+ * The trace a command is recording, for the lifetime of its layer.
+ *
+ * A command records one run: it provides `Recording.layer` once, and whatever
+ * instruments its byte channels asks the context for the recording rather than
+ * building a second one.
+ *
+ * **Example** (Recording a command's run)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import * as O from "effect/Option"
+ * import { Recording } from "../cli/Recording.ts"
+ *
+ * const program = Effect.gen(function* () {
+ *   const recording = yield* Recording
+ *   return yield* recording.nextConnection
+ * }).pipe(
+ *   Effect.provide(
+ *     Recording.layer({
+ *       traceDb: ".wire-trace/traces.sqlite",
+ *       file: O.none(),
+ *       start: { side: "client", host: "127.0.0.1", port: 4545, seed: 1, latency: 0, jitter: 0 }
+ *     })
+ *   )
+ * )
+ * ```
+ *
+ * @category services
+ * @since 0.0.0
+ */
+export class Recording extends Context.Service<Recording, RecordingService>()("wire-trace/Recording") {}
+
+/**
+ * Records one run for the lifetime of the layer, writing out whatever is still
+ * queued when it closes.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layer = (options: {
+  readonly traceDb: string
+  readonly file: O.Option<WireSink>
+  readonly start: Omit<RunStart, "startedAt">
+}): Layer.Layer<Recording, never, FileSystem.FileSystem | Path.Path> => Layer.effect(Recording)(make(options))
