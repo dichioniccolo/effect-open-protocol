@@ -34,10 +34,8 @@ follow the instructions in goals/typed-mid-definitions/GOAL.md
 
 ## Current Phase
 
-P3 in progress: tests for `UnexpectedRevision` and the body decode fallback,
-and the simulator answering `0004` to MIDs it does not model. P0–P2 are done:
-`Field`, `Mid`, built-ins as definitions, typed `request`, and the old codec
-and untyped `request` removed. See PLAN.md §What Landed So Far.
+P4 in progress: the example custom MID, README sections, and the JSDoc
+rubric pass. P0–P3 are done; see PLAN.md §What Landed So Far.
 
 ## Latest Evidence
 

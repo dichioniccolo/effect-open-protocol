@@ -11,8 +11,8 @@ Status: `in-progress`
 | P0 Field codec | complete | Public `Field.*` module: fixed-width fields as Schemas, with and without parameter IDs, filler fields, and enum digits, over `Ascii.ts`. The 0061/0065 bodies are rebuilt on it, and the private slot codec in `TighteningResult.ts` is removed. | The property round trips at `test/protocol/Messages.test.ts:159,176` pass with their assertions unchanged; `bun run check` and `bun run test` green. |
 | P1 First slice: 0064 → 0065 | complete | Definition module (MID number, per-revision Schemas, reply map), the codec for definitions, and typed `request` in `RequestReply` and `DeviceConnection`, all proven on 0064 → 0065. `GapRecovery` switches to the typed call. The old path still serves the other MIDs during this phase. | `request(RequestOldResult.rev(1), { tighteningId })` returns `OldResult` revision 1, pinned by `expectTypeOf`; the GapRecovery tests are green. |
 | P2 Migrate built-ins | complete | Every other built-in becomes a definition. The handshake, keep-alive and `ResultRecovery` use the typed call. `wireFormat`, `decoderFor`, `dataOf`, `midOf`, `revisionOf`, the closed `Mid` literals, `request(message, mid, direct?)` and `expectReply` are removed. `packages/cli` and `apps/ui` are fixed where the break forces it. | No old-path code remains (`rg "wireFormat\|expectReply\|revisionOf" packages` is empty); the whole suite is green. |
-| P3 Decode fallback and simulator | in-progress | Body decode failures and undefined revisions become `UnknownMessage` plus a warning, and the session survives. A pending dedicated reply at an undefined revision gets `UnexpectedRevision`. The simulator answers `0004` to MIDs it doesn't model. | A test for each path; header errors still end the session (existing tests). |
-| P4 Example MID and docs | pending | One example custom MID (at least two revisions and a declared reply) with codec round trips and a typed request over the in-memory transport. README sections for defining and requesting a MID. JSDoc rubric pass on every new export. | Full verification matrix in `SPEC.md` green. |
+| P3 Decode fallback and simulator | complete | Body decode failures and undefined revisions become `UnknownMessage` plus a warning, and the session survives. A pending dedicated reply at an undefined revision gets `UnexpectedRevision`. The simulator answers `0004` to MIDs it doesn't model. | A test for each path; header errors still end the session (existing tests). |
+| P4 Example MID and docs | in-progress | One example custom MID (at least two revisions and a declared reply) with codec round trips and a typed request over the in-memory transport. README sections for defining and requesting a MID. JSDoc rubric pass on every new export. | Full verification matrix in `SPEC.md` green. |
 | P5 PR to mergeable | pending | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
 | P6 Close | pending | Write the closeout reflection, flip packet state, and resume `typed-subscriptions`. | Packet status and evidence are updated; a closeout reflection exists; `goals/typed-subscriptions` is set `active`. |
 
@@ -40,6 +40,10 @@ own manifest.
     `undefined-revision-falls-back`).
   - `GapRecovery.test.ts` drives a real `RequestReply` instead of a stub.
   - `Shutdown.test.ts` calls the typed `request`.
+- **The simulator refuses** a MID it does not model with `0004` code 99, and
+  a known MID at a revision it does not define with code 97. Both codes are
+  "unknown MID" and "MID revision unsupported" in the specification's error
+  table.
 - **Built-in definitions are named `<Message>Mid`**
   (`RequestOldResultMid.rev(1)`), because the message classes keep their
   names.

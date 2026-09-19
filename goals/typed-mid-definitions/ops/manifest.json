@@ -64,12 +64,12 @@
     {
       "id": "P3",
       "name": "Decode fallback and simulator",
-      "status": "in-progress"
+      "status": "complete"
     },
     {
       "id": "P4",
       "name": "Example MID and docs",
-      "status": "pending"
+      "status": "in-progress"
     },
     {
       "id": "P5",
