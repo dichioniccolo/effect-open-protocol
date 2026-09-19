@@ -17,6 +17,7 @@
     "**/*.md",
     "bun.lock",
     "ui/.next/**",
-    "ui/next-env.d.ts"
+    "ui/next-env.d.ts",
+    "tools/oxlint/anti-slop/**"
   ]
 }
