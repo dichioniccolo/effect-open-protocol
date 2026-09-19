@@ -17,13 +17,12 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Duration, Effect, pipe, Random, Stdio, Stream } from "effect"
 import * as A from "effect/Array"
-import * as O from "effect/Option"
 import { Command, Flag } from "effect/unstable/cli"
 import * as Faults from "../simulator/Faults.ts"
-import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
+import * as ControllerSimulator from "../simulator/ControllerSimulator.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
 import * as Recording from "./Recording.ts"
-import { host, instrumentedListener, jitter, latency, latencyOf, port, seed, traceDb, traceFile } from "./Wire.ts"
+import { instrumentedListener, latencyOf, linkFlags } from "./Wire.ts"
 
 const faultRate = Flag.Finite("fault-rate").pipe(
   Flag.withSchema(Faults.FaultRate),
@@ -54,7 +53,7 @@ const newlines = (bytes: Uint8Array): number => A.length(A.filter(A.fromIterable
  *
  * Stdin that is closed or not a terminal simply never produces anything.
  */
-const onEnter = (simulator: Simulator): Effect.Effect<void, never, Stdio.Stdio> =>
+const onEnter = (simulator: ControllerSimulator.Simulator): Effect.Effect<void, never, Stdio.Stdio> =>
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio
 
@@ -78,7 +77,7 @@ const onEnter = (simulator: Simulator): Effect.Effect<void, never, Stdio.Stdio> 
     )
   })
 
-const summary = (simulator: Simulator): Effect.Effect<void> =>
+const summary = (simulator: ControllerSimulator.Simulator): Effect.Effect<void> =>
   Effect.gen(function* () {
     const generated = yield* simulator.generated
     const abandoned = yield* simulator.abandoned
@@ -96,21 +95,16 @@ const summary = (simulator: Simulator): Effect.Effect<void> =>
     )
   })
 
-const run = Effect.fnUntraced(function* (config: {
-  readonly host: string
-  readonly port: number
-  readonly seed: number
-  readonly latency: number
-  readonly jitter: number
-  readonly traceFile: O.Option<string>
-  readonly traceDb: string
-  readonly faultRate: number
-  readonly resultInterval: number
-  readonly controllerName: string
-}) {
+const run = Effect.fnUntraced(function* (
+  config: Recording.RecordingConfig & {
+    readonly faultRate: number
+    readonly resultInterval: number
+    readonly controllerName: string
+  }
+) {
   const endpoint = new Endpoint({ host: config.host, port: config.port })
 
-  const simulator = yield* makeSimulator({
+  const simulator = yield* ControllerSimulator.make({
     endpoint,
     controllerName: config.controllerName,
     resultInterval: config.resultInterval > 0 ? Duration.millis(config.resultInterval) : undefined,
@@ -134,31 +128,17 @@ const run = Effect.fnUntraced(function* (config: {
   return yield* Effect.onExit(Effect.never, () => summary(simulator))
 })
 
-const command = Command.make(
-  "controller",
-  {
-    host,
-    port,
-    seed,
-    latency,
-    jitter,
-    traceFile,
-    traceDb,
-    faultRate,
-    resultInterval,
-    controllerName
-  },
-  (config) =>
-    pipe(
-      run(config),
-      Random.withSeed(config.seed),
-      // Every accepted connection is traced and delayed before the simulator
-      // sees it; the listener's bindings still belong to this command's scope.
-      Effect.provide(instrumentedListener({ source: "controller", latency: latencyOf(config) })),
-      Effect.provide(Recording.layer("controller", config)),
-      Effect.scoped,
-      Effect.asVoid
-    )
+const command = Command.make("controller", { ...linkFlags, faultRate, resultInterval, controllerName }, (config) =>
+  pipe(
+    run(config),
+    Random.withSeed(config.seed),
+    // Every accepted connection is traced and delayed before the simulator
+    // sees it; the listener's bindings still belong to this command's scope.
+    Effect.provide(instrumentedListener({ source: "controller", latency: latencyOf(config) })),
+    Effect.provide(Recording.layer("controller", config)),
+    Effect.scoped,
+    Effect.asVoid
+  )
 ).pipe(Command.withDescription("Serve a simulated Open Protocol controller and trace every byte it exchanges"))
 
 Command.run(command, { version: "0.0.0" }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

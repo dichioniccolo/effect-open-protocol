@@ -100,12 +100,6 @@ export const make = Effect.fnUntraced(function* (options: {
         }
       })
 
-    const attempt = (attempts: number): Effect.Effect<void> =>
-      pass(attempts).pipe(
-        Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
-        Effect.asVoid
-      )
-
     return Effect.gen(function* () {
       const busy = yield* Ref.getAndSet(recovering, true)
 
@@ -113,7 +107,10 @@ export const make = Effect.fnUntraced(function* (options: {
         return
       }
 
-      yield* Effect.ensuring(attempt(settings.recoveryAttempts), Ref.set(recovering, false))
+      yield* pass(settings.recoveryAttempts).pipe(
+        Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
+        Effect.ensuring(Ref.set(recovering, false))
+      )
     })
   }
 

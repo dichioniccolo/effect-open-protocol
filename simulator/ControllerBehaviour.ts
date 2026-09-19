@@ -49,6 +49,31 @@ export interface ControllerIdentity {
   readonly silent?: boolean | undefined
 }
 
+/**
+ * What a controller reports about itself when nothing else was asked for.
+ *
+ * @category constants
+ * @since 0.0.0
+ */
+export const defaultIdentity = {
+  cellId: 1,
+  channelId: 1,
+  controllerName: "Simulator",
+  silent: false
+}
+
+/**
+ * A `ControllerIdentity` with every default filled in; only the refusal stays
+ * optional, because its absence is what "accept" means.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface ResolvedIdentity
+  extends
+    Omit<ControllerIdentity, keyof typeof defaultIdentity>,
+    Required<Pick<ControllerIdentity, keyof typeof defaultIdentity>> {}
+
 const timestamp = ControllerTimestamp.make("2026-09-17:10:14:16")
 
 /**
@@ -79,7 +104,7 @@ export const resultFor = (id: number): TighteningResult =>
  */
 export const replyTo = (
   message: Message,
-  identity: ControllerIdentity,
+  identity: ResolvedIdentity,
   store: MutableHashMap.MutableHashMap<number, TighteningResult>,
   latest: O.Option<number>
 ): O.Option<Message> =>
@@ -89,17 +114,15 @@ export const replyTo = (
         O.match(O.fromNullishOr(identity.rejectStartWith), {
           onNone: (): Message =>
             new CommunicationStartAccepted({
-              // Defaults read here rather than from a schema: callers pass
-              // `SimulatorOptions` as plain literals, and it extends the identity.
-              cellId: identity.cellId ?? 1,
-              channelId: identity.channelId ?? 1,
-              controllerName: identity.controllerName ?? "Simulator"
+              cellId: identity.cellId,
+              channelId: identity.channelId,
+              controllerName: identity.controllerName
             }),
           onSome: (code): Message => new CommandError({ mid: 1, code })
         })
       )
     ),
-    Match.tag("KeepAlive", (): O.Option<Message> => (identity.silent === true ? O.none() : O.some(new KeepAlive()))),
+    Match.tag("KeepAlive", (): O.Option<Message> => (identity.silent ? O.none() : O.some(new KeepAlive()))),
     Match.tag("SubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 60 }))),
     Match.tag("UnsubscribeResults", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 63 }))),
     Match.tag("CommunicationStop", (): O.Option<Message> => O.some(new CommandAccepted({ mid: 3 }))),

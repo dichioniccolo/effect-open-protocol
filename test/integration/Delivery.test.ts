@@ -3,9 +3,9 @@ import { Duration, Effect, pipe, Predicate, Ref, Schedule, Stream, SubscriptionR
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { TestClock } from "effect/testing"
-import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
+import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
-import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
+import * as DeviceConnection from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
@@ -44,9 +44,9 @@ describe("result delivery over a connection", () => {
   it.effect("delivers pushed results and acknowledges them", () =>
     provided(
       Effect.gen(function* () {
-        const simulator = yield* makeSimulator({ endpoint })
+        const simulator = yield* ControllerSimulator.make({ endpoint })
         const handler = yield* sink
-        const connection = yield* makeConnection({ id: deviceId, endpoint, onResult: handler.onResult })
+        const connection = yield* DeviceConnection.make({ id: deviceId, endpoint, onResult: handler.onResult })
         yield* awaitState(connection.state, "Ready")
 
         yield* simulator.produce
@@ -63,10 +63,10 @@ describe("result delivery over a connection", () => {
   it.effect("delivers a result once even when the controller resends it", () =>
     provided(
       Effect.gen(function* () {
-        const simulator = yield* makeSimulator({ endpoint, ackTimeout: Duration.seconds(2) })
+        const simulator = yield* ControllerSimulator.make({ endpoint, ackTimeout: Duration.seconds(2) })
         const handler = yield* sink
 
-        const connection = yield* makeConnection({
+        const connection = yield* DeviceConnection.make({
           id: deviceId,
           endpoint,
           onResult: (result) => Effect.andThen(Effect.sleep(Duration.seconds(5)), handler.onResult(result))
@@ -90,10 +90,10 @@ describe("result delivery over a connection", () => {
   it.effect("recovers the results produced while the link was down", () =>
     provided(
       Effect.gen(function* () {
-        const simulator = yield* makeSimulator({ endpoint })
+        const simulator = yield* ControllerSimulator.make({ endpoint })
         const handler = yield* sink
 
-        const connection = yield* makeConnection({
+        const connection = yield* DeviceConnection.make({
           id: deviceId,
           endpoint,
           reconnect: Schedule.spaced(Duration.millis(100)),

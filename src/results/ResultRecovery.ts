@@ -18,17 +18,6 @@ import type { ConnectionLost } from "../transport/Transport.ts"
 import type { Dedup } from "./Dedup.ts"
 
 /**
- * Default number of missed results fetched after a reconnect.
- *
- * A device that was offline for a long time must not stall its own recovery,
- * so the gap is capped and the remainder is reported.
- *
- * @category constants
- * @since 0.0.0
- */
-export const defaultRecoveryLimit = 100
-
-/**
  * How a recovery pass went.
  *
  * `missing` and `pending` mean different things, and the difference decides
@@ -98,9 +87,14 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
   readonly dedup: Dedup
   readonly request: (message: Message, mid: number) => Effect.Effect<Message, RecoveryFailure>
   readonly submit: (result: TighteningResult) => Effect.Effect<void>
-  readonly limit?: number | undefined
+  /**
+   * Most missed results fetched in one pass. A device that was offline for a
+   * long time must not stall its own recovery, so the gap is capped and the
+   * remainder is reported.
+   */
+  readonly limit: number
 }) {
-  const limit = options.limit ?? defaultRecoveryLimit
+  const { limit } = options
 
   /**
    * Asks for one stored result. A controller answering "I do not have it" is

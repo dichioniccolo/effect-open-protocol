@@ -6,8 +6,12 @@ import * as A from "effect/Array"
 import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import * as Dedup from "../../src/results/Dedup.ts"
 import * as ResultDelivery from "../../src/results/ResultDelivery.ts"
+import { defaultSettings } from "../../src/connection/DeviceSettings.ts"
 
 const deviceId = DeviceId.make("tool-1")
+
+/** What a connection would hand the pipeline when the caller set nothing. */
+const defaults = { handlerRetry: defaultSettings.handlerRetry, bufferSize: defaultSettings.resultBuffer }
 
 const resultFor = (id: number): TighteningResult =>
   new TighteningResult({
@@ -45,7 +49,8 @@ describe("ResultDelivery", () => {
 
         const delivery = yield* ResultDelivery.make({
           dedup,
-          delivery: { handler: (result) => record(seen.handled, result) },
+          ...defaults,
+          handler: (result) => record(seen.handled, result),
           acknowledge: (result) => record(seen.acked, result)
         })
 
@@ -68,14 +73,13 @@ describe("ResultDelivery", () => {
 
         const delivery = yield* ResultDelivery.make({
           dedup,
-          delivery: {
-            handler: () =>
-              Effect.andThen(
-                Ref.update(attempts, (n) => n + 1),
-                Effect.fail("nope")
-              ),
-            handlerRetry: Schedule.recurs(2)
-          },
+          ...defaults,
+          handler: () =>
+            Effect.andThen(
+              Ref.update(attempts, (n) => n + 1),
+              Effect.fail("nope")
+            ),
+          handlerRetry: Schedule.recurs(2),
           acknowledge: (result) => record(seen.acked, result)
         })
 
@@ -99,14 +103,13 @@ describe("ResultDelivery", () => {
 
         const delivery = yield* ResultDelivery.make({
           dedup,
-          delivery: {
-            handler: (result) =>
-              pipe(
-                Ref.updateAndGet(attempts, (n) => n + 1),
-                Effect.flatMap((count) => (count < 2 ? Effect.fail("flaky") : record(seen.handled, result)))
-              ),
-            handlerRetry: Schedule.recurs(3)
-          },
+          ...defaults,
+          handler: (result) =>
+            pipe(
+              Ref.updateAndGet(attempts, (n) => n + 1),
+              Effect.flatMap((count) => (count < 2 ? Effect.fail("flaky") : record(seen.handled, result)))
+            ),
+          handlerRetry: Schedule.recurs(3),
           acknowledge: (result) => record(seen.acked, result)
         })
 
@@ -127,7 +130,8 @@ describe("ResultDelivery", () => {
 
         const delivery = yield* ResultDelivery.make({
           dedup,
-          delivery: { handler: (result) => record(seen.handled, result) },
+          ...defaults,
+          handler: (result) => record(seen.handled, result),
           acknowledge: (result) => record(seen.acked, result)
         })
 
@@ -152,10 +156,9 @@ describe("ResultDelivery", () => {
 
         const delivery = yield* ResultDelivery.make({
           dedup,
-          delivery: {
-            handler: (result) => Effect.andThen(Effect.sleep(Duration.seconds(1)), record(seen.handled, result)),
-            bufferSize: 1
-          },
+          ...defaults,
+          handler: (result) => Effect.andThen(Effect.sleep(Duration.seconds(1)), record(seen.handled, result)),
+          bufferSize: 1,
           acknowledge: (result) => record(seen.acked, result)
         })
 

@@ -14,9 +14,6 @@ import * as Context from "effect/Context"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import type { ConnectionState } from "../connection/ConnectionState.ts"
-// The pool is the one place that builds connections by hand rather than taking
-// one from context: a service has one instance per context, and a pool holds
-// many. This is the exception `DeviceConnection.layer` exists alongside.
 import * as DeviceConnection from "../connection/DeviceConnection.ts"
 import type { DeviceConfig } from "../connection/DeviceSettings.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"

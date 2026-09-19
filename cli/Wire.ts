@@ -12,11 +12,11 @@
 import { Duration, Effect, Layer } from "effect"
 import { Flag } from "effect/unstable/cli"
 import type { SimulatorNetwork } from "../simulator/SimulatorNetwork.ts"
-import { layer as simulatorOnTcp } from "../simulator/TcpListener.ts"
+import * as TcpListener from "../simulator/TcpListener.ts"
 import { type Duplex, Transport } from "../src/transport/Transport.ts"
 import { delayedDuplex, type LatencyOptions } from "../src/transport/WireLatency.ts"
 import { tracedDuplex } from "../src/transport/WireTrace.ts"
-import { Recording, type RecordingService } from "./Recording.ts"
+import * as Recording from "./Recording.ts"
 
 /**
  * Seed for every random decision, so a run can be replayed.
@@ -96,6 +96,15 @@ export const port = Flag.Int("port").pipe(
 )
 
 /**
+ * The flags both commands take to describe their link and where it is
+ * recorded, which is exactly what a `RecordingConfig` holds.
+ *
+ * @category flags
+ * @since 0.0.0
+ */
+export const linkFlags = { host, port, seed, latency, jitter, traceFile, traceDb } as const
+
+/**
  * Turns the two latency flags into the decorator's options.
  *
  * @category constructors
@@ -117,7 +126,7 @@ export const instrument = Effect.fnUntraced(function* (
   duplex: Duplex,
   options: {
     readonly source: string
-    readonly recording: RecordingService
+    readonly recording: Recording.RecordingService
     readonly latency: LatencyOptions
   }
 ) {
@@ -137,11 +146,11 @@ export const instrument = Effect.fnUntraced(function* (
 export const instrumentedTransport = (options: {
   readonly source: string
   readonly latency: LatencyOptions
-}): Layer.Layer<Transport, never, Transport | Recording> =>
+}): Layer.Layer<Transport, never, Transport | Recording.Recording> =>
   Layer.effect(Transport)(
     Effect.gen(function* () {
       const transport = yield* Transport
-      const recording = yield* Recording
+      const recording = yield* Recording.Recording
 
       return {
         connect: (endpoint) =>
@@ -161,10 +170,10 @@ export const instrumentedTransport = (options: {
 export const instrumentedListener = (options: {
   readonly source: string
   readonly latency: LatencyOptions
-}): Layer.Layer<SimulatorNetwork, never, Recording> =>
+}): Layer.Layer<SimulatorNetwork, never, Recording.Recording> =>
   Layer.unwrap(
-    Effect.map(Recording, (recording) =>
-      simulatorOnTcp({
+    Effect.map(Recording.Recording, (recording) =>
+      TcpListener.layer({
         decorate: (side) =>
           Effect.map(instrument(side, { ...options, recording }), (wrapped) => ({ ...wrapped, close: side.close }))
       })

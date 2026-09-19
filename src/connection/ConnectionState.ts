@@ -9,9 +9,15 @@
  * Disconnected ──AttemptStarted──► Connecting(1)
  * WaitingToReconnect ──AttemptStarted──► Connecting(n + 1)
  * Connecting ──Opened──► Handshaking       ──Failed──► WaitingToReconnect
- * Handshaking ──Accepted──► Subscribing    ──Failed──► WaitingToReconnect
- * Subscribing ──Subscribed──► Recovering   ──Failed──► WaitingToReconnect
- * Recovering ──Recovered──► Ready          ──Failed──► WaitingToReconnect
+ * Handshaking ──Accepted──► Recovering     ──Failed──► WaitingToReconnect
+ * Recovering ──Recovered──► Subscribing    ──Failed──► WaitingToReconnect
+ * Subscribing ──Subscribed──► Ready        ──Failed──► WaitingToReconnect
+ * ```
+ *
+ * Recovery comes before the subscription on purpose: a result produced
+ * between the two would otherwise be taken for history by the first baseline.
+ *
+ * ```text
  * Ready ──Failed──► WaitingToReconnect
  * any non-final ──CloseRequested──► Closing ──Released──► Closed
  * ```
@@ -64,7 +70,7 @@ export class Handshaking extends S.TaggedClass<Handshaking>()(
 ) {}
 
 /**
- * The session is open and subscriptions are being restored.
+ * Missed results are fetched, and subscriptions are being restored.
  *
  * @category models
  * @since 0.0.0
@@ -79,7 +85,7 @@ export class Subscribing extends S.TaggedClass<Subscribing>()(
 ) {}
 
 /**
- * Results missed while the connection was down are being fetched.
+ * The session is open and results missed while it was down are being fetched.
  *
  * @category models
  * @since 0.0.0
@@ -387,16 +393,16 @@ export const transition = (state: ConnectionState, event: ConnectionEvent): Tran
         ),
         Match.tag("Accepted", (accepted) =>
           Predicate.isTagged(state, "Handshaking")
-            ? moveTo(new Subscribing({ attempt: state.attempt, controllerName: accepted.controllerName }))
-            : invalid(state, event)
-        ),
-        Match.tag("Subscribed", () =>
-          Predicate.isTagged(state, "Subscribing")
-            ? moveTo(new Recovering({ attempt: state.attempt, controllerName: state.controllerName }))
+            ? moveTo(new Recovering({ attempt: state.attempt, controllerName: accepted.controllerName }))
             : invalid(state, event)
         ),
         Match.tag("Recovered", () =>
           Predicate.isTagged(state, "Recovering")
+            ? moveTo(new Subscribing({ attempt: state.attempt, controllerName: state.controllerName }))
+            : invalid(state, event)
+        ),
+        Match.tag("Subscribed", () =>
+          Predicate.isTagged(state, "Subscribing")
             ? moveTo(new Ready({ controllerName: state.controllerName }))
             : invalid(state, event)
         ),

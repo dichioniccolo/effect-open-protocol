@@ -15,7 +15,7 @@ import { DeviceId } from "../../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork } from "../../src/transport/InMemoryTransport.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { type Duplex, Endpoint } from "../../src/transport/Transport.ts"
-import { make } from "../../simulator/ControllerSimulator.ts"
+import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 
 const deviceId = DeviceId.make("test-client")
 
@@ -45,7 +45,7 @@ describe("ControllerSimulator", () => {
   it.effect("answers the handshake, mirrors keep-alives and accepts subscriptions", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const simulator = yield* make({ endpoint, controllerName: "Airbag1" })
+        const simulator = yield* ControllerSimulator.make({ endpoint, controllerName: "Airbag1" })
         const network = yield* InMemoryNetwork
         const connection = yield* network.connect(endpoint)
 
@@ -65,7 +65,7 @@ describe("ControllerSimulator", () => {
   it.effect("rejects the handshake when configured to", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        yield* make({ endpoint, rejectStartWith: 96 })
+        yield* ControllerSimulator.make({ endpoint, rejectStartWith: 96 })
         const network = yield* InMemoryNetwork
         const connection = yield* network.connect(endpoint)
 
@@ -89,7 +89,7 @@ describe("ControllerSimulator", () => {
   it.effect("refuses connections while the endpoint is closed off", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const simulator = yield* make({ endpoint })
+        const simulator = yield* ControllerSimulator.make({ endpoint })
         const network = yield* InMemoryNetwork
         yield* simulator.refuse(true)
         const refused = yield* Effect.result(network.connect(endpoint))

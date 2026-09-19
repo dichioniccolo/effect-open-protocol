@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic"
 export const GET = () =>
   runtime.runPromise(
     pipe(
-      WireStore.use((store) => store.listRuns),
+      WireStore.WireStore.use((store) => store.listRuns),
       Effect.flatMap(S.encodeEffect(RunListJson)),
       Effect.map((body) => new Response(body, { headers: { "content-type": "application/json" } }))
     )

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Duration, Effect, Exit, pipe, Predicate, Ref, Schedule, Stream, SubscriptionRef } from "effect"
+import { Duration, Effect, Exit, Fiber, pipe, Predicate, Ref, Schedule, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
-import { layer as simulatorOnTcp } from "../../simulator/TcpListener.ts"
-import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
+import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
+import * as TcpListener from "../../simulator/TcpListener.ts"
+import * as DeviceConnection from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { layer as layerTcp } from "../../src/transport/TcpTransport.ts"
+import * as TcpTransport from "../../src/transport/TcpTransport.ts"
 import { Endpoint, Transport } from "../../src/transport/Transport.ts"
 
 const deviceId = DeviceId.make("outage-tool")
@@ -28,11 +28,11 @@ describe("a controller that loses its port", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const transport = yield* Transport
-          const simulator = yield* makeSimulator({ endpoint, controllerName: "OutageSim" })
+          const simulator = yield* ControllerSimulator.make({ endpoint, controllerName: "OutageSim" })
 
           const received = yield* Ref.make<ReadonlyArray<string>>([])
 
-          const connection = yield* makeConnection({
+          const connection = yield* DeviceConnection.make({
             id: deviceId,
             endpoint,
             reconnect: Schedule.spaced(Duration.millis(100)),
@@ -77,7 +77,24 @@ describe("a controller that loses its port", () => {
           expect(A.contains(delivered, missedId)).toBe(true)
           expect(yield* connection.duplicates).toBe(0)
         })
-      ).pipe(Effect.provide([layerTcp, simulatorOnTcp()])),
+      ).pipe(Effect.provide([TcpTransport.layer, TcpListener.layer()])),
     60_000
+  )
+
+  it.live("keeps the port it took back after the fiber that asked for it is gone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* Transport
+        const port = new Endpoint({ host: "127.0.0.1", port: 45457 })
+        const simulator = yield* ControllerSimulator.make({ endpoint: port })
+
+        yield* simulator.refuse(true)
+        // The rebind is asked for on a fiber that ends as soon as it returns.
+        yield* Fiber.join(yield* Effect.forkChild(simulator.refuse(false)))
+
+        const reached = yield* Effect.exit(Effect.scoped(transport.connect(port)))
+        expect(Exit.isSuccess(reached)).toBe(true)
+      })
+    ).pipe(Effect.provide([TcpTransport.layer, TcpListener.layer()]))
   )
 })

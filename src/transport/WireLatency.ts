@@ -37,7 +37,7 @@ export const nextDelay = (options: LatencyOptions): Effect.Effect<Duration.Durat
 
   return spread <= 0
     ? Effect.succeed(Duration.millis(Math.max(0, centre)))
-    : Effect.map(Random.nextIntBetween(0, spread * 2 + 1, { halfOpen: true }), (offset) =>
+    : Effect.map(Random.nextIntBetween(0, spread * 2), (offset) =>
         Duration.millis(Math.max(0, centre - spread + offset))
       )
 }

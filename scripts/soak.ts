@@ -18,8 +18,8 @@ import { Duration, Effect, Random, Ref, Schedule } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as Faults from "../simulator/Faults.ts"
-import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
-import { DevicePool, layer as devicePoolLayer } from "../src/pool/DevicePool.ts"
+import * as ControllerSimulator from "../simulator/ControllerSimulator.ts"
+import * as DevicePool from "../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
@@ -49,13 +49,13 @@ const runOnce = (options: {
 }) =>
   Effect.gen(function* () {
     const delivered = yield* Ref.make<ReadonlyArray<string>>([])
-    const pool = yield* DevicePool
+    const pool = yield* DevicePool.DevicePool
 
     const simulators = yield* Effect.forEach(A.range(1, options.devices), (index) =>
       Effect.gen(function* () {
         const endpoint = new Endpoint({ host: `soak-${options.seed}`, port: 4700 + index })
 
-        const simulator = yield* makeSimulator({
+        const simulator = yield* ControllerSimulator.make({
           endpoint,
           controllerName: `Controller-${index}`,
           resultInterval: Duration.millis(100),
@@ -81,10 +81,12 @@ const runOnce = (options: {
     )
 
     yield* Effect.sleep(options.duration)
-    yield* Effect.forEach(simulators, (simulator: Simulator) => simulator.quiesce, { discard: true })
+    yield* Effect.forEach(simulators, (simulator: ControllerSimulator.Simulator) => simulator.quiesce, {
+      discard: true
+    })
 
     const generated = Effect.map(
-      Effect.forEach(simulators, (simulator: Simulator) => simulator.generated),
+      Effect.forEach(simulators, (simulator: ControllerSimulator.Simulator) => simulator.generated),
       (counts) => A.reduce(counts, 0, (sum, value) => sum + value)
     )
 
@@ -100,7 +102,7 @@ const runOnce = (options: {
     yield* settleFor(Math.ceil(Duration.toMillis(options.settle) / 100))
 
     const abandoned = yield* Effect.map(
-      Effect.forEach(simulators, (simulator: Simulator) => simulator.abandoned),
+      Effect.forEach(simulators, (simulator: ControllerSimulator.Simulator) => simulator.abandoned),
       (lists) => A.reduce(lists, 0, (sum, list) => sum + A.length(list))
     )
 
@@ -116,7 +118,12 @@ const runOnce = (options: {
       unique: A.length(A.dedupe(finalDelivered)),
       abandoned
     } satisfies Outcome
-  }).pipe(Random.withSeed(options.seed), Effect.scoped, Effect.provide(devicePoolLayer), Effect.provide(layerSimulated))
+  }).pipe(
+    Random.withSeed(options.seed),
+    Effect.scoped,
+    Effect.provide(DevicePool.layer),
+    Effect.provide(layerSimulated)
+  )
 
 const flag = (name: string, fallback: number): number => {
   const index = A.findFirstIndex(process.argv, (value) => value === `--${name}`)

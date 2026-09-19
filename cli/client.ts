@@ -15,15 +15,14 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Duration, Effect, pipe, Random, Ref, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
-import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import { Command, Flag } from "effect/unstable/cli"
 import * as DeviceConnection from "../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
-import { layer as tcpLayer } from "../src/transport/TcpTransport.ts"
+import * as TcpTransport from "../src/transport/TcpTransport.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
 import * as Recording from "./Recording.ts"
-import { host, instrumentedTransport, jitter, latency, latencyOf, port, seed, traceDb, traceFile } from "./Wire.ts"
+import { instrumentedTransport, latencyOf, linkFlags } from "./Wire.ts"
 
 const deviceId = Flag.String("device-id").pipe(
   Flag.withDescription("Identifier stamped on every result this client receives"),
@@ -49,17 +48,12 @@ const report = (result: TighteningResult): Effect.Effect<void> =>
     })
   )
 
-const run = Effect.fnUntraced(function* (config: {
-  readonly host: string
-  readonly port: number
-  readonly seed: number
-  readonly latency: number
-  readonly jitter: number
-  readonly traceFile: O.Option<string>
-  readonly traceDb: string
-  readonly deviceId: string
-  readonly recoveryInterval: number
-}) {
+const run = Effect.fnUntraced(function* (
+  config: Recording.RecordingConfig & {
+    readonly deviceId: string
+    readonly recoveryInterval: number
+  }
+) {
   const received = yield* Ref.make<ReadonlyArray<string>>([])
   const id = yield* Effect.orDie(S.decodeEffect(DeviceId)(config.deviceId))
 
@@ -112,29 +106,16 @@ const run = Effect.fnUntraced(function* (config: {
   return yield* Effect.onExit(Effect.never, () => summary)
 })
 
-const command = Command.make(
-  "client",
-  {
-    host,
-    port,
-    seed,
-    latency,
-    jitter,
-    traceFile,
-    traceDb,
-    deviceId,
-    recoveryInterval
-  },
-  (config) =>
-    pipe(
-      run(config),
-      Random.withSeed(config.seed),
-      Effect.provide(instrumentedTransport({ source: "client", latency: latencyOf(config) })),
-      Effect.provide(Recording.layer("client", config)),
-      Effect.scoped,
-      Effect.provide(tcpLayer),
-      Effect.asVoid
-    )
+const command = Command.make("client", { ...linkFlags, deviceId, recoveryInterval }, (config) =>
+  pipe(
+    run(config),
+    Random.withSeed(config.seed),
+    Effect.provide(instrumentedTransport({ source: "client", latency: latencyOf(config) })),
+    Effect.provide(Recording.layer("client", config)),
+    Effect.scoped,
+    Effect.provide(TcpTransport.layer),
+    Effect.asVoid
+  )
 ).pipe(Command.withDescription("Connect to an Open Protocol controller and trace every byte it exchanges"))
 
 Command.run(command, { version: "0.0.0" }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

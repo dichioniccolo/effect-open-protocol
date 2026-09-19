@@ -80,8 +80,10 @@ interface Results {
   readonly delivery: ResultDelivery.ResultDelivery
   /** Takes a pushed result, which may reveal a gap. */
   readonly pushed: (session: Session, result: TighteningResult) => Effect.Effect<void>
-  /** Brings a fresh session level with the controller before it is ready. */
-  readonly start: (session: Session) => Effect.Effect<void, ConnectionLost>
+  /** Fetches what the controller produced while no session was listening. */
+  readonly recover: (session: Session) => Effect.Effect<void>
+  /** Asks the controller to push its results on this session. */
+  readonly subscribe: (session: Session) => Effect.Effect<void, ConnectionLost>
   /** Background work that lasts as long as the session. */
   readonly reconcile: (session: Session) => Effect.Effect<never>
 }
@@ -93,7 +95,8 @@ interface Results {
 const ignoring: Results = {
   delivery: ResultDelivery.dropping,
   pushed: (_, result) => ResultDelivery.dropping.submit(result),
-  start: () => Effect.void,
+  recover: () => Effect.void,
+  subscribe: () => Effect.void,
   reconcile: () => Effect.never
 }
 
@@ -107,7 +110,9 @@ const collecting = Effect.fnUntraced(function* (options: {
   const dedup = yield* Dedup.make(settings.dedupCapacity)
 
   const delivery = yield* ResultDelivery.make({
-    delivery: { handler: options.handler, handlerRetry: settings.handlerRetry, bufferSize: settings.resultBuffer },
+    handler: options.handler,
+    handlerRetry: settings.handlerRetry,
+    bufferSize: settings.resultBuffer,
     dedup,
     acknowledge: options.acknowledge
   })
@@ -117,9 +122,8 @@ const collecting = Effect.fnUntraced(function* (options: {
   return {
     delivery,
     pushed: recovery.submitResult,
-    // Recovery runs before the subscription: a result produced between the two
-    // would otherwise be treated as history by the first baseline.
-    start: (session) => Effect.andThen(recovery.recoverGap(session), subscribeResults(session)),
+    recover: recovery.recoverGap,
+    subscribe: subscribeResults,
     // Recovery is driven by events: a session starting, and a pushed result
     // whose identifier sits above the watermark. A caller who also wants the
     // line polled asks for it with `recoveryInterval`, and pays one MID 0064
@@ -266,10 +270,14 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
       Effect.gen(function* () {
         const controllerName = yield* startCommunication(current)
         yield* emit(new Accepted({ controllerName }))
-        yield* results.start(current)
-        yield* emit(new Subscribed())
 
+        // Recovery runs before the subscription: a result produced between the
+        // two would otherwise be treated as history by the first baseline.
+        yield* results.recover(current)
         yield* emit(new Recovered())
+
+        yield* results.subscribe(current)
+        yield* emit(new Subscribed())
       }),
       readerFailed
     )

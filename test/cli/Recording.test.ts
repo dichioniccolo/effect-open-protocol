@@ -8,7 +8,8 @@ import * as O from "effect/Option"
 import { SqlClient } from "effect/unstable/sql/SqlClient"
 import * as Recording from "../../cli/Recording.ts"
 import { instrument, latencyOf } from "../../cli/Wire.ts"
-import { EventQuery, layer as storeLayer, RunId, WireStore } from "../../store/src/WireStore.ts"
+import { EventQuery, RunId } from "../../store/src/Schema.ts"
+import * as WireStore from "../../store/src/WireStore.ts"
 import { terminator } from "../../src/protocol/Header.ts"
 import type { Duplex } from "../../src/transport/Transport.ts"
 
@@ -51,7 +52,7 @@ const fixture = Effect.gen(function* () {
 
 const readBack = (filename: string) =>
   Effect.gen(function* () {
-    const store = yield* WireStore
+    const store = yield* WireStore.WireStore
     const runs = yield* store.listRuns
 
     const events = yield* store.events(
@@ -59,7 +60,7 @@ const readBack = (filename: string) =>
     )
 
     return { runs, events }
-  }).pipe(Effect.provide(storeLayer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)))
+  }).pipe(Effect.provide(WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)))
 
 describe("Recording", () => {
   it.effect("records every traced event of a run, in order, and ends the run on close", () =>
