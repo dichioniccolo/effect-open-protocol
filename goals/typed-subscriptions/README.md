@@ -2,7 +2,7 @@
 
 ## Status
 
-Lifecycle: `active`
+Lifecycle: `completed-retained`
 
 Source: [`ops/manifest.json`](./ops/manifest.json)
 
@@ -36,7 +36,9 @@ follow the instructions in goals/typed-subscriptions/GOAL.md
 
 ## Current Phase
 
-P5 PR to mergeable. P0 to P4 are done on branch `feat/typed-subscriptions`.
+Closed. Every phase is done. PR #8 is `CLEAN` with zero unresolved review threads
+(no required checks are configured). The closeout reflection is
+[`history/reflections/2026-09-19-claude.md`](./history/reflections/2026-09-19-claude.md).
 
 ## Latest Evidence
 

@@ -3,13 +3,13 @@
   "initiative": {
     "id": "typed-subscriptions",
     "title": "Typed Subscriptions",
-    "status": "active",
+    "status": "completed-retained",
     "created": "2026-09-19",
     "updated": "2026-09-19",
     "packetAnchorDocument": "SPEC.md"
   },
   "packetPath": "goals/typed-subscriptions",
-  "lifecycle": "active",
+  "lifecycle": "completed-retained",
   "mission": "Typed subscribe(Sub.rev(n)) returning a Stream of { value, ack } that survives reconnects, with ResultDelivery rebuilt on subscribe(LastResults) and dedup, gap recovery and ack-after-handler unchanged.",
   "executionCapable": true,
   "reflectionRequired": true,
@@ -74,12 +74,12 @@
     {
       "id": "P5",
       "name": "PR to mergeable",
-      "status": "in-progress"
+      "status": "completed"
     },
     {
       "id": "P6",
       "name": "Close",
-      "status": "pending"
+      "status": "completed"
     }
   ],
   "verificationCommands": [

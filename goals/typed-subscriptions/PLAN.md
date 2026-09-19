@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: `active`. `typed-mid-definitions` merged (PR #7); P0 re-baselined
+Status: `completed-retained`. Shipped as PR #8; P0 re-baselined
 the cites on 2026-09-19.
 
 ## Phases
@@ -14,8 +14,8 @@ the cites on 2026-09-19.
 | P2 Survive reconnects | completed | Re-send active subscriptions after every handshake, and keep the stream alive across reconnects. | Reconnect test: the same stream emits before and after a dropped session. |
 | P3 Results on subscribe | completed | `ResultDelivery` consumes `subscribe(LastResults)`. Remove the `routeUnsolicited` `LastResult` branch and the direct ack send, keeping unsolicited 0065 behaviour. | Delivery, Chaos, GapRecovery and Shutdown suites green with assertions unchanged. |
 | P4 Docs | completed | README subscribing section and §Delivery semantics update; JSDoc rubric pass on new exports. | Full verification matrix in `SPEC.md` green. |
-| P5 PR to mergeable | in-progress | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
-| P6 Close | pending | Write the closeout reflection and flip packet state. | Packet status and evidence are updated; a closeout reflection exists. |
+| P5 PR to mergeable | completed | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
+| P6 Close | completed | Write the closeout reflection and flip packet state. | Packet status and evidence are updated; a closeout reflection exists. |
 
 <!--
 Phase ids must match ops/manifest.json `phases[]`. A packet may use its own
