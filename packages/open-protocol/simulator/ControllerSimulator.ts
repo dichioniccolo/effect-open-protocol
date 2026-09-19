@@ -17,17 +17,10 @@ import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
 import { frames } from "../src/protocol/Framer.ts"
 import { decodeMessage, LastResult, type Message } from "../src/protocol/Messages.ts"
-import { type TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
+import { fieldsOf, type TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
 import type { ServerSide } from "../src/transport/InMemoryTransport.ts"
 import type { Endpoint } from "../src/transport/Transport.ts"
-import {
-  type ControllerIdentity,
-  defaultIdentity,
-  observe,
-  replyTo,
-  resultFor,
-  simulatorDevice
-} from "./ControllerBehaviour.ts"
+import { type ControllerIdentity, defaultIdentity, observe, replyTo, resultFor } from "./ControllerBehaviour.ts"
 import type * as Faults from "./Faults.ts"
 import { sendWithFaults } from "./FaultyWire.ts"
 import { forget, initialSessionState, latestOf, type SessionState } from "./SessionState.ts"
@@ -138,7 +131,7 @@ const start = Effect.fnUntraced(function* (options: SimulatorSettings, listener:
     yield* Ref.update(state, (current) => ({ ...current, connection: O.some(connection) }))
 
     const onFrame = Effect.fnUntraced(function* (frame: string) {
-      const message = yield* decodeMessage(frame, simulatorDevice)
+      const message = yield* decodeMessage(frame)
       const current = yield* Ref.modify(state, (value) => [value, observe(message, value)])
 
       if (Predicate.isTagged(message, "AcknowledgeResult")) {
@@ -187,7 +180,10 @@ const start = Effect.fnUntraced(function* (options: SimulatorSettings, listener:
     const acknowledged = yield* Deferred.make<void>()
     yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.some(acknowledged) }))
 
-    const attempt = send(connection, new LastResult({ result })).pipe(
+    const attempt = send(
+      connection,
+      new LastResult({ ...fieldsOf(result), parameterSetChangedAt: result.timestamp })
+    ).pipe(
       Effect.andThen(Deferred.await(acknowledged)),
       Effect.timeoutOption(options.ackTimeout),
       Effect.catchCause(() => Effect.succeed(O.none<void>()))

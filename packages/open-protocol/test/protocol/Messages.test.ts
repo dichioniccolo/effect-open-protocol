@@ -30,6 +30,7 @@ import { MalformedHeader, UnsupportedFeature } from "../../src/protocol/Protocol
 import {
   ControllerTimestamp,
   DeviceId,
+  fieldsOf,
   LimitStatus,
   TighteningId,
   TighteningResult,
@@ -61,6 +62,9 @@ const result = (fields: {
     timestamp: ControllerTimestamp.make("2026-09-17:10:14:16")
   })
 
+const lastResultOf = (value: TighteningResult): LastResult =>
+  new LastResult({ ...fieldsOf(value), parameterSetChangedAt: value.timestamp })
+
 const sample = result({
   tighteningId: 1234567,
   torque: 12.34,
@@ -79,11 +83,11 @@ const messages: ReadonlyArray<Message> = [
   new CommandError({ mid: 18, code: 2 }),
   new CommandAccepted({ mid: 60 }),
   new SubscribeResults(),
-  new LastResult({ result: sample }),
+  lastResultOf(sample),
   new AcknowledgeResult(),
   new UnsubscribeResults(),
   new RequestOldResult({ tighteningId: TighteningId.make(0) }),
-  new OldResult({ result: sample }),
+  new OldResult(fieldsOf(sample)),
   new KeepAlive(),
   new UnknownMessage({ mid: 900, revision: 1, data: "payload" })
 ]
@@ -128,7 +132,7 @@ describe("Header", () => {
   })
 })
 
-const roundTrip = (message: Message) => decodeMessage(withoutTerminator(encodeMessage(message)), deviceId)
+const roundTrip = (message: Message) => decodeMessage(withoutTerminator(encodeMessage(message)))
 
 describe("Messages", () => {
   it.effect("round trips every supported message", () =>
@@ -155,7 +159,7 @@ describe("Messages", () => {
   })
 
   it.effect("keeps an unsupported MID as an unknown message", () =>
-    Effect.map(decodeMessage("00229900001         ab", deviceId), (decoded) =>
+    Effect.map(decodeMessage("00229900001         ab"), (decoded) =>
       expect(decoded).toEqual(new UnknownMessage({ mid: 9900, revision: 1, data: "ab" }))
     )
   )
@@ -164,8 +168,8 @@ describe("Messages", () => {
     "round trips tightening results",
     [idValue, torqueValue, angleValue],
     ([tighteningId, torque, angle]) => {
-      const message = new LastResult({
-        result: result({
+      const message = lastResultOf(
+        result({
           tighteningId,
           torque: torque / 100,
           angle,
@@ -175,34 +179,36 @@ describe("Messages", () => {
           vin: "VIN000123",
           parameterSetId: 12
         })
-      })
+      )
 
       return Effect.map(roundTrip(message), (decoded) => expect(decoded).toEqual(message))
     }
   )
 
   it.effect.prop("round trips old results", [idValue, torqueValue, angleValue], ([tighteningId, torque, angle]) => {
-    const message = new OldResult({
-      result: result({
-        tighteningId,
-        torque: torque / 100,
-        angle,
-        status: "OK",
-        torqueStatus: "High",
-        angleStatus: "Low",
-        vin: "",
-        parameterSetId: 0
-      })
-    })
+    const message = new OldResult(
+      fieldsOf(
+        result({
+          tighteningId,
+          torque: torque / 100,
+          angle,
+          status: "OK",
+          torqueStatus: "High",
+          angleStatus: "Low",
+          vin: "",
+          parameterSetId: 0
+        })
+      )
+    )
 
     return Effect.map(roundTrip(message), (decoded) => expect(decoded).toEqual(message))
   })
 
   it.effect("keeps a result whose data field does not decode as an unknown message", () =>
     Effect.gen(function* () {
-      const frame = withoutTerminator(encodeMessage(new LastResult({ result: sample })))
+      const frame = withoutTerminator(encodeMessage(lastResultOf(sample)))
       const truncated = Str.substring(0, Str.length(frame) - 4)(frame)
-      const decoded = yield* decodeMessage(truncated, deviceId)
+      const decoded = yield* decodeMessage(truncated)
 
       expect(decoded).toEqual(
         new UnknownMessage({ mid: 61, revision: 1, data: Str.substring(20, Str.length(truncated))(truncated) })
@@ -211,7 +217,7 @@ describe("Messages", () => {
   )
 
   it.effect("keeps a revision the library does not define as an unknown message", () =>
-    Effect.map(decodeMessage("00229999002         ab", deviceId), (decoded) =>
+    Effect.map(decodeMessage("00229999002         ab"), (decoded) =>
       expect(decoded).toEqual(new UnknownMessage({ mid: 9999, revision: 2, data: "ab" }))
     )
   )

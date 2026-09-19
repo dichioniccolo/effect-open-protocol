@@ -64,7 +64,7 @@ describe("typed request", () => {
         expectTypeOf(reply).toEqualTypeOf<OldResult>()
         expect(reply._tag).toBe("OldResult")
         expect(reply.revision).toBe(1)
-        expect(reply.result.tighteningId).toBe(produced.tighteningId)
+        expect(reply.tighteningId).toBe(produced.tighteningId)
       })
     )
   )

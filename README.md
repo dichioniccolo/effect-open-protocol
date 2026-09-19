@@ -368,12 +368,12 @@ const program = Effect.gen(function* () {
   written on the wire and never shows up in the value. `digits` and `raw`
   take a `schema` to decode into a branded or refined type.
 - **Revisions.** A revision is a `Field.layout` (the value is a plain tagged
-  struct), `Mid.as(Class, layout)` (the value is an instance of your class),
-  or `Mid.custom(codec)` for anything shaped differently from the wire. `rev(n)`
-  only accepts a revision the definition declares.
+  struct) or `Mid.as(Class, layout)` (the value is an instance of your class).
+  The class's tag and revision must match the definition's, which the compiler
+  checks. `rev(n)` only accepts a revision the definition declares.
 - **Replies.** `Mid.request(definition, replies)` names the reply of each
   revision: a revision of any definition (the request's own, for a message the
-  controller mirrors), `Mid.accepted` (the generic 0005, with 0004 as a
+  controller mirrors), `commandAccepted` (the generic 0005, with 0004 as a
   rejection), or `Mid.noReply`. `request` returns exactly that type. A reply
   is recognised by the MID in the frame header, so a MID the library does not
   model is decoded straight into its declared revision.

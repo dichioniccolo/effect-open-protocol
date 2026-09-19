@@ -12,7 +12,7 @@
 import { Effect, Ref } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import type { TighteningResult } from "../protocol/TighteningResult.ts"
+import { resultOf, type TighteningResult } from "../protocol/TighteningResult.ts"
 import type { Dedup } from "../results/Dedup.ts"
 import type { ResultDelivery } from "../results/ResultDelivery.ts"
 import { runRecovery } from "../results/ResultRecovery.ts"
@@ -74,7 +74,10 @@ export const make = Effect.fnUntraced(function* (options: {
           request: (tighteningId) =>
             // Recovery is bulk work that retries, so it waits far less than a
             // command does: a slow reply here costs a whole pass.
-            session.replies.request(RequestOldResultMid.rev(1), { tighteningId }, settings.recoveryTimeout),
+            Effect.map(
+              session.replies.request(RequestOldResultMid.rev(1), { tighteningId }, settings.recoveryTimeout),
+              (stored) => resultOf(settings.id, stored)
+            ),
           submit: pipeline.submit,
           limit: settings.recoveryLimit
         })

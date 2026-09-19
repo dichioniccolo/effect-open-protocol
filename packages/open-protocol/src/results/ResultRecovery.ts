@@ -13,7 +13,6 @@ import * as A from "effect/Array"
 import * as O from "effect/Option"
 import type { CommandRejected } from "../connection/ConnectionError.ts"
 import type { RequestError } from "../connection/RequestReply.ts"
-import type { OldResult } from "../protocol/Messages.ts"
 import { TighteningId, type TighteningResult } from "../protocol/TighteningResult.ts"
 import type { Dedup } from "./Dedup.ts"
 
@@ -60,15 +59,6 @@ type Attempt = Data.TaggedEnum<{
 const Attempt = Data.taggedEnum<Attempt>()
 
 /**
- * Everything a recovery request can fail with. The distinction that matters is
- * `CommandRejected`, the controller's own "I do not have it".
- *
- * @category models
- * @since 0.0.0
- */
-export type RecoveryFailure = RequestError
-
-/**
  * Asks the controller for everything produced since the last delivered result.
  *
  * The starting point is the difficult part. A controller does not count from
@@ -82,7 +72,11 @@ export type RecoveryFailure = RequestError
  */
 export const runRecovery = Effect.fnUntraced(function* (options: {
   readonly dedup: Dedup
-  readonly request: (id: TighteningId) => Effect.Effect<OldResult, RecoveryFailure>
+  /**
+   * Fetches one stored result. The failure that matters is `CommandRejected`,
+   * the controller's own "I do not have it".
+   */
+  readonly request: (id: TighteningId) => Effect.Effect<TighteningResult, RequestError>
   readonly submit: (result: TighteningResult) => Effect.Effect<void>
   /**
    * Most missed results fetched in one pass. A device that was offline for a
@@ -97,18 +91,8 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
    * Asks for one stored result. A controller answering "I do not have it" is
    * an answer (`None`); anything else is silence, and silence is retried.
    */
-  const fetch = (
-    id: TighteningId
-  ): Effect.Effect<O.Option<TighteningResult>, Exclude<RecoveryFailure, CommandRejected>> =>
-    Effect.catchTag(
-      Effect.gen(function* () {
-        const old = yield* options.request(id)
-
-        return O.some(old.result)
-      }),
-      "CommandRejected",
-      () => Effect.succeed(O.none<TighteningResult>())
-    )
+  const fetch = (id: TighteningId): Effect.Effect<O.Option<TighteningResult>, Exclude<RequestError, CommandRejected>> =>
+    Effect.catchTag(Effect.asSome(options.request(id)), "CommandRejected", () => Effect.succeedNone)
 
   const fetchRange = (from: number, to: number): Effect.Effect<Recovery> =>
     Effect.suspend(() => {

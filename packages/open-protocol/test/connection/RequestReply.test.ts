@@ -8,6 +8,7 @@ import * as Field from "../../src/protocol/Field.ts"
 import {
   CommandAccepted,
   CommandError,
+  commandAccepted,
   decodeFrame,
   encodeMessage,
   type Message,
@@ -15,9 +16,6 @@ import {
 } from "../../src/protocol/Messages.ts"
 import * as Mid from "../../src/protocol/Mid.ts"
 import { UnexpectedRevision } from "../../src/protocol/ProtocolError.ts"
-import { DeviceId } from "../../src/protocol/TighteningResult.ts"
-
-const deviceId = DeviceId.make("tool-1")
 
 // Illustrative definitions in an unused MID range; not taken from the Open
 // Protocol specification.
@@ -39,14 +37,14 @@ const AskStatus = Mid.request(Mid.define({ tag: "AskStatus", mid: 7000, revision
 
 const Reset = Mid.request(
   Mid.define({ tag: "Reset", mid: 7002, revisions: { 1: Field.layout([["level", Field.digits({ width: 4 })]]) } }),
-  { 1: Mid.accepted }
+  { 1: commandAccepted }
 )
 
 const Notify = Mid.request(Mid.define({ tag: "Notify", mid: 7003, revisions: { 1: Field.layout([]) } }), {
   1: Mid.noReply
 })
 
-const incomingOf = (message: Message) => Effect.orDie(decodeFrame(encodeMessage(message), deviceId))
+const incomingOf = (message: Message) => Effect.orDie(decodeFrame(encodeMessage(message)))
 
 /**
  * A slot whose peer answers every frame with `answer`, and remembers what was
@@ -59,7 +57,6 @@ const peer = (answer: O.Option<Message>) =>
     const slot = yield* Ref.make(O.none<RequestReply.RequestReply>())
 
     const replies = yield* RequestReply.make({
-      deviceId,
       responseTimeout: Duration.minutes(5),
       send: (frame) =>
         Effect.gen(function* () {

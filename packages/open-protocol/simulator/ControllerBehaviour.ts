@@ -20,7 +20,13 @@ import {
   OldResult,
   type UnknownMessage
 } from "../src/protocol/Messages.ts"
-import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
+import {
+  ControllerTimestamp,
+  DeviceId,
+  fieldsOf,
+  TighteningId,
+  TighteningResult
+} from "../src/protocol/TighteningResult.ts"
 import type { SessionState } from "./SessionState.ts"
 
 /**
@@ -160,7 +166,7 @@ export const replyTo = (
           O.flatMap(wanted, (id) => MutableHashMap.get(store, id)),
           {
             onNone: (): Message => new CommandError({ mid: 64, code: 15 }),
-            onSome: (result): Message => new OldResult({ result })
+            onSome: (result): Message => new OldResult(fieldsOf(result))
           }
         )
       )

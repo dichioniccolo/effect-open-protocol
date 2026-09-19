@@ -104,9 +104,9 @@ export class PayloadEncodeError extends S.TaggedError<PayloadEncodeError>()("Pay
  * @since 0.0.0
  */
 export class UnexpectedRevision extends S.TaggedError<UnexpectedRevision>()("UnexpectedRevision", {
-  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
-  expected: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
-  received: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 }))
+  mid: S.Number,
+  expected: S.Number,
+  received: S.Number
 }) {}
 
 /**

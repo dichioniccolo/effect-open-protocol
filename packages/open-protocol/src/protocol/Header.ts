@@ -45,6 +45,40 @@ const reserved = (raw: string, feature: string): Result.Result<void, MalformedHe
   )
 
 /**
+ * A MID number: four ASCII digits on the wire.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export const MidNumber = S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })).annotate({
+  identifier: "MidNumber",
+  description: "An Open Protocol message id, written as four ASCII digits"
+})
+
+/**
+ * @category models
+ * @since 0.0.0
+ */
+export type MidNumber = typeof MidNumber.Type
+
+/**
+ * A revision number: three ASCII digits on the wire, starting at 1.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export const RevisionNumber = S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })).annotate({
+  identifier: "RevisionNumber",
+  description: "An Open Protocol message revision, written as three ASCII digits"
+})
+
+/**
+ * @category models
+ * @since 0.0.0
+ */
+export type RevisionNumber = typeof RevisionNumber.Type
+
+/**
  * A decoded Open Protocol header.
  *
  * Unsupported header features (link-level sequence numbers, message linking)
@@ -71,8 +105,8 @@ const reserved = (raw: string, feature: string): Result.Result<void, MalformedHe
 export class Header extends S.Class<Header>("Header")(
   {
     length: S.Number.check(S.isInt(), S.isBetween({ minimum: headerLength, maximum: 9999 })),
-    mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
-    revision: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
+    mid: MidNumber,
+    revision: RevisionNumber,
     noAck: S.Boolean,
     stationId: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 99 })),
     spindleId: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 99 }))

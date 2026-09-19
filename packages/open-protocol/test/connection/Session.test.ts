@@ -5,27 +5,23 @@ import * as Str from "effect/String"
 import * as RequestReply from "../../src/connection/RequestReply.ts"
 import { readLoop } from "../../src/connection/Session.ts"
 import { encodeMessage, KeepAlive, LastResult, type Message, UnknownMessage } from "../../src/protocol/Messages.ts"
-import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../../src/protocol/TighteningResult.ts"
+import { ControllerTimestamp, TighteningId } from "../../src/protocol/TighteningResult.ts"
 import { ConnectionLost } from "../../src/transport/Transport.ts"
-
-const deviceId = DeviceId.make("tool-1")
 
 const encoder = new TextEncoder()
 
 const lastResult = encodeMessage(
   new LastResult({
-    result: new TighteningResult({
-      deviceId,
-      tighteningId: TighteningId.make(7),
-      vin: "VIN7",
-      parameterSetId: 1,
-      status: "OK",
-      torqueStatus: "OK",
-      angleStatus: "OK",
-      torque: 1.5,
-      angle: 90,
-      timestamp: ControllerTimestamp.make("2026-09-19:10:00:00")
-    })
+    tighteningId: TighteningId.make(7),
+    vin: "VIN7",
+    parameterSetId: 1,
+    status: "OK",
+    torqueStatus: "OK",
+    angleStatus: "OK",
+    torque: 1.5,
+    angle: 90,
+    timestamp: ControllerTimestamp.make("2026-09-19:10:00:00"),
+    parameterSetChangedAt: "2026-09-19:10:00:00"
   })
 )
 
@@ -41,8 +37,7 @@ const read = (frames: ReadonlyArray<string>) =>
 
     const replies = yield* RequestReply.make({
       send: () => Effect.void,
-      responseTimeout: Duration.seconds(1),
-      deviceId
+      responseTimeout: Duration.seconds(1)
     })
 
     const ended = yield* Effect.flip(
@@ -54,7 +49,6 @@ const read = (frames: ReadonlyArray<string>) =>
           },
           replies
         },
-        deviceId,
         (message) => Ref.update(received, (current) => A.append(current, message))
       )
     )

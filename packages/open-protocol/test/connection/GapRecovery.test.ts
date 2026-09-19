@@ -8,7 +8,13 @@ import { resolveSettings } from "../../src/connection/DeviceSettings.ts"
 import * as RequestReply from "../../src/connection/RequestReply.ts"
 import type { Session } from "../../src/connection/Session.ts"
 import { decodeFrame, decodeMessage, encodeMessage, OldResult } from "../../src/protocol/Messages.ts"
-import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../../src/protocol/TighteningResult.ts"
+import {
+  ControllerTimestamp,
+  DeviceId,
+  fieldsOf,
+  TighteningId,
+  TighteningResult
+} from "../../src/protocol/TighteningResult.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 import * as Dedup from "../../src/results/Dedup.ts"
 import type { ResultDelivery } from "../../src/results/ResultDelivery.ts"
@@ -51,25 +57,27 @@ const fixture = Effect.fnUntraced(function* () {
 
   const answer = (frame: string) =>
     Effect.gen(function* () {
-      const message = yield* Effect.orDie(decodeMessage(Str.substring(0, Str.length(frame) - 1)(frame), deviceId))
+      const message = yield* Effect.orDie(decodeMessage(Str.substring(0, Str.length(frame) - 1)(frame)))
       yield* Ref.update(asked, (current) => A.append(current, Number(Str.substring(4, 8)(frame))))
 
-      const reply = new OldResult({
-        result: resultFor(
-          Predicate.isTagged(message, "RequestOldResult") && message.tighteningId !== 0 ? message.tighteningId : 3
+      const reply = new OldResult(
+        fieldsOf(
+          resultFor(
+            Predicate.isTagged(message, "RequestOldResult") && message.tighteningId !== 0 ? message.tighteningId : 3
+          )
         )
-      })
+      )
 
       const replies = yield* Ref.get(slot)
 
       yield* O.match(replies, {
         onNone: () => Effect.void,
         onSome: (current) =>
-          Effect.asVoid(Effect.flatMap(Effect.orDie(decodeFrame(encodeMessage(reply), deviceId)), current.offer))
+          Effect.asVoid(Effect.flatMap(Effect.orDie(decodeFrame(encodeMessage(reply))), current.offer))
       })
     })
 
-  const replies = yield* RequestReply.make({ send: answer, responseTimeout: Duration.seconds(1), deviceId })
+  const replies = yield* RequestReply.make({ send: answer, responseTimeout: Duration.seconds(1) })
   yield* Ref.set(slot, O.some(replies))
 
   const session: Session = { duplex: { incoming: Stream.empty, send: () => Effect.void }, replies }

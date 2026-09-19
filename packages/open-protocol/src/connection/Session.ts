@@ -12,7 +12,6 @@ import { Duration, Effect, Ref, Stream } from "effect"
 import { frames } from "../protocol/Framer.ts"
 import { decodeFrame, KeepAliveMid, type Message } from "../protocol/Messages.ts"
 import * as Mid from "../protocol/Mid.ts"
-import type { DeviceId } from "../protocol/TighteningResult.ts"
 import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
 import { ConnectionLost, type Duplex } from "../transport/Transport.ts"
 import { orLost, type RequestReply } from "./RequestReply.ts"
@@ -91,12 +90,11 @@ const protocolLost = (tag: string): Effect.Effect<never, ConnectionLost> =>
  */
 export const readLoop = (
   session: Session,
-  deviceId: DeviceId,
   onUnsolicited: (message: Message) => Effect.Effect<void>
 ): Effect.Effect<never, ConnectionLost> =>
   Effect.gen(function* () {
     const onFrame = Effect.fnUntraced(function* (frame: string) {
-      const incoming = yield* decodeFrame(frame, deviceId)
+      const incoming = yield* decodeFrame(frame)
       const consumed = yield* session.replies.offer(incoming)
 
       if (!consumed) {

@@ -12,45 +12,13 @@
  */
 import { Data, Effect, Predicate, Result } from "effect"
 import * as A from "effect/Array"
-import * as Context from "effect/Context"
 import * as O from "effect/Option"
 import * as R from "effect/Record"
 import * as S from "effect/Schema"
 import type * as SchemaIssue from "effect/SchemaIssue"
 import * as SchemaTransformation from "effect/SchemaTransformation"
-import { encodeFrame } from "./Header.ts"
-// Type-only: `Messages.ts` builds on this module, so the edge must not exist at runtime.
-import type { CommandAccepted, Incoming } from "./Messages.ts"
+import { encodeFrame, type Header } from "./Header.ts"
 import { PayloadDecodeError, PayloadEncodeError, UnexpectedRevision } from "./ProtocolError.ts"
-import type { DeviceId } from "./TighteningResult.ts"
-
-/**
- * What decoding a frame may need beyond the frame itself.
- *
- * **Details**
- *
- * The device a frame came from never travels on the wire, yet a tightening
- * result carries it. A revision codec that needs it reads this service; the
- * codec entry points provide it.
- *
- * **Example** (Decoding a revision that stamps the device)
- *
- * ```ts
- * import { Effect } from "effect"
- * import { DeviceId, Mid, OldResultMid } from "effect-open-protocol"
- *
- * declare const data: string
- *
- * // `Mid.decode` provides the context; a codec reads it with `FrameContext.use`.
- * const decoded = Mid.decode(OldResultMid.rev(1), data, DeviceId.make("tool-1"))
- * ```
- *
- * @category services
- * @since 0.0.0
- */
-export class FrameContext extends Context.Service<FrameContext, { readonly deviceId: DeviceId }>()(
-  "effect-open-protocol/FrameContext"
-) {}
 
 /**
  * A revision whose value is a class: the layout decodes into the class's
@@ -75,28 +43,6 @@ export class FrameContext extends Context.Service<FrameContext, { readonly devic
 export class Binding<Target extends S.Top, Layout extends S.Top> extends Data.TaggedClass("Binding")<{
   readonly target: Target
   readonly layout: Layout
-}> {}
-
-/**
- * A revision written as a ready codec, for values whose shape differs from the
- * wire record. The codec must produce `_tag` and `revision` itself.
- *
- * **Example** (Inspecting a custom revision)
- *
- * ```ts
- * import * as S from "effect/Schema"
- * import { Mid } from "effect-open-protocol"
- *
- * declare const codec: S.Codec<{ readonly _tag: "Raw"; readonly revision: 1 }, string>
- *
- * console.log(Mid.custom(codec)._tag) // "Custom"
- * ```
- *
- * @category models
- * @since 0.0.0
- */
-export class Custom<Codec extends S.Top> extends Data.TaggedClass("Custom")<{
-  readonly codec: Codec
 }> {}
 
 /**
@@ -125,32 +71,13 @@ export const as = <Target extends S.Top, Layout extends S.Top>(
 ): Binding<Target, Layout> => new Binding({ target, layout })
 
 /**
- * Uses a ready codec as a revision.
- *
- * **Example** (Wrapping an existing codec)
- *
- * ```ts
- * import * as S from "effect/Schema"
- * import { Mid } from "effect-open-protocol"
- *
- * declare const codec: S.Codec<{ readonly _tag: "Raw"; readonly revision: 1; readonly body: string }, string>
- *
- * const revision = Mid.custom(codec)
- * ```
- *
- * @category constructors
- * @since 0.0.0
- */
-export const custom = <Codec extends S.Top>(codec: Codec): Custom<Codec> => new Custom({ codec })
-
-/**
  * One revision of a definition, as written: a `Field.layout` (decoded into a
- * plain tagged struct), `as(Class, layout)`, or `custom(codec)`.
+ * plain tagged struct) or `as(Class, layout)`.
  *
  * @category models
  * @since 0.0.0
  */
-export type Entry = LayoutEntry | Binding<S.Top, S.Top> | Custom<S.Top>
+export type Entry = LayoutEntry | Binding<S.Top, S.Top>
 
 /**
  * A `Field.layout`: a string decoded into a struct of fields.
@@ -171,14 +98,12 @@ type TypeFields<Fields extends S.Struct.Fields> = { readonly [K in keyof Fields]
 export type CodecOf<Tag extends string, Number extends number, E> =
   E extends Binding<infer Target, infer Layout>
     ? S.decodeTo<Target, Layout>
-    : E extends Custom<infer Codec>
-      ? Codec
-      : E extends S.decodeTo<S.Struct<infer Fields>, infer From>
-        ? S.decodeTo<
-            S.Struct<{ readonly _tag: S.tag<Tag>; readonly revision: S.tag<Number> } & TypeFields<Fields>>,
-            S.decodeTo<S.Struct<Fields>, From>
-          >
-        : never
+    : E extends S.decodeTo<S.Struct<infer Fields>, infer From>
+      ? S.decodeTo<
+          S.Struct<{ readonly _tag: S.tag<Tag>; readonly revision: S.tag<Number> } & TypeFields<Fields>>,
+          S.decodeTo<S.Struct<Fields>, From>
+        >
+      : never
 
 /**
  * The revisions of a definition, keyed by revision number.
@@ -187,6 +112,27 @@ export type CodecOf<Tag extends string, Number extends number, E> =
  * @since 0.0.0
  */
 export type Entries = { readonly [revision: number]: Entry }
+
+/**
+ * The entries of a definition, each `as` revision required to decode into
+ * the definition's tag and the revision number it is declared under.
+ *
+ * **Details**
+ *
+ * The definition writes `_tag` and `revision` onto what the layout decoded,
+ * so a class whose own tag or revision disagrees would fail every decode at
+ * runtime. This rejects it at compile time instead.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export type Checked<Tag extends string, E extends Entries> = {
+  readonly [Number in keyof E]: E[Number] extends Binding<infer Target, S.Top>
+    ? Target["Type"] extends { readonly _tag: Tag; readonly revision: Number }
+      ? E[Number]
+      : Binding<S.Codec<{ readonly _tag: Tag; readonly revision: Number }>, S.Top>
+    : E[Number]
+}
 
 /**
  * A revision number a definition declares.
@@ -205,13 +151,26 @@ export type RevisionOf<E extends Entries> = keyof E & number
 export type ReplyError = UnexpectedRevision | PayloadDecodeError
 
 /**
+ * A received frame as a reply sees it: its header, its data field as it
+ * came, and whatever message it decoded to.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface Received {
+  readonly header: Header
+  readonly data: string
+  readonly message: unknown
+}
+
+/**
  * What a request waits for: something that recognises, among incoming frames,
  * the one that answers it.
  *
  * **Details**
  *
  * A revision is a reply (a frame of its MID answers, decoded at that
- * revision); so are {@link accepted} (the `0005` naming the request) and
+ * revision); so are `commandAccepted` (the `0005` naming the request) and
  * {@link noReply} (nothing is awaited, the request is settled once sent).
  * `answer` returns `None` for a frame that is not the reply, so it stays
  * unsolicited traffic.
@@ -222,8 +181,8 @@ export type ReplyError = UnexpectedRevision | PayloadDecodeError
 export interface Reply<A = unknown> {
   /** What the request resolves to as soon as it is sent, when nothing answers it. */
   readonly settled: O.Option<A>
-  /** The reply to a request for MID `request`, if `incoming` is it. */
-  readonly answer: (request: number, incoming: Incoming) => O.Option<Effect.Effect<A, ReplyError, FrameContext>>
+  /** The reply to a request for MID `request`, if `received` is it. */
+  readonly answer: (request: number, received: Received) => O.Option<Effect.Effect<A, ReplyError>>
 }
 
 /**
@@ -241,13 +200,13 @@ export interface Revision<Tag extends string, Number extends number, Codec exten
 }
 
 /**
- * What every revision codec is: text on the wire, possibly reading the
- * {@link FrameContext} while decoding, needing nothing to encode.
+ * What every revision codec is: text on the wire, needing no service either
+ * way.
  *
  * @category models
  * @since 0.0.0
  */
-export interface RevisionCodec extends S.Codec<unknown, string, FrameContext, never> {}
+export interface RevisionCodec extends S.Codec<unknown, string> {}
 
 /**
  * Any revision, whatever its definition.
@@ -296,7 +255,7 @@ export interface AnyDefinition<A = unknown> {
   readonly tag: string
   readonly mid: number
   readonly revisions: ReadonlyArray<number>
-  readonly lookup: (revision: number) => O.Option<Revision<string, number, S.Codec<A, string, FrameContext, never>>>
+  readonly lookup: (revision: number) => O.Option<Revision<string, number, S.Codec<A, string>>>
 }
 
 /**
@@ -314,75 +273,7 @@ export interface Definition<Tag extends string, E extends Entries> extends AnyDe
 }
 
 /**
- * The generic `0005` acknowledgement answers the request; `0004` rejects it.
- *
- * **Example** (Declaring a request answered by 0005)
- *
- * ```ts
- * import { Field, Mid } from "effect-open-protocol"
- *
- * const Reset = Mid.request(Mid.define({ tag: "Reset", mid: 9200, revisions: { 1: Field.layout([]) } }), {
- *   1: Mid.accepted
- * })
- * ```
- *
- * @category models
- * @since 0.0.0
- */
-export class Accepted extends Data.TaggedClass("Accepted")<{}> implements Reply<CommandAccepted> {
-  readonly settled: O.Option<CommandAccepted> = O.none()
-
-  readonly answer: Reply<CommandAccepted>["answer"] = (request, incoming) => {
-    const message = incoming.message
-
-    return Predicate.isTagged(message, "CommandAccepted") && message.mid === request
-      ? O.some(Effect.succeed(message))
-      : O.none()
-  }
-}
-
-/**
- * Nothing answers the request: sending it is the whole exchange.
- *
- * **Example** (Declaring a request nothing answers)
- *
- * ```ts
- * import { Field, Mid } from "effect-open-protocol"
- *
- * const Notify = Mid.request(Mid.define({ tag: "Notify", mid: 9201, revisions: { 1: Field.layout([]) } }), {
- *   1: Mid.noReply
- * })
- * ```
- *
- * @category models
- * @since 0.0.0
- */
-export class NoReply extends Data.TaggedClass("NoReply")<{}> implements Reply<void> {
-  readonly settled: O.Option<void> = O.some(undefined)
-
-  readonly answer: Reply<void>["answer"] = () => O.none()
-}
-
-/**
- * The reply of a request answered by `0005`.
- *
- * **Example** (A request acknowledged by 0005)
- *
- * ```ts
- * import { Field, Mid } from "effect-open-protocol"
- *
- * const Select = Mid.request(Mid.define({ tag: "Select", mid: 9202, revisions: { 1: Field.layout([]) } }), {
- *   1: Mid.accepted
- * })
- * ```
- *
- * @category constructors
- * @since 0.0.0
- */
-export const accepted: Accepted = new Accepted()
-
-/**
- * The reply of a request nothing answers.
+ * The reply of a request nothing answers: sending it is the whole exchange.
  *
  * **Example** (A fire-and-forget request)
  *
@@ -397,7 +288,7 @@ export const accepted: Accepted = new Accepted()
  * @category constructors
  * @since 0.0.0
  */
-export const noReply: NoReply = new NoReply()
+export const noReply: Reply<void> = { settled: O.some(undefined), answer: () => O.none() }
 
 /**
  * A request revision: a revision plus the reply it expects.
@@ -440,10 +331,13 @@ export interface RequestDefinition<
   Tag extends string,
   E extends Entries,
   Replies extends { readonly [Number in RevisionOf<E>]: Reply }
-> extends Omit<Definition<Tag, E>, "rev"> {
+> extends Omit<Definition<Tag, E>, "rev" | "lookup"> {
   readonly rev: <Number extends RevisionOf<E>>(
     revision: Number
   ) => RequestRevision<Tag, Number, CodecOf<Tag, Number, E[Number]>, Replies[Number]>
+  readonly lookup: (
+    revision: number
+  ) => O.Option<RequestRevision<string, number, S.Codec<ValueOf<Tag, E>, string>, Replies[RevisionOf<E>]>>
 }
 
 const tagged = (tag: string, revision: number): SchemaTransformation.Transformation<unknown, unknown> =>
@@ -452,38 +346,19 @@ const tagged = (tag: string, revision: number): SchemaTransformation.Transformat
     encode: (value) => (Predicate.isObject(value) ? R.remove(R.remove(value, "_tag"), "revision") : value)
   })
 
-// A plain layout is a binding to the tagged struct of its own fields.
-const bindingOf = (tag: string, revision: number, entry: LayoutEntry | Binding<S.Top, S.Top>): Binding<S.Top, S.Top> =>
-  S.isSchema(entry)
+// The entry's own schemas are erased here; `CodecOf` is the typed view of
+// what this returns, the same way `define` types what it builds.
+function codecFor(tag: string, revision: number, entry: Entry): RevisionCodec
+function codecFor(tag: string, revision: number, entry: Entry): S.Top {
+  // A plain layout is a binding to the tagged struct of its own fields.
+  const binding = S.isSchema(entry)
     ? as(S.Struct({ _tag: S.tag(tag), revision: S.tag(revision), ...R.map(entry.to.fields, S.toType) }), entry)
     : entry
 
-// The entry's own schemas are erased here; `CodecOf` is the typed view of
-// what this returns, the same way `define` types what `make` builds.
-function codecFor(tag: string, revision: number, entry: Entry): RevisionCodec
-function codecFor(tag: string, revision: number, entry: Entry): S.Top {
-  if (!S.isSchema(entry) && Predicate.isTagged(entry, "Custom")) {
-    return entry.codec
-  }
-
-  const binding = bindingOf(tag, revision, entry)
   const from: S.Top = binding.layout
 
   return from.pipe(S.decodeTo(binding.target, tagged(tag, revision)))
 }
-
-/**
- * Reads the data field of a frame as a value of a revision, reading the
- * device from the {@link FrameContext}.
- */
-const decodeIn = <Rev extends AnyRevision>(
-  revision: Rev,
-  data: string
-): Effect.Effect<Type<Rev>, PayloadDecodeError, FrameContext> =>
-  Effect.mapError(
-    S.decodeEffect(revision.codec)(data),
-    (error) => new PayloadDecodeError({ mid: revision.mid, reason: error.message })
-  )
 
 const revisionOf = (tag: string, mid: number, revision: number, codec: RevisionCodec): AnyRevision => {
   const self: AnyRevision = {
@@ -492,13 +367,13 @@ const revisionOf = (tag: string, mid: number, revision: number, codec: RevisionC
     revision,
     codec,
     settled: O.none(),
-    answer: (_request, incoming) =>
-      incoming.header.mid !== mid
+    answer: (_request, received) =>
+      received.header.mid !== mid
         ? O.none()
         : O.some(
-            incoming.header.revision === revision
-              ? decodeIn(self, incoming.data)
-              : Effect.fail(new UnexpectedRevision({ mid, expected: revision, received: incoming.header.revision }))
+            received.header.revision === revision
+              ? decode(self, received.data)
+              : Effect.fail(new UnexpectedRevision({ mid, expected: revision, received: received.header.revision }))
           )
   }
 
@@ -511,25 +386,24 @@ class UndeclaredRevision extends S.TaggedError<UndeclaredRevision>()("Undeclared
   revision: S.Number
 }) {}
 
-/** What `define` builds before its overload types it: revisions with erased codecs. */
-interface Untyped {
+/** What `define` and `request` build before their overloads type it: revisions with erased codecs. */
+interface Untyped<Rev> {
   readonly tag: string
   readonly mid: number
   readonly revisions: ReadonlyArray<number>
-  readonly rev: (revision: number) => Revision<string, number, S.Top>
-  readonly lookup: (revision: number) => O.Option<Revision<string, number, S.Top>>
+  readonly rev: (revision: number) => Rev
+  readonly lookup: (revision: number) => O.Option<Rev>
 }
 
-const make = (tag: string, mid: number, entries: Entries): Untyped => {
-  const revisions = R.map(entries, (entry, key) => revisionOf(tag, mid, Number(key), codecFor(tag, Number(key), entry)))
-  const lookup = (revision: number): O.Option<AnyRevision> => R.get(revisions, `${revision}`)
+// Built once per definition, so `rev(n)` and `lookup(n)` return the same revision every time.
+const indexed = <Rev>(tag: string, mid: number, byRevision: R.ReadonlyRecord<string, Rev>): Untyped<Rev> => {
+  const lookup = (revision: number): O.Option<Rev> => R.get(byRevision, `${revision}`)
 
   return {
     tag,
     mid,
-    revisions: A.map(R.keys(entries), (key) => Number(key)),
-    rev: (revision: number): AnyRevision =>
-      O.getOrThrowWith(lookup(revision), () => new UndeclaredRevision({ mid, revision })),
+    revisions: A.map(R.keys(byRevision), (key) => Number(key)),
+    rev: (revision) => O.getOrThrowWith(lookup(revision), () => new UndeclaredRevision({ mid, revision })),
     lookup
   }
 }
@@ -542,9 +416,10 @@ const make = (tag: string, mid: number, entries: Entries): Untyped => {
  * Each revision is its own Schema, so each has its own exact type. Revisions
  * that only append fields reuse the previous layout's entries with a spread;
  * a revision that changes a field simply lists a different layout. `rev(n)`
- * is only callable with a revision the definition declares. The tag names
- * the plain struct a bare layout decodes into; `as` and `custom` revisions
- * carry their own.
+ * is only callable with a revision the definition declares. A bare layout
+ * decodes into a plain struct tagged with `tag`; an `as` revision decodes
+ * into its class, whose tag and revision must match the definition's (see
+ * {@link Checked}).
  *
  * **Example** (A MID with two revisions)
  *
@@ -571,10 +446,20 @@ const make = (tag: string, mid: number, entries: Entries): Untyped => {
 export function define<const Tag extends string, const E extends Entries>(options: {
   readonly tag: Tag
   readonly mid: number
-  readonly revisions: E
+  readonly revisions: E & Checked<Tag, E>
 }): Definition<Tag, E>
-export function define(options: { readonly tag: string; readonly mid: number; readonly revisions: Entries }) {
-  return make(options.tag, options.mid, options.revisions)
+export function define(options: {
+  readonly tag: string
+  readonly mid: number
+  readonly revisions: Entries
+}): Untyped<Revision<string, number, S.Top>> {
+  return indexed(
+    options.tag,
+    options.mid,
+    R.map(options.revisions, (entry, key) =>
+      revisionOf(options.tag, options.mid, Number(key), codecFor(options.tag, Number(key), entry))
+    )
+  )
 }
 
 /**
@@ -585,8 +470,9 @@ export function define(options: { readonly tag: string; readonly mid: number; re
  *
  * `replies` must cover exactly the declared revisions. A reply is a revision
  * of any definition (a dedicated answer, such as `0065` for `0064`, or the
- * request's own definition for a message the controller mirrors), `accepted`
- * (the generic `0005`, with `0004` as a rejection), or `noReply`.
+ * request's own definition for a message the controller mirrors),
+ * `commandAccepted` (the generic `0005`, with `0004` as a rejection), or
+ * {@link noReply}.
  *
  * **Example** (A request answered by a dedicated reply)
  *
@@ -612,8 +498,15 @@ export function request<
   const E extends Entries,
   const Replies extends { readonly [Number in RevisionOf<E>]: Reply }
 >(definition: Definition<Tag, E>, replies: Replies): RequestDefinition<Tag, E, Replies>
-export function request(definition: Untyped, replies: { readonly [revision: number]: Reply }) {
-  return { ...definition, rev: (revision: number) => ({ ...definition.rev(revision), reply: replies[revision] }) }
+export function request(
+  definition: Untyped<Revision<string, number, S.Top>>,
+  replies: { readonly [revision: number]: Reply }
+): Untyped<RequestRevision<string, number, S.Top, Reply>> {
+  return indexed(
+    definition.tag,
+    definition.mid,
+    R.map(replies, (reply, key) => ({ ...definition.rev(Number(key)), reply }))
+  )
 }
 
 const encodeError =
@@ -677,9 +570,9 @@ export const frame = <Rev extends AnyRevision>(
  *
  * ```ts
  * import { Effect } from "effect"
- * import { CommandAcceptedMid, DeviceId, Mid } from "effect-open-protocol"
+ * import { CommandAcceptedMid, Mid } from "effect-open-protocol"
  *
- * const accepted = Mid.decode(CommandAcceptedMid.rev(1), "0060", DeviceId.make("tool-1"))
+ * const accepted = Mid.decode(CommandAcceptedMid.rev(1), "0060")
  *
  * Effect.runPromise(accepted).then((message) => console.log(message.mid)) // 60
  * ```
@@ -689,7 +582,9 @@ export const frame = <Rev extends AnyRevision>(
  */
 export const decode = <Rev extends AnyRevision>(
   revision: Rev,
-  data: string,
-  deviceId: DeviceId
+  data: string
 ): Effect.Effect<Type<Rev>, PayloadDecodeError> =>
-  Effect.provideService(decodeIn(revision, data), FrameContext, { deviceId })
+  Effect.mapError(
+    S.decodeEffect(revision.codec)(data),
+    (error) => new PayloadDecodeError({ mid: revision.mid, reason: error.message })
+  )
