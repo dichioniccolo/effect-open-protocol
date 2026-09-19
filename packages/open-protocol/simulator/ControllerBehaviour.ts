@@ -8,15 +8,18 @@
  * @since 0.0.0
  */
 import { Match } from "effect"
+import * as A from "effect/Array"
 import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
 import {
+  builtIns,
   CommandAccepted,
   CommandError,
   CommunicationStartAccepted,
   KeepAlive,
   type Message,
-  OldResult
+  OldResult,
+  type UnknownMessage
 } from "../src/protocol/Messages.ts"
 import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
 import type { SessionState } from "./SessionState.ts"
@@ -97,6 +100,24 @@ export const resultFor = (id: number): TighteningResult =>
   })
 
 /**
+ * The Open Protocol error codes a controller answers a message it cannot
+ * handle with: `99` for a MID it does not know, `97` for a revision of a known
+ * MID it does not support.
+ *
+ * @category constants
+ * @since 0.0.0
+ */
+export const refusalCodes = { unknownMid: 99, unsupportedRevision: 97 } as const
+
+const refuse = (message: UnknownMessage): CommandError =>
+  new CommandError({
+    mid: message.mid,
+    code: A.some(builtIns, (definition) => definition.mid === message.mid)
+      ? refusalCodes.unsupportedRevision
+      : refusalCodes.unknownMid
+  })
+
+/**
  * The reply a controller owes an incoming message, if it owes one at all.
  *
  * @category behaviour
@@ -139,6 +160,7 @@ export const replyTo = (
         )
       )
     }),
+    Match.tag("UnknownMessage", (unknown): O.Option<Message> => O.some(refuse(unknown))),
     Match.orElse((): O.Option<Message> => O.none())
   )
 

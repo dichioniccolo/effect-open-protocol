@@ -9,12 +9,14 @@ import {
   encodeMessage,
   KeepAlive,
   type Message,
-  SubscribeResults
+  SubscribeResults,
+  UnknownMessage
 } from "../../src/protocol/Messages.ts"
 import { DeviceId } from "../../src/protocol/TighteningResult.ts"
 import { InMemoryNetwork } from "../../src/transport/InMemoryTransport.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { type Duplex, Endpoint } from "../../src/transport/Transport.ts"
+import * as ControllerBehaviour from "../../simulator/ControllerBehaviour.ts"
 import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 
 const deviceId = DeviceId.make("test-client")
@@ -97,6 +99,26 @@ describe("ControllerSimulator", () => {
         yield* simulator.refuse(false)
         const accepted = yield* Effect.result(network.connect(endpoint))
         expect(Result.isSuccess(accepted)).toBe(true)
+      })
+    ).pipe(Effect.provide(layerSimulated))
+  )
+
+  it.effect("refuses a MID it does not know and a revision it does not support", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* ControllerSimulator.make({ endpoint })
+        const network = yield* InMemoryNetwork
+        const connection = yield* network.connect(endpoint)
+
+        const replies = yield* exchange(connection, [
+          new UnknownMessage({ mid: 900, revision: 1, data: "" }),
+          new UnknownMessage({ mid: 9999, revision: 2, data: "" })
+        ])
+
+        expect(replies).toEqual([
+          new CommandError({ mid: 900, code: ControllerBehaviour.refusalCodes.unknownMid }),
+          new CommandError({ mid: 9999, code: ControllerBehaviour.refusalCodes.unsupportedRevision })
+        ])
       })
     ).pipe(Effect.provide(layerSimulated))
   )
