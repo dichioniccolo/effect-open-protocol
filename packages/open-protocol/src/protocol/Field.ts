@@ -9,7 +9,7 @@
  *
  * @since 0.0.0
  */
-import { Effect, pipe } from "effect"
+import { Effect } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as R from "effect/Record"
@@ -76,12 +76,10 @@ export interface Placement {
 const invalid = (message: string, input: string, options: ParseOptions): Effect.Effect<never, SchemaIssue.Issue> =>
   Effect.fail(new SchemaIssue.InvalidValue({ message }, input, options))
 
-const place =
-  (placement: Placement, filler: O.Option<string>) =>
-  <C extends S.Top>(codec: C) =>
-    codec.annotate({
-      openProtocolField: { width: placement.width, id: O.fromNullishOr(placement.id), filler }
-    })
+const place = <C extends S.Top>(codec: C, placement: Placement, filler: O.Option<string> = O.none()) =>
+  codec.annotate({
+    openProtocolField: { width: placement.width, id: O.fromNullishOr(placement.id), filler }
+  })
 
 const exactly = (width: number) =>
   S.String.check(
@@ -123,25 +121,29 @@ export function digits<T extends number>(placement: Placement & { readonly schem
 export function digits(placement: Placement & { readonly schema?: S.Codec<number, number> }): Field<number> {
   const target = placement.schema ?? digitsFor(placement.width)
 
-  return pipe(
-    S.String,
+  const fits = (text: string): boolean => Str.length(text) === placement.width && isDigits(text)
+
+  const codec = S.String.pipe(
     S.decodeTo(
       target,
       SchemaTransformation.transformEffect({
-        decode: (raw: string, options) =>
-          Str.length(raw) === placement.width && isDigits(raw)
-            ? Effect.succeed(Number(raw))
-            : invalid(`expected ${placement.width} digits, found "${raw}"`, raw, options),
+        decode: (text: string, options) =>
+          fits(text)
+            ? Effect.succeed(Number(text))
+            : invalid(`expected ${placement.width} digits, found "${text}"`, text, options),
         encode: (value: number, options) =>
-          pipe(padNumber(value, placement.width), (raw) =>
-            Str.length(raw) === placement.width && isDigits(raw)
-              ? Effect.succeed(raw)
-              : invalid(`${value} does not fit in ${placement.width} digits`, raw, options)
-          )
+          Effect.gen(function* () {
+            const text = padNumber(value, placement.width)
+
+            return fits(text)
+              ? text
+              : yield* invalid(`${value} does not fit in ${placement.width} digits`, text, options)
+          })
       })
-    ),
-    place(placement, O.none())
+    )
   )
+
+  return place(codec, placement)
 }
 
 /**
@@ -158,21 +160,22 @@ export function digits(placement: Placement & { readonly schema?: S.Codec<number
  * @category constructors
  * @since 0.0.0
  */
-export const text = (placement: Placement): Field<string> =>
-  pipe(
-    exactly(placement.width),
+export const text = (placement: Placement): Field<string> => {
+  const codec = exactly(placement.width).pipe(
     S.decodeTo(
       S.String,
       SchemaTransformation.transformEffect({
-        decode: (raw: string) => Effect.succeed(Str.trimEnd(raw)),
+        decode: (padded: string) => Effect.succeed(Str.trimEnd(padded)),
         encode: (value: string, options) =>
           Str.length(value) > placement.width
             ? invalid(`"${value}" is longer than ${placement.width} characters`, value, options)
             : Effect.succeed(padText(value, placement.width))
       })
-    ),
-    place(placement, O.none())
+    )
   )
+
+  return place(codec, placement)
+}
 
 /**
  * Characters kept exactly as written, for values with their own fixed format
@@ -192,11 +195,11 @@ export const text = (placement: Placement): Field<string> =>
 export function raw(placement: Placement): Field<string>
 export function raw<T extends string>(placement: Placement & { readonly schema: S.Codec<T, string> }): Field<T>
 export function raw(placement: Placement & { readonly schema?: S.Codec<string, string> }): Field<string> {
-  return pipe(
-    exactly(placement.width),
-    S.decodeTo(placement.schema ?? S.String, SchemaTransformation.passthrough()),
-    place(placement, O.none())
+  const codec = exactly(placement.width).pipe(
+    S.decodeTo(placement.schema ?? S.String, SchemaTransformation.passthrough())
   )
+
+  return place(codec, placement)
 }
 
 /**
@@ -216,36 +219,43 @@ export function raw(placement: Placement & { readonly schema?: S.Codec<string, s
  */
 export const enumerated = <const L extends ReadonlyArray<string>>(
   placement: Placement & { readonly literals: S.Literals<L> }
-): Field<L[number]> =>
-  pipe(
-    S.String,
+): Field<L[number]> => {
+  const { literals } = placement.literals
+
+  const literalOf = (code: string): O.Option<L[number]> =>
+    O.gen(function* () {
+      const digitsText = yield* O.liftPredicate(code, isDigits)
+
+      return yield* A.get(literals, Number(digitsText))
+    })
+
+  const codeOf = (literal: L[number]): O.Option<string> =>
+    O.gen(function* () {
+      const index = yield* A.findFirstIndex(literals, (candidate) => candidate === literal)
+
+      return yield* O.liftPredicate(padNumber(index, placement.width), (code) => Str.length(code) === placement.width)
+    })
+
+  const codec = S.String.pipe(
     S.decodeTo(
       placement.literals,
       SchemaTransformation.transformEffect({
         decode: (code: string, options) =>
-          pipe(
-            O.liftPredicate(code, isDigits),
-            O.flatMap((digitsText) => A.get(placement.literals.literals, Number(digitsText))),
-            O.match({
-              onNone: () =>
-                invalid(`"${code}" is not one of ${A.length(placement.literals.literals)} codes`, code, options),
-              onSome: (literal) => Effect.succeed(literal)
-            })
-          ),
+          O.match(literalOf(code), {
+            onNone: () => invalid(`"${code}" is not one of ${A.length(literals)} codes`, code, options),
+            onSome: Effect.succeed
+          }),
         encode: (literal: L[number], options) =>
-          pipe(
-            A.findFirstIndex(placement.literals.literals, (candidate) => candidate === literal),
-            O.map((index) => padNumber(index, placement.width)),
-            O.filter((rawText) => Str.length(rawText) === placement.width),
-            O.match({
-              onNone: () => invalid(`"${literal}" has no code of ${placement.width} digits`, literal, options),
-              onSome: (rawText) => Effect.succeed(rawText)
-            })
-          )
+          O.match(codeOf(literal), {
+            onNone: () => invalid(`"${literal}" has no code of ${placement.width} digits`, literal, options),
+            onSome: Effect.succeed
+          })
       })
-    ),
-    place(placement, O.none())
+    )
   )
+
+  return place(codec, placement)
+}
 
 /**
  * A field the layout carries but the value does not: decoding skips it,
@@ -264,9 +274,10 @@ export const enumerated = <const L extends ReadonlyArray<string>>(
  */
 export const filler = (placement: Placement & { readonly value?: string | undefined }): Filler =>
   place(
+    exactly(placement.width),
     placement,
     O.some(O.getOrElse(O.fromNullishOr(placement.value), () => padNumber(0, placement.width)))
-  )(exactly(placement.width))
+  )
 
 /**
  * One entry of a layout: a named field that ends up in the decoded value, or a
@@ -348,12 +359,11 @@ const slice = (
   data: string,
   options: ParseOptions
 ): Effect.Effect<{ readonly [name: string]: string }, SchemaIssue.Issue> =>
-  Effect.map(
-    A.reduce(slots, Effect.succeed(emptyScan), (scanned: Effect.Effect<Scan, SchemaIssue.Issue>, slot) =>
-      Effect.flatMap(scanned, (scan) => step(data, options)(scan, slot))
-    ),
-    (scan) => R.fromEntries(scan.values)
-  )
+  Effect.gen(function* () {
+    const scan = yield* Effect.reduce(slots, () => emptyScan, step(data, options))
+
+    return R.fromEntries(scan.values)
+  })
 
 const join = (slots: ReadonlyArray<Slot>, values: { readonly [name: string]: string }): string =>
   A.join(
@@ -404,8 +414,7 @@ export function layout(entries: ReadonlyArray<Entry>): S.Top {
     )
   )
 
-  return pipe(
-    S.String,
+  return S.String.pipe(
     S.decodeTo(
       S.Struct(R.fromEntries(named)),
       SchemaTransformation.transformEffect({

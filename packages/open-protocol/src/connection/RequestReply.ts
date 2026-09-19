@@ -10,7 +10,7 @@
  *
  * @since 0.0.0
  */
-import { Deferred, Effect, Match, pipe, Predicate, Ref, Semaphore } from "effect"
+import { Deferred, Effect, Predicate, Ref, Semaphore } from "effect"
 import * as O from "effect/Option"
 import type { Duration } from "effect"
 import * as S from "effect/Schema"
@@ -84,23 +84,27 @@ const answerOf =
   (request: Mid.AnyRequestRevision, deviceId: DeviceId) =>
   (message: Message): Answer =>
     O.orElse(rejected(request.mid, message), () =>
-      Match.value(request.reply).pipe(
-        Match.tag("Accepted", (): Answer =>
-          Predicate.isTagged(message, "CommandAccepted") && message.mid === request.mid
-            ? O.some(Effect.succeed(message))
-            : O.none()
-        ),
-        Match.tag("NoReply", (): Answer => O.none()),
-        Match.orElse((reply) => dedicated(reply, deviceId, message))
-      )
+      Predicate.isTagged(request.reply, "Accepted")
+        ? Predicate.isTagged(message, "CommandAccepted") && message.mid === request.mid
+          ? O.some(Effect.succeed(message))
+          : O.none()
+        : Predicate.isTagged(request.reply, "NoReply")
+          ? O.none()
+          : dedicated(request.reply, deviceId, message)
     )
 
-const frameOf = <Rev extends Mid.AnyRequestRevision>(revision: Rev, payload: Mid.Payload<Rev>) =>
-  pipe(
-    revision.codec.makeEffect(payload),
-    Effect.mapError((issue) => new PayloadEncodeError({ mid: revision.mid, reason: `${issue}` })),
-    Effect.flatMap((value) => Effect.fromResult(Mid.encode(revision, value)))
-  )
+const frameOf = <Rev extends Mid.AnyRequestRevision>(
+  revision: Rev,
+  payload: Mid.Payload<Rev>
+): Effect.Effect<string, PayloadEncodeError> =>
+  Effect.gen(function* () {
+    const value = yield* Effect.mapError(
+      revision.codec.makeEffect(payload),
+      (issue) => new PayloadEncodeError({ mid: revision.mid, reason: `${issue}` })
+    )
+
+    return yield* Effect.fromResult(Mid.encode(revision, value))
+  })
 
 interface Pending {
   readonly answer: (message: Message) => Answer
@@ -158,20 +162,19 @@ export const make = Effect.fnUntraced(function* (options: {
 
   const exchange = (revision: Mid.AnyRequestRevision, frame: string, timeout: Duration.Duration) =>
     gate.withPermits(1)(
-      Effect.gen(function* () {
-        const deferred = yield* Deferred.make<unknown, ReplyError | ConnectionLost>()
-        yield* Ref.set(slot, O.some({ answer: answerOf(revision, options.deviceId), deferred }))
-        yield* Effect.addFinalizer(() => Ref.set(slot, O.none()))
-        yield* options.send(frame)
+      Effect.scoped(
+        Effect.gen(function* () {
+          const deferred = yield* Deferred.make<unknown, ReplyError | ConnectionLost>()
+          yield* Ref.set(slot, O.some({ answer: answerOf(revision, options.deviceId), deferred }))
+          yield* Effect.addFinalizer(() => Ref.set(slot, O.none()))
+          yield* options.send(frame)
 
-        return yield* pipe(
-          Deferred.await(deferred),
-          Effect.timeoutOrElse({
+          return yield* Effect.timeoutOrElse(Deferred.await(deferred), {
             duration: timeout,
             orElse: () => Effect.fail(new RequestTimeout({ mid: revision.mid }))
           })
-        )
-      }).pipe(Effect.scoped)
+        })
+      )
     )
 
   const request = <Rev extends Mid.AnyRequestRevision>(
@@ -179,34 +182,39 @@ export const make = Effect.fnUntraced(function* (options: {
     payload: Mid.Payload<Rev>,
     timeout?: Duration.Duration | undefined
   ): Effect.Effect<ReplyOf<Rev>, RequestError> =>
-    Effect.flatMap(frameOf(revision, payload), (frame) =>
-      Predicate.isTagged(revision.reply, "NoReply")
-        ? gate.withPermits(1)(Effect.asVoid(options.send(frame)))
-        : exchange(revision, frame, timeout ?? options.responseTimeout)
-    ).pipe(
+    Effect.gen(function* () {
+      const frame = yield* frameOf(revision, payload)
+
+      const reply = Predicate.isTagged(revision.reply, "NoReply")
+        ? yield* gate.withPermits(1)(options.send(frame))
+        : yield* exchange(revision, frame, timeout ?? options.responseTimeout)
+
       // SAFETY: `answerOf` resolves the deferred only with what `revision.reply`
       // declares: a value of the reply revision (checked by its schema or decoded
       // by its codec), the `0005` acknowledgement, or nothing for `NoReply`.
       // That is `ReplyOf<Rev>`; TypeScript cannot follow the runtime branch.
-      Effect.map((reply) => reply as ReplyOf<Rev>)
-    )
+      return reply as ReplyOf<Rev>
+    })
 
   const offer = (message: Message): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       const pending = yield* Ref.get(slot)
 
-      return yield* O.match(
-        O.flatMap(pending, (current) => O.map(current.answer(message), (reply) => [current, reply] as const)),
-        {
-          onNone: () => Effect.succeed(false),
-          onSome: ([current, reply]) =>
-            pipe(
-              Effect.exit(reply),
-              Effect.flatMap((exit) => Deferred.done(current.deferred, exit)),
-              Effect.as(true)
-            )
-        }
-      )
+      const answered = O.gen(function* () {
+        const current = yield* pending
+        const reply = yield* current.answer(message)
+
+        return { current, reply }
+      })
+
+      if (O.isNone(answered)) {
+        return false
+      }
+
+      const exit = yield* Effect.exit(answered.value.reply)
+      yield* Deferred.done(answered.value.current.deferred, exit)
+
+      return true
     })
 
   const interruptAll = (error: ConnectionLost): Effect.Effect<void> =>

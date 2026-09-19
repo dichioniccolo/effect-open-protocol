@@ -100,10 +100,14 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
   const fetch = (
     id: TighteningId
   ): Effect.Effect<O.Option<TighteningResult>, Exclude<RecoveryFailure, CommandRejected>> =>
-    pipe(
-      options.request(id),
-      Effect.map((old) => O.some(old.result)),
-      Effect.catchTag("CommandRejected", () => Effect.succeed(O.none<TighteningResult>()))
+    Effect.catchTag(
+      Effect.gen(function* () {
+        const old = yield* options.request(id)
+
+        return O.some(old.result)
+      }),
+      "CommandRejected",
+      () => Effect.succeed(O.none<TighteningResult>())
     )
 
   const fetchRange = (from: number, to: number): Effect.Effect<Recovery> =>

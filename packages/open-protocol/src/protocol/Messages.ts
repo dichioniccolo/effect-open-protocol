@@ -11,7 +11,7 @@
  *
  * @since 0.0.0
  */
-import { Effect, pipe, Predicate, Result } from "effect"
+import { Effect, Predicate, Result } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
@@ -441,9 +441,12 @@ export const LastResultMid = Mid.define({
           S.toType(LastResult),
           SchemaTransformation.transformEffect({
             decode: (body) =>
-              Mid.FrameContext.use(({ deviceId }) =>
-                Effect.map(resultOf(deviceId, body), (result) => new LastResult({ result }))
-              ),
+              Effect.gen(function* () {
+                const { deviceId } = yield* Mid.FrameContext
+                const result = yield* resultOf(deviceId, body)
+
+                return new LastResult({ result })
+              }),
             encode: (message) =>
               Effect.succeed({ ...fieldsOf(message.result), parameterSetChangedAt: message.result.timestamp })
           })
@@ -526,9 +529,12 @@ export const OldResultMid = Mid.define({
           S.toType(OldResult),
           SchemaTransformation.transformEffect({
             decode: (body) =>
-              Mid.FrameContext.use(({ deviceId }) =>
-                Effect.map(resultOf(deviceId, body), (result) => new OldResult({ result }))
-              ),
+              Effect.gen(function* () {
+                const { deviceId } = yield* Mid.FrameContext
+                const result = yield* resultOf(deviceId, body)
+
+                return new OldResult({ result })
+              }),
             encode: (message) => Effect.succeed(fieldsOf(message.result))
           })
         )
@@ -629,12 +635,15 @@ const unknownOf = (header: Header, data: string): Message =>
 const isMessage = S.is(Message)
 
 const fallBack = (header: Header, data: string, reason: string): Effect.Effect<Message> =>
-  Effect.as(
-    Effect.logWarning("frame kept as an unknown message").pipe(
-      Effect.annotateLogs({ mid: header.mid, revision: header.revision, reason })
-    ),
-    unknownOf(header, data)
-  )
+  Effect.gen(function* () {
+    yield* Effect.annotateLogs(Effect.logWarning("frame kept as an unknown message"), {
+      mid: header.mid,
+      revision: header.revision,
+      reason
+    })
+
+    return unknownOf(header, data)
+  })
 
 /**
  * Decodes one complete frame, terminator excluded.
@@ -669,24 +678,25 @@ export const decodeMessage = (
     const header = yield* Effect.fromResult(decodeHeader(frame))
     const data = Str.substring(headerLength, Str.length(frame))(frame)
 
-    return yield* O.match(
-      A.findFirst(builtIns, (definition) => definition.mid === header.mid),
-      {
-        onNone: () => Effect.succeed(unknownOf(header, data)),
-        onSome: (definition) =>
-          O.match(definition.lookup(header.revision), {
-            onNone: () => fallBack(header, data, `revision ${header.revision} is not defined`),
-            onSome: (revision) =>
-              pipe(
-                Mid.decode(revision, data, deviceId),
-                Effect.flatMap((value) =>
-                  isMessage(value) ? Effect.succeed(value) : fallBack(header, data, "not a modelled message")
-                ),
-                Effect.catchTag("PayloadDecodeError", (error) => fallBack(header, data, error.reason))
-              )
-          })
-      }
-    )
+    const definition = A.findFirst(builtIns, (candidate) => candidate.mid === header.mid)
+
+    if (O.isNone(definition)) {
+      return unknownOf(header, data)
+    }
+
+    const revision = definition.value.lookup(header.revision)
+
+    if (O.isNone(revision)) {
+      return yield* fallBack(header, data, `revision ${header.revision} is not defined`)
+    }
+
+    const decoded = yield* Effect.result(Mid.decode(revision.value, data, deviceId))
+
+    if (Result.isFailure(decoded)) {
+      return yield* fallBack(header, data, decoded.failure.reason)
+    }
+
+    return isMessage(decoded.success) ? decoded.success : yield* fallBack(header, data, "not a modelled message")
   })
 
 const revisionFor = (message: Exclude<Message, UnknownMessage>): O.Option<Mid.AnyRevision> =>
@@ -732,10 +742,13 @@ export const encodeMessage = (message: Message): string =>
       message.data +
       terminator
     : Result.getOrThrowWith(
-        pipe(
-          revisionFor(message),
-          Result.fromOption(() => new PayloadEncodeError({ mid: 0, reason: `${message._tag} has no definition` })),
-          Result.flatMap((revision) => Mid.encode(revision, message))
-        ),
+        Result.gen(function* () {
+          const revision = yield* Result.fromOption(
+            revisionFor(message),
+            () => new PayloadEncodeError({ mid: 0, reason: `${message._tag} has no definition` })
+          )
+
+          return yield* Mid.encode(revision, message)
+        }),
         (error) => error
       )
