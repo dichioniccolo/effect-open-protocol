@@ -104,22 +104,25 @@ describe("ControllerSimulator", () => {
   )
 
   it.effect("refuses a MID it does not know and a revision it does not support", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* ControllerSimulator.make({ endpoint })
-        const network = yield* InMemoryNetwork
-        const connection = yield* network.connect(endpoint)
+    Effect.provide(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* ControllerSimulator.make({ endpoint })
+          const network = yield* InMemoryNetwork
+          const connection = yield* network.connect(endpoint)
 
-        const replies = yield* exchange(connection, [
-          new UnknownMessage({ mid: 900, revision: 1, data: "" }),
-          new UnknownMessage({ mid: 9999, revision: 2, data: "" })
-        ])
+          const replies = yield* exchange(connection, [
+            new UnknownMessage({ mid: 900, revision: 1, data: "" }),
+            new UnknownMessage({ mid: 9999, revision: 2, data: "" })
+          ])
 
-        expect(replies).toEqual([
-          new CommandError({ mid: 900, code: ControllerBehaviour.refusalCodes.unknownMid }),
-          new CommandError({ mid: 9999, code: ControllerBehaviour.refusalCodes.unsupportedRevision })
-        ])
-      })
-    ).pipe(Effect.provide(layerSimulated))
+          expect(replies).toEqual([
+            new CommandError({ mid: 900, code: ControllerBehaviour.refusalCodes.unknownMid }),
+            new CommandError({ mid: 9999, code: ControllerBehaviour.refusalCodes.unsupportedRevision })
+          ])
+        })
+      ),
+      layerSimulated
+    )
   )
 })

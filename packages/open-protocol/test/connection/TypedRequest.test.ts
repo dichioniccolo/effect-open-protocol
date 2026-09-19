@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest"
-import { Effect, pipe, Predicate, Result, Stream, SubscriptionRef } from "effect"
+import { Effect, Predicate, Result, Stream, SubscriptionRef } from "effect"
 import * as O from "effect/Option"
 import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
@@ -23,15 +23,16 @@ import { Endpoint } from "../../src/transport/Transport.ts"
 
 const endpoint = new Endpoint({ host: "simulator", port: 4545 })
 
-const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.scoped(effect).pipe(Effect.provide(layerSimulated))
+const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.provide(Effect.scoped(effect), layerSimulated)
 
 const awaitReady = (state: SubscriptionRef.SubscriptionRef<ConnectionState>) =>
-  pipe(
-    SubscriptionRef.changes(state),
-    Stream.filter((current) => Predicate.isTagged(current, "Ready")),
-    Stream.runHead,
-    Effect.flatMap(O.match({ onNone: () => Effect.never, onSome: Effect.succeed }))
-  )
+  Effect.gen(function* () {
+    const ready = yield* Stream.runHead(
+      Stream.filter(SubscriptionRef.changes(state), (current) => Predicate.isTagged(current, "Ready"))
+    )
+
+    return yield* O.match(ready, { onNone: () => Effect.never, onSome: Effect.succeed })
+  })
 
 const connected = Effect.gen(function* () {
   const simulator = yield* ControllerSimulator.make({ endpoint })

@@ -8,7 +8,7 @@
  *
  * @since 0.0.0
  */
-import { Effect, pipe } from "effect"
+import { Effect } from "effect"
 import { CommunicationStartMid, SubscribeResultsMid } from "../protocol/Messages.ts"
 import { ConnectionLost } from "../transport/Transport.ts"
 import { HandshakeRejected } from "./ConnectionError.ts"
@@ -28,17 +28,17 @@ const lost = (step: string, tag: string): Effect.Effect<never, ConnectionLost> =
  * @since 0.0.0
  */
 export const startCommunication = (session: Session): Effect.Effect<string, ConnectionLost | HandshakeRejected> =>
-  pipe(
-    session.replies.request(CommunicationStartMid.rev(1), {}),
-    Effect.map((accepted) => accepted.controllerName),
-    Effect.catchTags({
+  Effect.gen(function* () {
+    const accepted = yield* Effect.catchTags(session.replies.request(CommunicationStartMid.rev(1), {}), {
       CommandRejected: (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code })),
       RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })),
       UnexpectedRevision: (error) => lost("handshake", error._tag),
       PayloadDecodeError: (error) => lost("handshake", error._tag),
       PayloadEncodeError: (error) => lost("handshake", error._tag)
     })
-  )
+
+    return accepted.controllerName
+  })
 
 /**
  * Subscribes to tightening results with MID 0060.
@@ -50,10 +50,8 @@ export const startCommunication = (session: Session): Effect.Effect<string, Conn
  * @since 0.0.0
  */
 export const subscribeResults = (session: Session): Effect.Effect<void, ConnectionLost> =>
-  pipe(
-    session.replies.request(SubscribeResultsMid.rev(1), {}),
-    Effect.asVoid,
-    Effect.catchTags({
+  Effect.gen(function* () {
+    yield* Effect.catchTags(session.replies.request(SubscribeResultsMid.rev(1), {}), {
       CommandRejected: (rejected) =>
         Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` })),
       RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })),
@@ -61,4 +59,4 @@ export const subscribeResults = (session: Session): Effect.Effect<void, Connecti
       PayloadDecodeError: (error) => lost("subscribe", error._tag),
       PayloadEncodeError: (error) => lost("subscribe", error._tag)
     })
-  )
+  })

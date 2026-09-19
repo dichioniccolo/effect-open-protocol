@@ -83,25 +83,25 @@ export const readLoop = (
   deviceId: DeviceId,
   onUnsolicited: (message: Message) => Effect.Effect<void>
 ): Effect.Effect<never, ConnectionLost> =>
-  frames(session.duplex.incoming).pipe(
-    Stream.runForEach(
-      Effect.fnUntraced(function* (frame: string) {
-        const message = yield* decodeMessage(frame, deviceId)
-        const consumed = yield* session.replies.offer(message)
+  Effect.gen(function* () {
+    const onFrame = Effect.fnUntraced(function* (frame: string) {
+      const message = yield* decodeMessage(frame, deviceId)
+      const consumed = yield* session.replies.offer(message)
 
-        if (!consumed) {
-          yield* onUnsolicited(message)
-        }
-      })
-    ),
-    Effect.catchTags({
+      if (!consumed) {
+        yield* onUnsolicited(message)
+      }
+    })
+
+    yield* Effect.catchTags(Stream.runForEach(frames(session.duplex.incoming), onFrame), {
       MalformedHeader: (error) => protocolLost(error._tag),
       InvalidLength: (error) => protocolLost(error._tag),
       MissingTerminator: (error) => protocolLost(error._tag),
       UnsupportedFeature: (error) => protocolLost(error._tag)
-    }),
-    Effect.andThen(Effect.fail(new ConnectionLost({ reason: "the controller closed the connection" })))
-  )
+    })
+
+    return yield* new ConnectionLost({ reason: "the controller closed the connection" })
+  })
 
 /**
  * Sends MID 9999 whenever the link has been idle for `interval`, and fails the
@@ -115,25 +115,25 @@ export const keepAliveLoop = (
   lastSent: Ref.Ref<number>,
   interval: Duration.Duration
 ): Effect.Effect<never, ConnectionLost> =>
-  Effect.gen(function* () {
-    yield* Effect.sleep(interval)
+  Effect.forever(
+    Effect.gen(function* () {
+      yield* Effect.sleep(interval)
 
-    const now = yield* Effect.clockWith((clock) => clock.currentTimeMillis)
-    const sent = yield* Ref.get(lastSent)
+      const now = yield* Effect.clockWith((clock) => clock.currentTimeMillis)
+      const sent = yield* Ref.get(lastSent)
 
-    // The link spoke recently enough on its own; a keep-alive would be noise.
-    if (Duration.toMillis(interval) > now - sent) {
-      return
-    }
+      // The link spoke recently enough on its own; a keep-alive would be noise.
+      if (Duration.toMillis(interval) > now - sent) {
+        return
+      }
 
-    yield* session.replies.request(KeepAliveMid.rev(1), {}).pipe(
-      Effect.andThen(Ref.set(lastSent, now)),
-      Effect.catchTags({
+      yield* Effect.catchTags(session.replies.request(KeepAliveMid.rev(1), {}), {
         RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" })),
         CommandRejected: () => Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" })),
         UnexpectedRevision: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` })),
         PayloadDecodeError: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` })),
         PayloadEncodeError: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` }))
       })
-    )
-  }).pipe(Effect.forever)
+      yield* Ref.set(lastSent, now)
+    })
+  )

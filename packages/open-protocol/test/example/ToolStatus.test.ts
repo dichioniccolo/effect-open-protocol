@@ -7,7 +7,7 @@
  * example; they are not taken from the Open Protocol specification.
  */
 import { describe, expect, expectTypeOf, it } from "@effect/vitest"
-import { Effect, pipe, Predicate, Queue, Stream, SubscriptionRef } from "effect"
+import { Effect, Predicate, Queue, Stream, SubscriptionRef } from "effect"
 import * as O from "effect/Option"
 import * as Str from "effect/String"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
@@ -96,29 +96,31 @@ const controller = Effect.gen(function* () {
     Effect.gen(function* () {
       const server = yield* Queue.take(accepted)
 
-      yield* frames(server.incoming).pipe(
-        Stream.runForEach((frame) =>
-          Effect.flatMap(
-            Effect.orDie(answer(frame)),
-            O.match({ onNone: () => Effect.void, onSome: (reply) => server.send(encoder.encode(reply)) })
-          )
-        )
+      yield* Stream.runForEach(frames(server.incoming), (frame) =>
+        Effect.gen(function* () {
+          const reply = yield* Effect.orDie(answer(frame))
+
+          if (O.isSome(reply)) {
+            yield* server.send(encoder.encode(reply.value))
+          }
+        })
       )
     })
   )
 })
 
 const awaitReady = (state: SubscriptionRef.SubscriptionRef<ConnectionState>) =>
-  pipe(
-    SubscriptionRef.changes(state),
-    Stream.filter((current) => Predicate.isTagged(current, "Ready")),
-    Stream.runHead,
-    Effect.flatMap(O.match({ onNone: () => Effect.never, onSome: Effect.succeed }))
-  )
+  Effect.gen(function* () {
+    const ready = yield* Stream.runHead(
+      Stream.filter(SubscriptionRef.changes(state), (current) => Predicate.isTagged(current, "Ready"))
+    )
+
+    return yield* O.match(ready, { onNone: () => Effect.never, onSome: Effect.succeed })
+  })
 
 const dataOf = (frame: string) => Str.substring(headerLength, Str.length(frame) - 1)(frame)
 
-const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.scoped(effect).pipe(Effect.provide(layerComplete))
+const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.provide(Effect.scoped(effect), layerComplete)
 
 describe("a user-defined MID", () => {
   it("has one exact type per revision, and so does its reply", () => {

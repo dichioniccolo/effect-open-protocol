@@ -10,7 +10,7 @@
  *
  * @since 0.0.0
  */
-import { Data, Effect, pipe, Predicate, Result } from "effect"
+import { Data, Effect, Predicate, Result } from "effect"
 import * as A from "effect/Array"
 import * as Context from "effect/Context"
 import * as O from "effect/Option"
@@ -552,25 +552,23 @@ export const encode = <Rev extends AnyRevision>(
   revision: Rev,
   value: Type<Rev>
 ): Result.Result<string, PayloadEncodeError> =>
-  pipe(
-    S.encodeResult(revision.codec)(value),
-    Result.mapError((error) => new PayloadEncodeError({ mid: revision.mid, reason: error.message })),
-    Result.map(
-      (data) =>
-        encodeHeader(
-          new Header({
-            length: headerLength + Str.length(data),
-            mid: revision.mid,
-            revision: revision.revision,
-            noAck: false,
-            stationId: 1,
-            spindleId: 1
-          })
-        ) +
-        data +
-        terminator
+  Result.gen(function* () {
+    const data = yield* Result.mapError(
+      S.encodeResult(revision.codec)(value),
+      (error) => new PayloadEncodeError({ mid: revision.mid, reason: error.message })
     )
-  )
+
+    const header = new Header({
+      length: headerLength + Str.length(data),
+      mid: revision.mid,
+      revision: revision.revision,
+      noAck: false,
+      stationId: 1,
+      spindleId: 1
+    })
+
+    return encodeHeader(header) + data + terminator
+  })
 
 /**
  * Reads the data field of a frame as a value of a revision.
@@ -594,8 +592,12 @@ export const decode = <Rev extends AnyRevision>(
   data: string,
   deviceId: DeviceId
 ): Effect.Effect<Type<Rev>, PayloadDecodeError> =>
-  pipe(
-    S.decodeEffect(revision.codec)(data),
-    Effect.provideService(FrameContext, { deviceId }),
-    Effect.mapError((error) => new PayloadDecodeError({ mid: revision.mid, reason: error.message }))
-  )
+  Effect.gen(function* () {
+    const decoded = yield* Effect.result(
+      Effect.provideService(S.decodeEffect(revision.codec)(data), FrameContext, { deviceId })
+    )
+
+    return Result.isSuccess(decoded)
+      ? decoded.success
+      : yield* new PayloadDecodeError({ mid: revision.mid, reason: decoded.failure.message })
+  })
