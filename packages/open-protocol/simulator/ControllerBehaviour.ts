@@ -104,6 +104,14 @@ export const resultFor = (id: number): TighteningResult =>
  * handle with: `99` for a MID it does not know, `97` for a revision of a known
  * MID it does not support.
  *
+ * **Example** (The code a MID nobody models gets)
+ *
+ * ```ts
+ * import { refusalCodes } from "effect-open-protocol/simulator/ControllerBehaviour.ts"
+ *
+ * console.log(refusalCodes.unknownMid) // 99
+ * ```
+ *
  * @category constants
  * @since 0.0.0
  */

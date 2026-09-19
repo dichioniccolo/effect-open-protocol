@@ -34,8 +34,8 @@ follow the instructions in goals/typed-mid-definitions/GOAL.md
 
 ## Current Phase
 
-P4 in progress: the example custom MID, README sections, and the JSDoc
-rubric pass. P0–P3 are done; see PLAN.md §What Landed So Far.
+P5 PR to mergeable: in progress. P0–P4 are done; see PLAN.md §What Landed So
+Far.
 
 ## Latest Evidence
 

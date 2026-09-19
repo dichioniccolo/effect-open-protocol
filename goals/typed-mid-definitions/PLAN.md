@@ -12,8 +12,8 @@ Status: `in-progress`
 | P1 First slice: 0064 → 0065 | complete | Definition module (MID number, per-revision Schemas, reply map), the codec for definitions, and typed `request` in `RequestReply` and `DeviceConnection`, all proven on 0064 → 0065. `GapRecovery` switches to the typed call. The old path still serves the other MIDs during this phase. | `request(RequestOldResult.rev(1), { tighteningId })` returns `OldResult` revision 1, pinned by `expectTypeOf`; the GapRecovery tests are green. |
 | P2 Migrate built-ins | complete | Every other built-in becomes a definition. The handshake, keep-alive and `ResultRecovery` use the typed call. `wireFormat`, `decoderFor`, `dataOf`, `midOf`, `revisionOf`, the closed `Mid` literals, `request(message, mid, direct?)` and `expectReply` are removed. `packages/cli` and `apps/ui` are fixed where the break forces it. | No old-path code remains (`rg "wireFormat\|expectReply\|revisionOf" packages` is empty); the whole suite is green. |
 | P3 Decode fallback and simulator | complete | Body decode failures and undefined revisions become `UnknownMessage` plus a warning, and the session survives. A pending dedicated reply at an undefined revision gets `UnexpectedRevision`. The simulator answers `0004` to MIDs it doesn't model. | A test for each path; header errors still end the session (existing tests). |
-| P4 Example MID and docs | in-progress | One example custom MID (at least two revisions and a declared reply) with codec round trips and a typed request over the in-memory transport. README sections for defining and requesting a MID. JSDoc rubric pass on every new export. | Full verification matrix in `SPEC.md` green. |
-| P5 PR to mergeable | pending | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
+| P4 Example MID and docs | complete | One example custom MID (at least two revisions and a declared reply) with codec round trips and a typed request over the in-memory transport. README sections for defining and requesting a MID. JSDoc rubric pass on every new export. | Full verification matrix in `SPEC.md` green. |
+| P5 PR to mergeable | in-progress | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
 | P6 Close | pending | Write the closeout reflection, flip packet state, and resume `typed-subscriptions`. | Packet status and evidence are updated; a closeout reflection exists; `goals/typed-subscriptions` is set `active`. |
 
 <!--
@@ -44,6 +44,14 @@ own manifest.
   a known MID at a revision it does not define with code 97. Both codes are
   "unknown MID" and "MID revision unsupported" in the specification's error
   table.
+- **The example MID is illustrative** (MIDs 9100/9101, `ToolStatus`), as the
+  SPEC allows: the specification PDF could not be read in this environment
+  (no PDF text tooling), so no real layout was confirmed. It is labelled as
+  such in the test and in the README.
+- **JSDoc:** all 47 Examples in the touched modules were extracted and
+  type-checked against the package.
+- **One transient `next build` crash** (SIGILL inside Bun) went away on
+  retry; the two runs after it built cleanly.
 - **Built-in definitions are named `<Message>Mid`**
   (`RequestOldResultMid.rev(1)`), because the message classes keep their
   names.

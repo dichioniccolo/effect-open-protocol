@@ -228,6 +228,15 @@ export class UnknownMessage extends S.TaggedClass<UnknownMessage>()(
 /**
  * Every message this library can decode.
  *
+ * **Example** (Guarding a decoded value)
+ *
+ * ```ts
+ * import * as S from "effect/Schema"
+ * import { KeepAlive, Message } from "effect-open-protocol"
+ *
+ * console.log(S.is(Message)(new KeepAlive())) // true
+ * ```
+ *
  * @category models
  * @since 0.0.0
  */
@@ -258,6 +267,17 @@ const mid = Field.digits({ width: 4 })
 /**
  * MID 0002 revision 1: the controller accepted the session.
  *
+ * **Example** (Reading the controller's answer to the handshake)
+ *
+ * ```ts
+ * import * as Str from "effect/String"
+ * import { CommunicationStartAcceptedMid, DeviceId, Mid } from "effect-open-protocol"
+ *
+ * const data = "010001" + "0201" + "03" + Str.padEnd(25, " ")("Airbag1")
+ *
+ * const accepted = Mid.decode(CommunicationStartAcceptedMid.rev(1), data, DeviceId.make("tool-1"))
+ * ```
+ *
  * @category definitions
  * @since 0.0.0
  */
@@ -279,6 +299,17 @@ export const CommunicationStartAcceptedMid = Mid.define({
 /**
  * MID 0001 revision 1: opens the session, answered by MID 0002.
  *
+ * **Example** (Opening a session by hand)
+ *
+ * ```ts
+ * import { DeviceConnection, CommunicationStartMid } from "effect-open-protocol"
+ *
+ * declare const connection: DeviceConnection.DeviceConnectionService
+ *
+ * // The reply is typed as `CommunicationStartAccepted`.
+ * const accepted = connection.request(CommunicationStartMid.rev(1), {})
+ * ```
+ *
  * @category definitions
  * @since 0.0.0
  */
@@ -292,6 +323,16 @@ export const CommunicationStartMid = Mid.request({
 /**
  * MID 0003 revision 1: closes the session.
  *
+ * **Example** (Asking the controller to close the session)
+ *
+ * ```ts
+ * import { DeviceConnection, CommunicationStopMid } from "effect-open-protocol"
+ *
+ * declare const connection: DeviceConnection.DeviceConnectionService
+ *
+ * const stopped = connection.request(CommunicationStopMid.rev(1), {})
+ * ```
+ *
  * @category definitions
  * @since 0.0.0
  */
@@ -304,6 +345,14 @@ export const CommunicationStopMid = Mid.request({
 
 /**
  * MID 0004 revision 1: the controller rejected a command.
+ *
+ * **Example** (Encoding a rejection)
+ *
+ * ```ts
+ * import { CommandError, CommandErrorMid, Mid } from "effect-open-protocol"
+ *
+ * const frame = Mid.encode(CommandErrorMid.rev(1), new CommandError({ mid: 64, code: 15 }))
+ * ```
  *
  * @category definitions
  * @since 0.0.0
@@ -325,6 +374,14 @@ export const CommandErrorMid = Mid.define({
 /**
  * MID 0005 revision 1: the controller accepted a command.
  *
+ * **Example** (Encoding an acknowledgement)
+ *
+ * ```ts
+ * import { CommandAccepted, CommandAcceptedMid, Mid } from "effect-open-protocol"
+ *
+ * const frame = Mid.encode(CommandAcceptedMid.rev(1), new CommandAccepted({ mid: 60 }))
+ * ```
+ *
  * @category definitions
  * @since 0.0.0
  */
@@ -336,6 +393,17 @@ export const CommandAcceptedMid = Mid.define({
 
 /**
  * MID 0060 revision 1: subscribes to tightening results.
+ *
+ * **Example** (Subscribing by hand)
+ *
+ * ```ts
+ * import { DeviceConnection, SubscribeResultsMid } from "effect-open-protocol"
+ *
+ * declare const connection: DeviceConnection.DeviceConnectionService
+ *
+ * // The reply is the 0005 that names MID 60.
+ * const accepted = connection.request(SubscribeResultsMid.rev(1), {})
+ * ```
  *
  * @category definitions
  * @since 0.0.0
@@ -349,6 +417,16 @@ export const SubscribeResultsMid = Mid.request({
 
 /**
  * MID 0061 revision 1: a pushed tightening result.
+ *
+ * **Example** (Reading a pushed result)
+ *
+ * ```ts
+ * import { DeviceId, LastResultMid, Mid } from "effect-open-protocol"
+ *
+ * declare const data: string
+ *
+ * const pushed = Mid.decode(LastResultMid.rev(1), data, DeviceId.make("tool-1"))
+ * ```
  *
  * @category definitions
  * @since 0.0.0
@@ -378,6 +456,17 @@ export const LastResultMid = Mid.define({
 /**
  * MID 0062 revision 1: acknowledges a pushed result; nothing answers it.
  *
+ * **Example** (Acknowledging a result)
+ *
+ * ```ts
+ * import { AcknowledgeResultMid, DeviceConnection } from "effect-open-protocol"
+ *
+ * declare const connection: DeviceConnection.DeviceConnectionService
+ *
+ * // Nothing answers MID 0062, so this returns once the frame is sent.
+ * const acknowledged = connection.request(AcknowledgeResultMid.rev(1), {})
+ * ```
+ *
  * @category definitions
  * @since 0.0.0
  */
@@ -391,6 +480,16 @@ export const AcknowledgeResultMid = Mid.request({
 /**
  * MID 0063 revision 1: cancels the result subscription.
  *
+ * **Example** (Unsubscribing by hand)
+ *
+ * ```ts
+ * import { DeviceConnection, UnsubscribeResultsMid } from "effect-open-protocol"
+ *
+ * declare const connection: DeviceConnection.DeviceConnectionService
+ *
+ * const accepted = connection.request(UnsubscribeResultsMid.rev(1), {})
+ * ```
+ *
  * @category definitions
  * @since 0.0.0
  */
@@ -403,6 +502,16 @@ export const UnsubscribeResultsMid = Mid.request({
 
 /**
  * MID 0065 revision 1: a stored result returned by the controller.
+ *
+ * **Example** (Reading a stored result)
+ *
+ * ```ts
+ * import { DeviceId, Mid, OldResultMid } from "effect-open-protocol"
+ *
+ * declare const data: string
+ *
+ * const stored = Mid.decode(OldResultMid.rev(1), data, DeviceId.make("tool-1"))
+ * ```
  *
  * @category definitions
  * @since 0.0.0
@@ -431,6 +540,17 @@ export const OldResultMid = Mid.define({
 /**
  * MID 0064 revision 1: asks for a stored result, answered by MID 0065.
  *
+ * **Example** (Fetching the latest stored result)
+ *
+ * ```ts
+ * import { DeviceConnection, RequestOldResultMid, TighteningId } from "effect-open-protocol"
+ *
+ * declare const connection: DeviceConnection.DeviceConnectionService
+ *
+ * // The reply is typed as `OldResult`.
+ * const latest = connection.request(RequestOldResultMid.rev(1), { tighteningId: TighteningId.make(0) })
+ * ```
+ *
  * @category definitions
  * @since 0.0.0
  */
@@ -452,6 +572,17 @@ const keepAliveEcho = Mid.define({
 /**
  * MID 9999 revision 1: keep-alive, mirrored by the controller.
  *
+ * **Example** (Sending a keep-alive by hand)
+ *
+ * ```ts
+ * import { DeviceConnection, KeepAliveMid } from "effect-open-protocol"
+ *
+ * declare const connection: DeviceConnection.DeviceConnectionService
+ *
+ * // The controller mirrors it; the reply is typed as `KeepAlive`.
+ * const mirrored = connection.request(KeepAliveMid.rev(1), {})
+ * ```
+ *
  * @category definitions
  * @since 0.0.0
  */
@@ -464,6 +595,15 @@ export const KeepAliveMid = Mid.request({
 
 /**
  * The definition of every message this library models, one per MID.
+ *
+ * **Example** (Listing the MIDs the library speaks)
+ *
+ * ```ts
+ * import * as A from "effect/Array"
+ * import { builtIns } from "effect-open-protocol"
+ *
+ * console.log(A.map(builtIns, (definition) => definition.mid))
+ * ```
  *
  * @category definitions
  * @since 0.0.0
