@@ -565,6 +565,9 @@ export interface SubscriptionDefinition<Tag extends string, E extends Entries> {
   readonly rev: <Number extends RevisionOf<E>>(
     revision: Number
   ) => Subscription<Revision<Tag, Number, CodecOf<Tag, Number, E[Number]>>>
+  readonly lookup: (
+    revision: number
+  ) => O.Option<Subscription<Revision<string, number, S.Codec<ValueOf<Tag, E>, string>>>>
 }
 
 // A control MID is sent as `{}`: one whose value needs a field is refused here.
@@ -619,7 +622,7 @@ export function subscription<
 export function subscription(
   definition: Untyped<Revision<string, number, S.Top>>,
   channels: { readonly [revision: number]: Channels }
-): Omit<Untyped<Subscription<Revision<string, number, S.Top>>>, "lookup"> {
+): Untyped<Subscription<Revision<string, number, S.Top>>> {
   return indexed(
     definition.tag,
     definition.mid,

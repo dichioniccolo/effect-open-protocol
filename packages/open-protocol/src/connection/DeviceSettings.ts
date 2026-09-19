@@ -37,6 +37,8 @@ export interface DeviceConfig {
   readonly handlerRetry?: Schedule.Schedule<unknown> | undefined
   /** How many results may wait for a slow handler. Defaults to 16. */
   readonly resultBuffer?: number | undefined
+  /** How many pushed values a subscription holds for a slow consumer. Defaults to 16. */
+  readonly subscriptionBuffer?: number | undefined
   /** How many identifiers the duplicate detector remembers. Defaults to 1000. */
   readonly dedupCapacity?: number | undefined
   /** Upper bound on results fetched after an outage. Defaults to 100. */
@@ -111,6 +113,7 @@ export const defaultSettings = {
   recoveryTimeout: Duration.seconds(1),
   handlerRetry: defaultHandlerRetry,
   resultBuffer: 16,
+  subscriptionBuffer: 16,
   dedupCapacity: 1000,
   recoveryLimit: 100
 }
@@ -159,6 +162,7 @@ export const resolveSettings = (config: DeviceConfig): DeviceSettings => ({
   recoveryTimeout: config.recoveryTimeout ?? defaultSettings.recoveryTimeout,
   handlerRetry: config.handlerRetry ?? defaultSettings.handlerRetry,
   resultBuffer: config.resultBuffer ?? defaultSettings.resultBuffer,
+  subscriptionBuffer: config.subscriptionBuffer ?? defaultSettings.subscriptionBuffer,
   dedupCapacity: config.dedupCapacity ?? defaultSettings.dedupCapacity,
   recoveryLimit: config.recoveryLimit ?? defaultSettings.recoveryLimit
 })

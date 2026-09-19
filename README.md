@@ -435,14 +435,16 @@ const watch = Effect.gen(function* () {
   sent again after each reconnect, and the same stream keeps emitting. It ends
   when the consumer stops, which sends the unsubscribe MID, or when the
   connection closes.
-- **Errors.** The stream fails with `CommandRejected` when the controller
-  refuses the subscription on a live session, and with `AlreadySubscribed`
-  when the data MID already has a consumer on the connection. A refusal while
-  restoring subscriptions after a reconnect costs the session, as a refused
-  MID 0060 always has, and the connection reconnects.
+- **Errors.** The stream fails with `CommandRejected` whenever the controller
+  refuses the subscription, on a live session or while restoring it after a
+  reconnect; the subscription is forgotten and the session carries on. It
+  fails with `AlreadySubscribed` when the data MID already has a consumer on
+  the connection. The connection's own result subscription keeps the old
+  policy: a refused MID 0060 costs the session, and the next one subscribes
+  again.
 - **Routing.** A frame goes to the request waiting for a reply first, then to
   the subscription of its MID. Pushed values wait in a bounded queue per
-  subscription (`resultBuffer`, 16 by default); a slow consumer slows the
+  subscription (`subscriptionBuffer`, 16 by default); a slow consumer slows the
   reader.
 
 The full example runs as tests against a scripted controller on the in-memory
