@@ -1,18 +1,18 @@
 /**
  * The exchange that turns an open socket into a usable session.
  *
- * Both steps are pure protocol conversation: they say what is sent, what
+ * The handshake is pure protocol conversation: it says what is sent, what
  * answer counts, and what a refusal means for the session. The supervisor next
- * door decides when they run and what to do when they fail, so neither file
- * has to be read to understand the other.
+ * door decides when it runs and what to do when it fails, so neither file has
+ * to be read to understand the other.
  *
  * @since 0.0.0
  */
 import { Effect } from "effect"
-import { CommunicationStartMid, LastResults } from "../protocol/Messages.ts"
+import { CommunicationStartMid } from "../protocol/Messages.ts"
 import type { ConnectionLost } from "../transport/Transport.ts"
 import { HandshakeRejected } from "./ConnectionError.ts"
-import { lostOn, orLost } from "./RequestReply.ts"
+import { lostOn } from "./RequestReply.ts"
 import type { Session } from "./Session.ts"
 
 /**
@@ -34,15 +34,3 @@ export const startCommunication = (session: Session): Effect.Effect<string, Conn
 
     return accepted.controllerName
   })
-
-/**
- * Subscribes to tightening results with MID 0060.
- *
- * A session that cannot subscribe delivers nothing, so either failure ends the
- * attempt and the supervisor reconnects.
- *
- * @category handshake
- * @since 0.0.0
- */
-export const subscribeResults = (session: Session): Effect.Effect<void, ConnectionLost> =>
-  Effect.asVoid(orLost("subscribe")(session.replies.request(LastResults.rev(1).subscribe, {})))

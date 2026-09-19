@@ -4,7 +4,7 @@
  * reconnect. The definitions are in `ToolStatus.ts`.
  */
 import { describe, expect, expectTypeOf, it } from "@effect/vitest"
-import { Duration, Effect, Exit, Fiber, Queue, Schedule, Stream } from "effect"
+import { Duration, Effect, Exit, Fiber, Queue, Ref, Schedule, Stream } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as R from "effect/Record"
@@ -22,18 +22,34 @@ type StatusPush = DeviceConnection.Pushed<Mid.Type<ReturnType<typeof ToolStatusS
 
 const ackTimeout = Duration.seconds(2)
 
-/** A controller that accepts MID 9102 (or refuses it with code 99) and MID 9104; MID 9103 gets no answer. */
-const pushingController = (options: { readonly refuse: boolean }) =>
+/**
+ * A controller that accepts MID 9104 and MID 9102, refusing the latter with
+ * code 99 from its `refuseFrom`-th time on; MID 9103 gets no answer.
+ */
+const pushingController = (options: { readonly refuseFrom: number }) =>
   Effect.gen(function* () {
+    const subscribes = yield* Ref.make(0)
+
     const replies: R.ReadonlyRecord<string, Message> = {
       3: new CommandAccepted({ mid: 3 }),
-      9102: options.refuse ? new CommandError({ mid: 9102, code: 99 }) : new CommandAccepted({ mid: 9102 }),
       9104: new CommandAccepted({ mid: 9104 }),
       9999: new KeepAlive()
     }
 
     const scripted = yield* scriptedController((header) =>
-      Effect.succeed(O.map(R.get(replies, `${header.mid}`), encodeMessage))
+      header.mid === 9102
+        ? Effect.map(
+            Ref.updateAndGet(subscribes, (count) => count + 1),
+            (count) =>
+              O.some(
+                encodeMessage(
+                  count >= options.refuseFrom
+                    ? new CommandError({ mid: 9102, code: 99 })
+                    : new CommandAccepted({ mid: 9102 })
+                )
+              )
+          )
+        : Effect.succeed(O.map(R.get(replies, `${header.mid}`), encodeMessage))
     )
 
     /** Pushes `frame`, and pushes it again each time `ackTimeout` passes without MID 9103. */
@@ -55,7 +71,7 @@ const statusFrame = (toolId: number, temperature: number, motorHours: number) =>
     Effect.fromResult(Mid.encode(ToolStatus.rev(2), ToolStatus.rev(2).codec.make({ toolId, temperature, motorHours })))
   )
 
-const subscribed = (options: { readonly refuse: boolean }) =>
+const subscribed = (options: { readonly refuseFrom: number }) =>
   Effect.gen(function* () {
     const controller = yield* pushingController(options)
 
@@ -108,7 +124,7 @@ describe("a subscription to a user-defined MID", () => {
   it.effect("subscribes, emits typed values, and acknowledges only when asked", () =>
     provided(
       Effect.gen(function* () {
-        const setup = yield* subscribed({ refuse: false })
+        const setup = yield* subscribed({ refuseFrom: Infinity })
         const values = yield* collected(setup.connection)
 
         yield* setup.controller.awaitMid(9102)
@@ -128,7 +144,7 @@ describe("a subscription to a user-defined MID", () => {
   it.effect("gets a value it never acknowledged again", () =>
     provided(
       Effect.gen(function* () {
-        const setup = yield* subscribed({ refuse: false })
+        const setup = yield* subscribed({ refuseFrom: Infinity })
         const values = yield* collected(setup.connection)
 
         yield* setup.controller.awaitMid(9102)
@@ -154,7 +170,7 @@ describe("a subscription to a user-defined MID", () => {
   it.effect("unsubscribes when the consumer stops, and frees the MID for the next one", () =>
     provided(
       Effect.gen(function* () {
-        const setup = yield* subscribed({ refuse: false })
+        const setup = yield* subscribed({ refuseFrom: Infinity })
         const taken = yield* Effect.forkChild(Stream.runHead(setup.connection.subscribe(ToolStatusSubscription.rev(2))))
 
         yield* setup.controller.awaitMid(9102)
@@ -178,7 +194,7 @@ describe("a subscription to a user-defined MID", () => {
   it.effect("fails a second consumer of the same MID", () =>
     provided(
       Effect.gen(function* () {
-        const setup = yield* subscribed({ refuse: false })
+        const setup = yield* subscribed({ refuseFrom: Infinity })
         yield* Effect.forkChild(Stream.runDrain(setup.connection.subscribe(ToolStatusSubscription.rev(2))))
         yield* setup.controller.awaitMid(9102)
 
@@ -192,7 +208,7 @@ describe("a subscription to a user-defined MID", () => {
   it.effect("fails the stream when the controller refuses the subscription", () =>
     provided(
       Effect.gen(function* () {
-        const setup = yield* subscribed({ refuse: true })
+        const setup = yield* subscribed({ refuseFrom: 1 })
 
         const refused = yield* Effect.exit(Stream.runDrain(setup.connection.subscribe(ToolStatusSubscription.rev(2))))
 
@@ -204,7 +220,7 @@ describe("a subscription to a user-defined MID", () => {
   it.effect("keeps the same stream emitting across a reconnect, subscribing again", () =>
     provided(
       Effect.gen(function* () {
-        const setup = yield* subscribed({ refuse: false })
+        const setup = yield* subscribed({ refuseFrom: Infinity })
         const values = yield* collected(setup.connection, (pushed) => pushed.ack)
 
         yield* setup.controller.awaitMid(9102)
@@ -220,6 +236,30 @@ describe("a subscription to a user-defined MID", () => {
 
         yield* setup.controller.push(next, yield* statusFrame(2, 401, 11))
         expect((yield* Queue.take(values)).value.toolId).toBe(2)
+      })
+    )
+  )
+
+  it.effect("fails only its own stream when the controller refuses it after a reconnect", () =>
+    provided(
+      Effect.gen(function* () {
+        const setup = yield* subscribed({ refuseFrom: 2 })
+
+        const refused = yield* Effect.forkChild(
+          Effect.exit(Stream.runDrain(setup.connection.subscribe(ToolStatusSubscription.rev(2))))
+        )
+
+        yield* setup.controller.awaitMid(9102)
+        yield* setup.server.close("the controller dropped the session")
+        yield* TestClock.adjust(Duration.seconds(1))
+
+        expect(yield* Fiber.join(refused)).toEqual(Exit.fail(new CommandRejected({ mid: 9102, code: 99 })))
+
+        // The session survives the refusal, and the MID is free again.
+        yield* awaitReady(setup.connection.state)
+        const again = yield* Effect.exit(Stream.runDrain(setup.connection.subscribe(ToolStatusSubscription.rev(2))))
+
+        expect(again).toEqual(Exit.fail(new CommandRejected({ mid: 9102, code: 99 })))
       })
     )
   )
