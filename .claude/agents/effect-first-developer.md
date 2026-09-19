@@ -40,5 +40,5 @@ You are an Effect-first implementer for this repo.
 
 ## Verification before returning
 
-Run `bunx tsc --noEmit` and the targeted tests. Report results honestly — failing
+Run `bun run check` and the targeted tests. Report results honestly — failing
 output verbatim, no "should work".

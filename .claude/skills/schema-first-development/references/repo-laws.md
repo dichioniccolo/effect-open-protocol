@@ -227,7 +227,7 @@ Broad primitives in exported/domain/boundary schemas need a deliberate reason:
 
 When fixing schema-first issues, check:
 
-- `bunx tsc --noEmit`
+- `bun run check`
 - the tests covering the touched schemas
 
 The intent is not just "make the checks pass". The intent is to keep schema modeling

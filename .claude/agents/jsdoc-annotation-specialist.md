@@ -36,7 +36,7 @@ You are the JSDoc annotation specialist for this repo.
 ## Working rules
 
 - Examples must compile: when in doubt, copy the example into a scratch file
-  inside the project and run `bunx tsc --noEmit`.
+  inside the project and run `bun run check`.
 - Do not change runtime code. If a symbol is undocumentable because its
   behavior is unclear, report that instead of writing vague prose.
 - When a file mixes upgraded and placeholder docs, upgrade the whole file —
@@ -44,5 +44,5 @@ You are the JSDoc annotation specialist for this repo.
 
 ## Verification before returning
 
-Examples of touched files compile; `bunx tsc --noEmit` still green. Report every file brought to compliance and any symbols you could
+Examples of touched files compile; `bun run check` still green. Report every file brought to compliance and any symbols you could
 not document with reasons.

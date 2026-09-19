@@ -48,7 +48,7 @@ Additional checks with no law counterpart below:
 7. No native `Object/Map/Set/Date/String` helpers in domain logic.
 8. For typed errors, extend `S.TaggedError` from `effect/Schema` directly. Pass a namespaced identifier (`S.TaggedError<X>("module/X")("X", ...)`) only when one is needed; otherwise omit it (`S.TaggedError<X>()("X", ...)`), and never pass an identifier equal to the tag. Cause-carrying errors declare `cause: S.Defect({ includeStack: true })` explicitly.
 9. Exported APIs need JSDoc with examples that type-check.
-10. Do not finish with failing `bunx tsc --noEmit` or tests.
+10. Do not finish with failing `bun run check` or tests.
 11. Do not suffix schema constants with `Schema`; use the domain name.
 12. For non-class schemas, export runtime type aliases with the same name: `export type X = typeof X.Type`.
 13. Do not use native `switch`; use `Match`. For empty/non-empty array branching, prefer `A.match` over manual length checks.
@@ -148,5 +148,5 @@ Additional checks with no law counterpart below:
 20. `rg -n "const hasTag|P\\.hasProperty\\(.*_tag|P\\.isObject\\(.*_tag|Match\\.value\\(" src`
 21. `rg -n "Effect\\.fn\\(function\\*|=\\s*Effect\\.gen\\(function\\*" src`
 22. `rg -n "Cause\\.pretty\\(|Cause\\.prettyErrors\\(|Effect\\.catchCause\\(|Effect\\.matchCauseEffect\\(" src`
-23. `bunx tsc --noEmit`
+23. `bun run check`
 24. run the test suite

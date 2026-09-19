@@ -37,5 +37,5 @@ Return a structured plan: file summary; concerns (name, ~LOC, key symbols);
 proposed split (target path -> what moves, in dependency order); shared
 candidates (helper -> existing owner or proposed home -> other consumers);
 risks (facades, tests, ordering/state, type-level surface); and the
-verification commands (`bunx tsc --noEmit`, targeted tests). Be precise and grounded in
+verification commands (`bun run check`, targeted tests). Be precise and grounded in
 actual symbols — no generic advice.

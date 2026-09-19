@@ -12,9 +12,9 @@
     ".agents/**",
     ".claude/**",
     ".repos/**",
-    "dist/**",
-    "ui/.next/**",
-    "ui/next-env.d.ts",
+    "**/dist/**",
+    "apps/ui/.next/**",
+    "apps/ui/next-env.d.ts",
     "tools/oxlint/anti-slop/**"
   ],
   "jsPlugins": [
@@ -98,7 +98,7 @@
   },
   "overrides": [
     {
-      "files": ["ui/**/*.ts", "ui/**/*.tsx"],
+      "files": ["apps/ui/**/*.ts", "apps/ui/**/*.tsx"],
       "plugins": ["typescript", "unicorn", "oxc", "import", "react", "nextjs", "jsx-a11y"],
       "rules": {
         "react/react-in-jsx-scope": "off",
@@ -106,13 +106,13 @@
       }
     },
     {
-      "files": ["test/**/*.ts", "store/test/**/*.ts"],
+      "files": ["packages/*/test/**/*.ts"],
       "rules": {
         "no-useless-concat": "off"
       }
     },
     {
-      "files": ["ui/components/ui/**/*.tsx"],
+      "files": ["apps/ui/components/ui/**/*.tsx"],
       "plugins": ["typescript", "unicorn", "oxc", "import", "react", "nextjs", "jsx-a11y"],
       "rules": {
         "jsx-a11y/label-has-associated-control": "off",

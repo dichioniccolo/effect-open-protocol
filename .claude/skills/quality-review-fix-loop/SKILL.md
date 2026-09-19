@@ -53,7 +53,7 @@ touched, worsened, or depended on it.
 Run from `repo_root`. Baseline:
 
 ```bash
-bunx tsc --noEmit
+bun run check
 bun run test
 ```
 

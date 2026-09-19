@@ -100,8 +100,8 @@ the *upgrade path*:
 ## Verify
 
 ```bash
-bunx tsc --noEmit
-bun run test <touched tests>
+bun run check
+bunx --bun vitest run <touched tests>
 ```
 
 Smell-checks before you start — the walls to demolish:

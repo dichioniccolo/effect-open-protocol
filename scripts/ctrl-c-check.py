@@ -32,7 +32,7 @@ def main() -> int:
     pid, fd = pty.fork()
     if pid == 0:
         os.chdir(REPO)
-        os.execvp("bun", ["bun", "run", "cli/controller.ts", *ARGS])
+        os.execvp("bun", ["bun", "run", "packages/cli/src/controller.ts", *ARGS])
 
     collected = bytearray()
 

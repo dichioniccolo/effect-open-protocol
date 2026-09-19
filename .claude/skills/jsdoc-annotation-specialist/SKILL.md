@@ -45,7 +45,7 @@ the annotation reference for schemas and the grep reference for multi-file audit
 8. Verify `@category`, `@since 0.0.0`, TSDoc grammar, imports, and Example safety.
 9. For schema values, verify `identifier`/`description` annotations using the
    annotation reference.
-10. Check that Examples compile (`bunx tsc --noEmit` on a scratch copy when in
+10. Check that Examples compile (`bun run check` on a scratch copy when in
    doubt) and fix failures.
 
 ## Section grammar
@@ -97,7 +97,7 @@ type companions. Their Example is optional.
    `declare`, empty generators, or deprecated `@effect/schema` imports.
 7. Schema annotations and same-name type companions follow
    `references/annotation-patterns.md`.
-8. Examples compile and `bunx tsc --noEmit` passes.
+8. Examples compile and `bun run check` passes.
 
 ## Escalation
 
