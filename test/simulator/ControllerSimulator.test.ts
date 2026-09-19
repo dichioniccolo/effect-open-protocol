@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Fiber, pipe, Stream } from "effect"
+import { Effect, Fiber, pipe, Result, Stream } from "effect"
 import { frames } from "../../src/protocol/Framer.ts"
 import {
   CommandError,
@@ -12,12 +12,15 @@ import {
   SubscribeResults
 } from "../../src/protocol/Messages.ts"
 import { DeviceId } from "../../src/protocol/TighteningResult.ts"
-import { InMemoryNetwork, layerComplete } from "../../src/transport/InMemoryTransport.ts"
+import { InMemoryNetwork } from "../../src/transport/InMemoryTransport.ts"
+import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { type Duplex, Endpoint } from "../../src/transport/Transport.ts"
 import { make } from "../../simulator/ControllerSimulator.ts"
 
 const deviceId = DeviceId.make("test-client")
+
 const endpoint = new Endpoint({ host: "simulator", port: 4545 })
+
 const encoder = new TextEncoder()
 
 const exchange = (connection: Duplex, outgoing: ReadonlyArray<Message>) =>
@@ -29,10 +32,12 @@ const exchange = (connection: Duplex, outgoing: ReadonlyArray<Message>) =>
       Stream.runCollect,
       Effect.forkChild
     )
+
     yield* Effect.forEach(outgoing, (message) => connection.send(encoder.encode(encodeMessage(message))), {
       discard: true
     })
     const collected = yield* Fiber.join(replies)
+
     return yield* Effect.forEach(collected, (frame) => Effect.fromResult(decodeMessage(frame, deviceId)))
   })
 
@@ -54,7 +59,7 @@ describe("ControllerSimulator", () => {
         expect(yield* simulator.keepAlives).toBe(1)
         expect(yield* simulator.isSubscribed).toBe(true)
       })
-    ).pipe(Effect.provide(layerComplete))
+    ).pipe(Effect.provide(layerSimulated))
   )
 
   it.effect("rejects the handshake when configured to", () =>
@@ -68,7 +73,7 @@ describe("ControllerSimulator", () => {
 
         expect(replies).toEqual([new CommandError({ mid: 1, code: 96 })])
       })
-    ).pipe(Effect.provide(layerComplete))
+    ).pipe(Effect.provide(layerSimulated))
   )
 
   it.effect("fails to connect when nothing is bound", () =>
@@ -76,9 +81,9 @@ describe("ControllerSimulator", () => {
       Effect.gen(function* () {
         const network = yield* InMemoryNetwork
         const outcome = yield* Effect.result(network.connect(endpoint))
-        expect(outcome._tag).toBe("Failure")
+        expect(Result.isFailure(outcome)).toBe(true)
       })
-    ).pipe(Effect.provide(layerComplete))
+    ).pipe(Effect.provide(layerSimulated))
   )
 
   it.effect("refuses connections while the endpoint is closed off", () =>
@@ -88,11 +93,11 @@ describe("ControllerSimulator", () => {
         const network = yield* InMemoryNetwork
         yield* network.refuse(endpoint, true)
         const refused = yield* Effect.result(network.connect(endpoint))
-        expect(refused._tag).toBe("Failure")
+        expect(Result.isFailure(refused)).toBe(true)
         yield* network.refuse(endpoint, false)
         const accepted = yield* Effect.result(network.connect(endpoint))
-        expect(accepted._tag).toBe("Success")
+        expect(Result.isSuccess(accepted)).toBe(true)
       })
-    ).pipe(Effect.provide(layerComplete))
+    ).pipe(Effect.provide(layerSimulated))
   )
 })

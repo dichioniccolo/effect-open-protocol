@@ -11,20 +11,20 @@
  *
  * @since 0.0.0
  */
-import { Deferred, Duration, Effect, Fiber, pipe, Queue, Ref, Scope, Stream } from "effect"
+import { Deferred, Duration, Effect, Fiber, pipe, Predicate, Queue, Ref, Stream } from "effect"
 import * as A from "effect/Array"
 import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
 import { frames } from "../src/protocol/Framer.ts"
 import { decodeMessage, LastResult } from "../src/protocol/Messages.ts"
 import { type TighteningId, TighteningResult } from "../src/protocol/TighteningResult.ts"
-import { InMemoryNetwork, type ServerSide } from "../src/transport/InMemoryTransport.ts"
+import type { ServerSide } from "../src/transport/InMemoryTransport.ts"
 import type { Endpoint } from "../src/transport/Transport.ts"
 import { type ControllerIdentity, observe, replyTo, resultFor, simulatorDevice } from "./ControllerBehaviour.ts"
 import type * as Faults from "./Faults.ts"
 import { sendWithFaults } from "./FaultyWire.ts"
 import { forget, initialSessionState, latestOf, type SessionState } from "./SessionState.ts"
-import { makeTcpListener } from "./TcpListener.ts"
+import { SimulatorNetwork } from "./SimulatorNetwork.ts"
 
 export { SimulatorListenFailed } from "./TcpListener.ts"
 
@@ -44,11 +44,6 @@ export interface SimulatorOptions extends ControllerIdentity {
   readonly ackAttempts?: number | undefined
   /** Seeded misbehaviour injected while the session runs. */
   readonly faults?: Faults.FaultConfig | undefined
-  /**
-   * Wraps every accepted connection before the simulator serves it. The CLI
-   * uses it to trace and delay the bytes this controller writes.
-   */
-  readonly decorate?: ((side: ServerSide) => Effect.Effect<ServerSide>) | undefined
 }
 
 /**
@@ -78,77 +73,56 @@ export interface Simulator {
   readonly backlog: Effect.Effect<number>
 }
 
-const serve = (
+const serve = Effect.fnUntraced(function* (
   connection: ServerSide,
   state: Ref.Ref<SessionState>,
   store: MutableHashMap.MutableHashMap<number, TighteningResult>,
   options: SimulatorOptions,
   refuseFor: (duration: Duration.Duration) => Effect.Effect<void>
-): Effect.Effect<void> =>
-  pipe(
-    Ref.update(state, (current) => ({ ...current, connection: O.some(connection) })),
-    Effect.andThen(
-      pipe(
-        frames(connection.incoming),
-        Stream.runForEach((frame) =>
-          pipe(
-            decodeMessage(frame, simulatorDevice),
-            Effect.fromResult,
-            Effect.flatMap((message) =>
-              pipe(
-                Ref.modify(state, (current) => [current, observe(message, current)]),
-                Effect.flatMap((current) =>
-                  message._tag === "AcknowledgeResult"
-                    ? O.match(current.pendingAck, {
-                        onNone: () => Effect.void,
-                        onSome: (deferred) => Effect.asVoid(Deferred.succeed(deferred, undefined))
-                      })
-                    : O.match(replyTo(message, options, store, latestOf(current)), {
-                        onNone: () => Effect.void,
-                        onSome: (reply) => sendWithFaults(connection, reply, options.faults, state, refuseFor)
-                      })
-                )
-              )
-            ),
-            Effect.catchCause((cause) => Effect.logWarning("simulator dropped a frame", cause))
-          )
-        ),
-        Effect.catchCause((cause) => Effect.logDebug("simulator session ended", cause))
-      )
+) {
+  yield* Ref.update(state, (current) => ({ ...current, connection: O.some(connection) }))
+
+  const onFrame = Effect.fnUntraced(function* (frame: string) {
+    const message = yield* Effect.fromResult(decodeMessage(frame, simulatorDevice))
+    const current = yield* Ref.modify(state, (value) => [value, observe(message, value)])
+
+    if (Predicate.isTagged(message, "AcknowledgeResult")) {
+      const pending = current.pendingAck
+
+      if (O.isSome(pending)) {
+        yield* Deferred.succeed(pending.value, undefined)
+      }
+
+      return
+    }
+
+    const reply = replyTo(message, options, store, latestOf(current))
+
+    if (O.isSome(reply)) {
+      yield* sendWithFaults(connection, reply.value, options.faults, state, refuseFor)
+    }
+  })
+
+  yield* frames(connection.incoming).pipe(
+    Stream.runForEach((frame) =>
+      onFrame(frame).pipe(Effect.catchCause((cause) => Effect.logWarning("simulator dropped a frame", cause)))
     ),
-    Effect.andThen(Ref.update(state, (current) => forget(current, connection)))
+    Effect.catchCause((cause) => Effect.logDebug("simulator session ended", cause))
   )
 
-/**
- * Starts a simulated controller on the in-memory network for the lifetime of
- * the calling scope.
- *
- * **Example** (Running a client against a simulated controller)
- *
- * ```ts
- * import { Effect } from "effect"
- * import { Endpoint } from "effect-open-protocol"
- * import { make } from "../simulator/ControllerSimulator.ts"
- *
- * const program = Effect.gen(function* () {
- *   const simulator = yield* make({ endpoint: new Endpoint({ host: "sim", port: 4545 }) })
- *   return yield* simulator.keepAlives
- * })
- * ```
- *
- * @category constructors
- * @since 0.0.0
- */
-export const makeWith = Effect.fnUntraced(function* (
+  yield* Ref.update(state, (current) => forget(current, connection))
+})
+
+/** Serves the connections a bound endpoint accepts, for the lifetime of the calling scope. */
+const start = Effect.fnUntraced(function* (
   options: SimulatorOptions,
-  accept: Effect.Effect<Queue.Dequeue<ServerSide>, never, Scope.Scope>,
+  accepted: Queue.Dequeue<ServerSide>,
   refuse: (refused: boolean) => Effect.Effect<void>
 ) {
   const store = MutableHashMap.empty<number, TighteningResult>()
   const state = yield* Ref.make<SessionState>(initialSessionState)
   const ackTimeout = options.ackTimeout ?? Duration.seconds(5)
   const ackAttempts = options.ackAttempts ?? 3
-  const accepted = yield* accept
 
   // Outage windows run on the simulator's own fiber, one at a time, so the
   // endpoint always starts accepting again even if the session that triggered
@@ -178,45 +152,59 @@ export const makeWith = Effect.fnUntraced(function* (
   const push = (result: TighteningResult): Effect.Effect<void> =>
     Effect.gen(function* () {
       const current = yield* Ref.get(state)
+
       return yield* O.match(current.connection, {
         onNone: () => Effect.void,
         onSome: (connection) =>
           current.subscribed
             ? Effect.gen(function* () {
                 const acknowledged = yield* Deferred.make<void>()
-                yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.some(acknowledged) }))
-                const attempt = pipe(
-                  sendWithFaults(connection, new LastResult({ result }), options.faults, state, refuseFor),
+                yield* Ref.update(state, (value) => ({
+                  ...value,
+                  pendingAck: O.some(acknowledged)
+                }))
+
+                const attempt = sendWithFaults(
+                  connection,
+                  new LastResult({ result }),
+                  options.faults,
+                  state,
+                  refuseFor
+                ).pipe(
                   Effect.andThen(Deferred.await(acknowledged)),
                   Effect.timeoutOption(ackTimeout),
                   Effect.catchCause(() => Effect.succeed(O.none<void>()))
                 )
+
                 const tryDeliver = (remaining: number): Effect.Effect<boolean> =>
-                  remaining <= 0
-                    ? Effect.succeed(false)
-                    : Effect.flatMap(
-                        attempt,
-                        O.match({
-                          onNone: () => tryDeliver(remaining - 1),
-                          onSome: () => Effect.succeed(true)
-                        })
-                      )
+                  Effect.gen(function* () {
+                    if (remaining <= 0) {
+                      return false
+                    }
+
+                    const acknowledgement = yield* attempt
+
+                    return O.isSome(acknowledgement) ? true : yield* tryDeliver(remaining - 1)
+                  })
+
                 const delivered = yield* tryDeliver(ackAttempts)
-                yield* Ref.update(state, (value) => ({ ...value, pendingAck: O.none() }))
-                return yield* delivered
-                  ? Effect.void
-                  : pipe(
-                      Ref.update(state, (value) => ({
-                        ...value,
-                        abandoned: A.append(value.abandoned, result.tighteningId)
-                      })),
-                      Effect.andThen(
-                        Effect.logWarning("giving up on an unacknowledged result").pipe(
-                          Effect.annotateLogs({ tighteningId: result.tighteningId })
-                        )
-                      ),
-                      Effect.andThen(connection.close("no acknowledgement for the last tightening result"))
-                    )
+                yield* Ref.update(state, (value) => ({
+                  ...value,
+                  pendingAck: O.none()
+                }))
+
+                if (delivered) {
+                  return
+                }
+
+                yield* Ref.update(state, (value) => ({
+                  ...value,
+                  abandoned: A.append(value.abandoned, result.tighteningId)
+                }))
+                yield* Effect.logWarning("giving up on an unacknowledged result").pipe(
+                  Effect.annotateLogs({ tighteningId: result.tighteningId })
+                )
+                yield* connection.close("no acknowledgement for the last tightening result")
               })
             : Effect.void
       })
@@ -237,9 +225,11 @@ export const makeWith = Effect.fnUntraced(function* (
         generated: current.generated + 1
       }
     ])
+
     const result = resultFor(id)
     MutableHashMap.set(store, id, result)
     yield* Queue.offer(outbox, result)
+
     return result
   })
 
@@ -264,7 +254,11 @@ export const makeWith = Effect.fnUntraced(function* (
   yield* Effect.addFinalizer(() => Fiber.interrupt(acceptLoop))
 
   const drop = pipe(
-    Ref.getAndUpdate(state, (current) => ({ ...current, subscribed: false, connection: O.none() })),
+    Ref.getAndUpdate(state, (current) => ({
+      ...current,
+      subscribed: false,
+      connection: O.none()
+    })),
     Effect.flatMap((current) =>
       O.match(current.connection, {
         onNone: () => Effect.void,
@@ -287,28 +281,28 @@ export const makeWith = Effect.fnUntraced(function* (
 })
 
 /**
- * Starts a simulated controller on the in-memory network.
+ * Starts a simulated controller on the `SimulatorNetwork` in context, for the
+ * lifetime of the calling scope.
+ *
+ * **Example** (Running a client against a simulated controller)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Endpoint } from "effect-open-protocol"
+ * import { make } from "../simulator/ControllerSimulator.ts"
+ *
+ * const program = Effect.gen(function* () {
+ *   const simulator = yield* make({ endpoint: new Endpoint({ host: "sim", port: 4545 }) })
+ *   return yield* simulator.keepAlives
+ * })
+ * ```
  *
  * @category constructors
  * @since 0.0.0
  */
 export const make = Effect.fnUntraced(function* (options: SimulatorOptions) {
-  const network = yield* InMemoryNetwork
-  return yield* makeWith(options, network.bind(options.endpoint), (refused) =>
-    network.refuse(options.endpoint, refused)
-  )
-})
+  const network = yield* SimulatorNetwork
+  const accepted = yield* network.bind(options.endpoint)
 
-/**
- * Starts a simulated controller on a real TCP port.
- *
- * Used by the localhost smoke test and by the demo when it runs over TCP: the
- * same behaviour as the in-memory simulator, one socket layer lower.
- *
- * @category constructors
- * @since 0.0.0
- */
-export const makeTcp = Effect.fnUntraced(function* (options: SimulatorOptions) {
-  const listener = yield* makeTcpListener({ endpoint: options.endpoint, decorate: options.decorate })
-  return yield* makeWith(options, Effect.succeed(listener.accept), listener.refuse)
+  return yield* start(options, accepted, (refused) => network.refuse(options.endpoint, refused))
 })

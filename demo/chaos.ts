@@ -13,13 +13,13 @@
  * @since 0.0.0
  */
 import { Command, Flag } from "effect/unstable/cli"
-import { Duration, Effect, pipe, Random, Ref, Schedule } from "effect"
+import { Duration, Effect, pipe, Predicate, Random, Ref, Schedule } from "effect"
 import * as A from "effect/Array"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
-import { DevicePool } from "../src/pool/DevicePool.ts"
+import { DevicePool, layer as devicePoolLayer } from "../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
-import { layerComplete } from "../src/transport/InMemoryTransport.ts"
+import { layerSimulated } from "../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
 
 interface Tally {
@@ -48,12 +48,14 @@ const settle = (
     ),
     delivered: Effect.map(Ref.get(tally), (current) => A.length(A.dedupe(current.delivered)))
   })
+
   const loop = (remaining: number): Effect.Effect<void> =>
     remaining <= 0
       ? Effect.void
       : Effect.flatMap(counts, ({ delivered, generated }) =>
           delivered >= generated ? Effect.void : Effect.andThen(Effect.sleep(Duration.millis(200)), loop(remaining - 1))
         )
+
   return loop(Math.max(1, Math.ceil(Duration.toMillis(within) / 200)))
 }
 
@@ -66,6 +68,7 @@ const runChaos = Effect.fnUntraced(function* (options: {
   readonly settleTimeout: Duration.Duration
 }) {
   const tally = yield* Ref.make<Tally>({ delivered: [], duplicates: 0 })
+
   const onResult = (result: TighteningResult) =>
     Ref.update(tally, (current) => ({
       ...current,
@@ -73,9 +76,11 @@ const runChaos = Effect.fnUntraced(function* (options: {
     }))
 
   const pool = yield* DevicePool
+
   const simulators = yield* Effect.forEach(A.range(1, options.devices), (index) =>
     Effect.gen(function* () {
       const endpoint = new Endpoint({ host: "chaos", port: 4500 + index })
+
       const simulator = yield* makeSimulator({
         endpoint,
         controllerName: `Controller-${index}`,
@@ -84,12 +89,14 @@ const runChaos = Effect.fnUntraced(function* (options: {
         ackAttempts: 3,
         faults: { rate: options.faultRate }
       })
+
       yield* pool.add({
         id: DeviceId.make(`tool-${index}`),
         endpoint,
         onResult,
         reconnect: Schedule.spaced(Duration.millis(250))
       })
+
       return simulator
     })
   )
@@ -112,19 +119,23 @@ const runChaos = Effect.fnUntraced(function* (options: {
   yield* settle(simulators, tally, options.settleTimeout)
 
   const status = yield* pool.status
+
   const totals = yield* Effect.forEach(simulators, (simulator: Simulator) =>
     Effect.all({ generated: simulator.generated, abandoned: simulator.abandoned })
   )
+
   const generated = A.reduce(totals, 0, (sum, device) => sum + device.generated)
   const abandoned = A.reduce(totals, 0, (sum, device) => sum + A.length(device.abandoned))
   const current = yield* Ref.get(tally)
   const unique = A.dedupe(current.delivered)
   const duplicates = A.reduce(status, 0, (sum, device) => sum + device.duplicates)
+
   const reconnects = A.reduce(
     status,
     0,
-    (sum, device) => sum + (device.state._tag === "WaitingToReconnect" ? device.state.attempt : 0)
+    (sum, device) => sum + (Predicate.isTagged(device.state, "WaitingToReconnect") ? device.state.attempt : 0)
   )
+
   const lost = generated - A.length(unique)
 
   yield* Effect.sync(() => {
@@ -186,8 +197,8 @@ const command = Command.make("chaos", { seed, duration, devices, faultRate, sett
     Random.withSeed(config.seed),
     Effect.flatMap((passed) => (passed ? Effect.void : Effect.die("the chaos run lost or duplicated a result"))),
     Effect.scoped,
-    Effect.provide(DevicePool.layer),
-    Effect.provide(layerComplete)
+    Effect.provide(devicePoolLayer),
+    Effect.provide(layerSimulated)
   )
 ).pipe(Command.withDescription("Run N simulated controllers under random faults and check the invariant"))
 

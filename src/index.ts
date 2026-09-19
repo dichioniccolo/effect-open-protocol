@@ -2,7 +2,7 @@
  * Open Protocol client for tightening controllers, built with Effect.
  *
  * Every module is re-exported flat, and each one names its constructor after
- * what it builds (`makeDeviceConnection`, `makeDedup`, ...), so nothing is
+ * what it builds (`DeviceConnection.make`, `Dedup.make`, ...), so nothing is
  * renamed on its way out. The two transports are the exception: both provide a
  * `layer`, so they keep their namespace and read as `TcpTransport.layer`.
  *
@@ -52,7 +52,7 @@ export * from "./connection/ConnectionState.ts"
 /**
  * @since 0.0.0
  */
-export * from "./connection/DeviceConnection.ts"
+export * as DeviceConnection from "./connection/DeviceConnection.ts"
 
 /**
  * @since 0.0.0
@@ -62,7 +62,7 @@ export * from "./connection/DeviceSettings.ts"
 /**
  * @since 0.0.0
  */
-export * from "./connection/GapRecovery.ts"
+export * as GapRecovery from "./connection/GapRecovery.ts"
 
 /**
  * @since 0.0.0
@@ -77,17 +77,17 @@ export * from "./connection/Session.ts"
 /**
  * @since 0.0.0
  */
-export * from "./connection/RequestReply.ts"
+export * as RequestReply from "./connection/RequestReply.ts"
 
 /**
  * @since 0.0.0
  */
-export * from "./results/Dedup.ts"
+export * as Dedup from "./results/Dedup.ts"
 
 /**
  * @since 0.0.0
  */
-export * from "./results/ResultDelivery.ts"
+export * as ResultDelivery from "./results/ResultDelivery.ts"
 
 /**
  * @since 0.0.0
@@ -97,7 +97,7 @@ export * from "./results/ResultRecovery.ts"
 /**
  * @since 0.0.0
  */
-export * from "./pool/DevicePool.ts"
+export * as DevicePool from "./pool/DevicePool.ts"
 
 /**
  * @since 0.0.0

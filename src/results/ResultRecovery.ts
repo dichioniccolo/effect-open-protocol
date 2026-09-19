@@ -8,14 +8,14 @@
  *
  * @since 0.0.0
  */
-import { Effect, pipe } from "effect"
+import { Data, Effect, pipe, Predicate } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import type { CommandRejected, RequestTimeout } from "../connection/ConnectionError.ts"
 import { type Message, RequestOldResult } from "../protocol/Messages.ts"
 import { TighteningId, type TighteningResult } from "../protocol/TighteningResult.ts"
 import type { ConnectionLost } from "../transport/Transport.ts"
-import type { Dedup } from "./Dedup.ts"
+import type { DedupService } from "./Dedup.ts"
 
 /**
  * Default number of missed results fetched after a reconnect.
@@ -62,13 +62,16 @@ const nothing: Recovery = { recovered: [], missing: [], pending: [], skipped: 0 
 const unanswered: Recovery = { recovered: [], missing: [], pending: [pendingBaseline], skipped: 0 }
 
 /** What became of one requested identifier. */
-type Attempt =
-  | { readonly _tag: "Recovered"; readonly id: TighteningId }
-  | { readonly _tag: "Missing"; readonly id: TighteningId }
-  | { readonly _tag: "Pending"; readonly id: TighteningId }
+type Attempt = Data.TaggedEnum<{
+  Recovered: { readonly id: TighteningId }
+  Missing: { readonly id: TighteningId }
+  Pending: { readonly id: TighteningId }
+}>
+
+const Attempt = Data.taggedEnum<Attempt>()
 
 const resultOf = (message: Message): O.Option<TighteningResult> =>
-  message._tag === "OldResult" ? O.some(message.result) : O.none()
+  Predicate.isTagged(message, "OldResult") ? O.some(message.result) : O.none()
 
 /**
  * Everything a recovery request can fail with. The distinction that matters is
@@ -92,7 +95,7 @@ export type RecoveryFailure = CommandRejected | RequestTimeout | ConnectionLost
  * @since 0.0.0
  */
 export const runRecovery = Effect.fnUntraced(function* (options: {
-  readonly dedup: Dedup
+  readonly dedup: DedupService
   readonly request: (message: Message, mid: number) => Effect.Effect<Message, RecoveryFailure>
   readonly submit: (result: TighteningResult) => Effect.Effect<void>
   readonly limit?: number | undefined
@@ -114,6 +117,7 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
     Effect.suspend(() => {
       const gap = to < from ? [] : A.range(from, to)
       const wanted = A.take(gap, limit)
+
       // One failed request must not end the pass: a later identifier may still
       // be reachable, and everything unfetched is reported as pending.
       return Effect.map(
@@ -126,23 +130,23 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
                 onSome: (result) => options.submit(result)
               })
             ),
-            Effect.map(
-              (found) =>
-                (O.isSome(found)
-                  ? { _tag: "Recovered", id: TighteningId.make(value) }
-                  : { _tag: "Missing", id: TighteningId.make(value) }) as Attempt
+            Effect.map((found) =>
+              O.isSome(found)
+                ? Attempt.Recovered({ id: TighteningId.make(value) })
+                : Attempt.Missing({ id: TighteningId.make(value) })
             ),
             Effect.catchCause((cause) =>
-              Effect.as(Effect.logDebug(`could not recover tightening ${value} yet`, cause), {
-                _tag: "Pending",
-                id: TighteningId.make(value)
-              } as Attempt)
+              Effect.as(
+                Effect.logDebug(`could not recover tightening ${value} yet`, cause),
+                Attempt.Pending({ id: TighteningId.make(value) })
+              )
             )
           )
         ),
         (attempts: ReadonlyArray<Attempt>) => {
           const of = (tag: Attempt["_tag"]): ReadonlyArray<TighteningId> =>
-            A.getSomes(A.map(attempts, (attempt) => (attempt._tag === tag ? O.some(attempt.id) : O.none())))
+            A.getSomes(A.map(attempts, (attempt) => (Attempt.$is(tag)(attempt) ? O.some(attempt.id) : O.none())))
+
           return {
             recovered: of("Recovered"),
             missing: of("Missing"),
@@ -160,6 +164,7 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
     Effect.map((found) => O.some(O.map(found, (result) => result.tighteningId))),
     Effect.catchCause(() => Effect.succeed(O.none<O.Option<TighteningId>>()))
   )
+
   const since = yield* options.dedup.lastDelivered
 
   const firstContact = (answer: O.Option<TighteningId>): Effect.Effect<Recovery> =>
@@ -184,6 +189,7 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
     onSome: (delivered) =>
       Effect.suspend(() => {
         const newest = O.getOrElse(O.flatten(latest), () => TighteningId.make(delivered))
+
         return newest <= delivered ? Effect.succeed(nothing) : fetchRange(delivered + 1, newest)
       })
   })

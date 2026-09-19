@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Queue, Ref, Stream } from "effect"
+import { Effect, Exit, Queue, Ref, Stream } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
@@ -18,14 +18,17 @@ const byteValues = S.Array(S.Number.check(S.isInt(), S.isBetween({ minimum: 0, m
 const fixture = Effect.fnUntraced(function* (incoming: ReadonlyArray<Uint8Array>) {
   const written = yield* Ref.make<ReadonlyArray<Uint8Array>>([])
   const events = yield* Ref.make<ReadonlyArray<WireEvent>>([])
+
   const duplex: Duplex = {
     incoming: Stream.fromIterable(incoming),
     send: (bytes) => Ref.update(written, (current) => A.append(current, bytes))
   }
+
   const traced = yield* tracedDuplex(duplex, {
     source: "test",
     sink: (event) => Ref.update(events, (current) => A.append(current, event))
   })
+
   return { traced, written, events }
 })
 
@@ -150,12 +153,14 @@ describe("tracedDuplex", () => {
     Effect.gen(function* () {
       const queue = yield* Queue.bounded<Uint8Array, ConnectionLost>(1)
       yield* Queue.fail(queue, new ConnectionLost({ reason: "peer left" }))
+
       const traced = yield* tracedDuplex(
         { incoming: Stream.fromQueue(queue), send: () => Effect.void },
         { source: "test" }
       )
+
       const exit = yield* Effect.exit(Stream.runDrain(traced.incoming))
-      expect(exit._tag).toBe("Failure")
+      expect(Exit.isFailure(exit)).toBe(true)
     })
   )
 })

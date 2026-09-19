@@ -160,5 +160,6 @@ export const unescapeWire = (text: string): Uint8Array => {
             onSome: (token) => read(at + token.width, A.append(collected, token.code))
           })
         )
+
   return Uint8Array.from(read(0, []))
 }

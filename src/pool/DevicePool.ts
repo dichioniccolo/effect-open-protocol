@@ -14,7 +14,7 @@ import * as Context from "effect/Context"
 import * as O from "effect/Option"
 import * as S from "effect/Schema"
 import type { ConnectionState } from "../connection/ConnectionState.ts"
-import { type DeviceConnectionShape, makeDeviceConnection } from "../connection/DeviceConnection.ts"
+import { type DeviceConnectionService, make as makeConnection } from "../connection/DeviceConnection.ts"
 import type { DeviceConfig } from "../connection/DeviceSettings.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
 import { Transport } from "../transport/Transport.ts"
@@ -48,13 +48,13 @@ export interface DeviceStatus {
  * @category models
  * @since 0.0.0
  */
-export interface DevicePoolShape {
+export interface DevicePoolService {
   /** Starts a connection for a device and returns once it is supervised. */
-  readonly add: (config: DeviceConfig) => Effect.Effect<DeviceConnectionShape, DeviceAlreadyAdded>
+  readonly add: (config: DeviceConfig) => Effect.Effect<DeviceConnectionService, DeviceAlreadyAdded>
   /** Stops a device and releases its resources. Unknown devices are ignored. */
   readonly remove: (deviceId: DeviceId) => Effect.Effect<void>
   /** The connection of a device, when it is in the pool. */
-  readonly get: (deviceId: DeviceId) => Effect.Effect<O.Option<DeviceConnectionShape>>
+  readonly get: (deviceId: DeviceId) => Effect.Effect<O.Option<DeviceConnectionService>>
   /** A snapshot of every device in the pool. */
   readonly status: Effect.Effect<ReadonlyArray<DeviceStatus>>
 }
@@ -65,18 +65,19 @@ export interface DevicePoolShape {
  * fills in once the connection is supervised.
  */
 interface Slot {
-  readonly started: Deferred.Deferred<DeviceConnectionShape>
-  readonly connection: O.Option<DeviceConnectionShape>
+  readonly started: Deferred.Deferred<DeviceConnectionService>
+  readonly connection: O.Option<DeviceConnectionService>
 }
 
-const make = Effect.fnUntraced(function* () {
+export const make = Effect.fnUntraced(function* () {
   const transport = yield* Transport
   const fibers = yield* FiberMap.make<DeviceId>()
   const slots = yield* Ref.make(HashMap.empty<DeviceId, Slot>())
 
-  const add = (config: DeviceConfig): Effect.Effect<DeviceConnectionShape, DeviceAlreadyAdded> =>
+  const add = (config: DeviceConfig): Effect.Effect<DeviceConnectionService, DeviceAlreadyAdded> =>
     Effect.gen(function* () {
-      const started = yield* Deferred.make<DeviceConnectionShape>()
+      const started = yield* Deferred.make<DeviceConnectionService>()
+
       // Claiming the slot and noticing a duplicate are one atomic step: doing
       // them apart lets two adds for the same device both pass the check.
       const claimed = yield* Ref.modify(slots, (current) =>
@@ -94,12 +95,13 @@ const make = Effect.fnUntraced(function* () {
         config.id,
         Effect.scoped(
           Effect.gen(function* () {
-            const connection = yield* Effect.provideService(makeDeviceConnection(config), Transport, transport)
+            const connection = yield* Effect.provideService(makeConnection(config), Transport, transport)
             yield* Ref.update(slots, (current) =>
               HashMap.set(current, config.id, { started, connection: O.some(connection) })
             )
             yield* Effect.addFinalizer(() => Ref.update(slots, (current) => HashMap.remove(current, config.id)))
             yield* Deferred.succeed(started, connection)
+
             // Hold the scope open until the device is removed or the pool closes.
             return yield* Effect.never
           })
@@ -114,12 +116,13 @@ const make = Effect.fnUntraced(function* () {
           )
         )
       )
+
       return yield* Deferred.await(started)
     })
 
   const remove = (deviceId: DeviceId): Effect.Effect<void> => FiberMap.remove(fibers, deviceId)
 
-  const get = (deviceId: DeviceId): Effect.Effect<O.Option<DeviceConnectionShape>> =>
+  const get = (deviceId: DeviceId): Effect.Effect<O.Option<DeviceConnectionService>> =>
     Effect.map(Ref.get(slots), (current) => O.flatMap(HashMap.get(current, deviceId), (slot) => slot.connection))
 
   const status = Effect.flatMap(Ref.get(slots), (current) =>
@@ -135,13 +138,13 @@ const make = Effect.fnUntraced(function* () {
     )
   )
 
-  return { add, remove, get, status } satisfies DevicePoolShape
+  return { add, remove, get, status } satisfies DevicePoolService
 })
 
 /**
  * Many controllers supervised together.
  *
- * The pool is a service: provide `DevicePool.layer` over a `Transport` and the
+ * The pool is a service: provide its `layer` over a `Transport` and the
  * layer owns every device fiber, so closing the application closes the
  * connections with it.
  *
@@ -152,7 +155,7 @@ const make = Effect.fnUntraced(function* () {
  * import { DeviceId, DevicePool, Endpoint, TcpTransport } from "effect-open-protocol"
  *
  * const program = Effect.gen(function* () {
- *   const pool = yield* DevicePool
+ *   const pool = yield* DevicePool.DevicePool
  *   yield* pool.add({
  *     id: DeviceId.make("line-1-tool-3"),
  *     endpoint: new Endpoint({ host: "10.0.0.31", port: 4545 })
@@ -169,11 +172,12 @@ const make = Effect.fnUntraced(function* () {
  * @category services
  * @since 0.0.0
  */
-export class DevicePool extends Context.Service<DevicePool, DevicePoolShape>()("effect-open-protocol/DevicePool") {
-  /**
-   * Provides a pool that supervises its devices for the lifetime of the layer.
-   *
-   * @since 0.0.0
-   */
-  static readonly layer: Layer.Layer<DevicePool, never, Transport> = Layer.effect(DevicePool)(make())
-}
+export class DevicePool extends Context.Service<DevicePool, DevicePoolService>()("effect-open-protocol/DevicePool") {}
+
+/**
+ * Provides a pool that supervises its devices for the lifetime of the layer.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layer: Layer.Layer<DevicePool, never, Transport> = Layer.effect(DevicePool)(make())

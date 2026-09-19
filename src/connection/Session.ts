@@ -8,13 +8,13 @@
  *
  * @since 0.0.0
  */
-import { Duration, Effect, pipe, Ref, Stream } from "effect"
+import { Duration, Effect, Ref, Stream } from "effect"
 import { frames } from "../protocol/Framer.ts"
 import { decodeMessage, encodeMessage, KeepAlive, type Message } from "../protocol/Messages.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
 import { ConnectionLost, type Duplex } from "../transport/Transport.ts"
 import { expectReply } from "./RequestReply.ts"
-import type { RequestReply } from "./RequestReply.ts"
+import type { RequestReplyService } from "./RequestReply.ts"
 
 /**
  * The socket and the correlation slot that belong to one connection attempt.
@@ -24,7 +24,7 @@ import type { RequestReply } from "./RequestReply.ts"
  */
 export interface Session {
   readonly duplex: Duplex
-  readonly replies: RequestReply
+  readonly replies: RequestReplyService
 }
 
 const encoder = new TextEncoder()
@@ -59,18 +59,16 @@ export const readLoop = (
   deviceId: DeviceId,
   onUnsolicited: (message: Message) => Effect.Effect<void>
 ): Effect.Effect<never, ConnectionLost> =>
-  pipe(
-    frames(session.duplex.incoming),
-    Stream.runForEach((frame) =>
-      pipe(
-        Effect.fromResult(decodeMessage(frame, deviceId)),
-        Effect.flatMap((message) =>
-          pipe(
-            session.replies.offer(message),
-            Effect.flatMap((consumed) => (consumed ? Effect.void : onUnsolicited(message)))
-          )
-        )
-      )
+  frames(session.duplex.incoming).pipe(
+    Stream.runForEach(
+      Effect.fnUntraced(function* (frame: string) {
+        const message = yield* Effect.fromResult(decodeMessage(frame, deviceId))
+        const consumed = yield* session.replies.offer(message)
+
+        if (!consumed) {
+          yield* onUnsolicited(message)
+        }
+      })
     ),
     Effect.catchTags({
       MalformedHeader: (error) => protocolLost(error._tag),
@@ -94,27 +92,20 @@ export const keepAliveLoop = (
   lastSent: Ref.Ref<number>,
   interval: Duration.Duration
 ): Effect.Effect<never, ConnectionLost> =>
-  pipe(
-    Effect.sleep(interval),
-    Effect.andThen(Effect.clockWith((clock) => clock.currentTimeMillis)),
-    Effect.flatMap((now) =>
-      pipe(
-        Ref.get(lastSent),
-        Effect.flatMap((sent) =>
-          Duration.toMillis(interval) > now - sent
-            ? Effect.void
-            : pipe(
-                session.replies.request(new KeepAlive(), 9999, expectReply(9999, "KeepAlive")),
-                Effect.andThen(Ref.set(lastSent, now)),
-                Effect.catchTag("RequestTimeout", () =>
-                  Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" }))
-                ),
-                Effect.catchTag("CommandRejected", () =>
-                  Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" }))
-                )
-              )
-        )
-      )
-    ),
-    Effect.forever
-  )
+  Effect.gen(function* () {
+    yield* Effect.sleep(interval)
+
+    const now = yield* Effect.clockWith((clock) => clock.currentTimeMillis)
+    const sent = yield* Ref.get(lastSent)
+
+    // The link spoke recently enough on its own; a keep-alive would be noise.
+    if (Duration.toMillis(interval) > now - sent) {
+      return
+    }
+
+    yield* session.replies.request(new KeepAlive(), 9999, expectReply(9999, "KeepAlive")).pipe(
+      Effect.andThen(Ref.set(lastSent, now)),
+      Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" }))),
+      Effect.catchTag("CommandRejected", () => Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" })))
+    )
+  }).pipe(Effect.forever)

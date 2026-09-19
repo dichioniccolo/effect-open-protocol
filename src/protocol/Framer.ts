@@ -22,6 +22,7 @@ const takeFrames = (
   frames: ReadonlyArray<string>
 ): Result.Result<{ readonly buffer: string; readonly frames: ReadonlyArray<string> }, ProtocolError> => {
   const lengthField = Str.substring(0, 4)(buffer)
+
   return Str.length(buffer) < 4
     ? Result.succeed({ buffer, frames })
     : pipe(

@@ -17,9 +17,7 @@ const key = (endpoint: Endpoint): string => `${endpoint.host}:${endpoint.port}`
 /** Capacity of each direction of an in-memory connection. */
 const capacity = 64
 
-const pipeOf = (
-  queue: Queue.Queue<Uint8Array, ConnectionLost>
-): { readonly incoming: Stream.Stream<Uint8Array, ConnectionLost>; readonly send: Duplex["send"] } => ({
+const pipeOf = (queue: Queue.Queue<Uint8Array, ConnectionLost>): Duplex => ({
   incoming: Stream.fromQueue(queue),
   send: (bytes) => Effect.orDie(Queue.offer(queue, bytes))
 })
@@ -46,7 +44,8 @@ const make = Effect.gen(function* () {
     const accepted = yield* Queue.bounded<ServerSide>(capacity)
     MutableHashMap.set(listeners, key(endpoint), { accepted, refused: false })
     yield* Effect.addFinalizer(() => Effect.sync(() => MutableHashMap.remove(listeners, key(endpoint))))
-    return accepted as Queue.Dequeue<ServerSide>
+
+    return Queue.asDequeue(accepted)
   })
 
   const refuse = (endpoint: Endpoint, refused: boolean): Effect.Effect<void> =>
@@ -62,20 +61,25 @@ const make = Effect.gen(function* () {
           ? Effect.fail(new ConnectionFailed({ endpoint, reason: "connection refused" }))
           : Effect.succeed(found)
     })
+
     const toClient = yield* Queue.bounded<Uint8Array, ConnectionLost>(capacity)
     const toServer = yield* Queue.bounded<Uint8Array, ConnectionLost>(capacity)
+
     const closeBoth = (reason: string): Effect.Effect<void> =>
       Effect.all(
         [Queue.fail(toClient, new ConnectionLost({ reason })), Queue.fail(toServer, new ConnectionLost({ reason }))],
         { discard: true }
       )
+
     const serverSide: ServerSide = {
       incoming: pipeOf(toServer).incoming,
       send: pipeOf(toClient).send,
       close: closeBoth
     }
+
     yield* Queue.offer(open.accepted, serverSide)
     yield* Effect.addFinalizer(() => closeBoth("client closed the connection"))
+
     return {
       incoming: pipeOf(toClient).incoming,
       send: pipeOf(toServer).send
@@ -86,29 +90,37 @@ const make = Effect.gen(function* () {
 })
 
 /**
+ * What an in-process network offers the sides that use it.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface InMemoryNetworkService {
+  /** Accepts connections on an endpoint until the caller's scope closes. */
+  readonly bind: (endpoint: Endpoint) => Effect.Effect<Queue.Dequeue<ServerSide>, never, Scope.Scope>
+  /** Opens a connection, failing when nothing is bound to the endpoint. */
+  readonly connect: (endpoint: Endpoint) => Effect.Effect<Duplex, ConnectionFailed, Scope.Scope>
+  /** Stops accepting new connections without touching the established ones. */
+  readonly refuse: (endpoint: Endpoint, refused: boolean) => Effect.Effect<void>
+}
+
+/**
  * An in-process stand-in for the network.
  *
  * @category services
  * @since 0.0.0
  */
-export class InMemoryNetwork extends Context.Service<
-  InMemoryNetwork,
-  {
-    /** Accepts connections on an endpoint until the caller's scope closes. */
-    readonly bind: (endpoint: Endpoint) => Effect.Effect<Queue.Dequeue<ServerSide>, never, Scope.Scope>
-    /** Opens a connection, failing when nothing is bound to the endpoint. */
-    readonly connect: (endpoint: Endpoint) => Effect.Effect<Duplex, ConnectionFailed, Scope.Scope>
-    /** Stops accepting new connections without touching the established ones. */
-    readonly refuse: (endpoint: Endpoint, refused: boolean) => Effect.Effect<void>
-  }
->()("effect-open-protocol/InMemoryNetwork") {
-  /**
-   * Provides an isolated in-process network for the lifetime of the layer.
-   *
-   * @since 0.0.0
-   */
-  static readonly layer: Layer.Layer<InMemoryNetwork> = Layer.effect(InMemoryNetwork)(make)
-}
+export class InMemoryNetwork extends Context.Service<InMemoryNetwork, InMemoryNetworkService>()(
+  "effect-open-protocol/InMemoryNetwork"
+) {}
+
+/**
+ * Provides an isolated in-process network for the lifetime of the layer.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layerNetwork: Layer.Layer<InMemoryNetwork> = Layer.effect(InMemoryNetwork)(make)
 
 /**
  * Provides a `Transport` backed by an `InMemoryNetwork`.
@@ -120,7 +132,7 @@ export class InMemoryNetwork extends Context.Service<
  * import { InMemoryTransport } from "effect-open-protocol"
  *
  * const testTransport = InMemoryTransport.layer.pipe(
- *   Layer.provideMerge(InMemoryTransport.InMemoryNetwork.layer)
+ *   Layer.provideMerge(InMemoryTransport.layerNetwork)
  * )
  * ```
  *
@@ -149,4 +161,4 @@ export const layer: Layer.Layer<Transport, never, InMemoryNetwork> = Layer.effec
  * @category layers
  * @since 0.0.0
  */
-export const layerComplete: Layer.Layer<Transport | InMemoryNetwork> = Layer.provideMerge(layer, InMemoryNetwork.layer)
+export const layerComplete: Layer.Layer<Transport | InMemoryNetwork> = Layer.provideMerge(layer, layerNetwork)

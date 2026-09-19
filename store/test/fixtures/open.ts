@@ -4,7 +4,7 @@
  */
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { Effect, Layer } from "effect"
-import { WireStore } from "../../src/WireStore.ts"
+import { layer as storeLayer, WireStore } from "../../src/WireStore.ts"
 
 const filename = Bun.argv[2] ?? ""
 
@@ -13,5 +13,5 @@ await Effect.runPromise(
     const store = yield* WireStore
     const runs = yield* store.listRuns
     console.log(`ok ${runs.length}`)
-  }).pipe(Effect.provide(WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })))))
+  }).pipe(Effect.provide(storeLayer.pipe(Layer.provide(SqliteClient.layer({ filename })))))
 )

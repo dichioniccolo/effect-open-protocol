@@ -114,6 +114,7 @@ export const decodeHeader = (text: string): Result.Result<Header, MalformedHeade
         yield* reserved(Str.substring(16, 18)(text), "sequenceNumber")
         yield* reserved(Str.substring(18, 19)(text), "messageParts")
         yield* reserved(Str.substring(19, 20)(text), "messagePartNumber")
+
         return new Header({
           length,
           mid,

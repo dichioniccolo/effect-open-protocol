@@ -19,11 +19,11 @@ import { Duration, Effect, pipe, Random, Stdio, Stream } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { Command, Flag } from "effect/unstable/cli"
-import { makeWith, type Simulator } from "../simulator/ControllerSimulator.ts"
-import { makeTcpListener } from "../simulator/TcpListener.ts"
+import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
+import { layer as simulatorOnTcp } from "../simulator/TcpListener.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
-import { host, instrument, jitter, latency, latencyOf, port, seed, traceDb, traceFile, traceSink } from "./Wire.ts"
-import { makeRecording } from "./Recording.ts"
+import { Recording } from "./Recording.ts"
+import { host, instrument, jitter, latency, latencyOf, port, recordingOf, seed, traceDb, traceFile } from "./Wire.ts"
 
 const faultRate = Flag.Finite("fault-rate").pipe(
   Flag.withDescription("Probability that a frame this controller sends triggers a fault"),
@@ -56,18 +56,22 @@ const newlines = (bytes: Uint8Array): number => A.length(A.filter(A.fromIterable
 const onEnter = (simulator: Simulator): Effect.Effect<void, never, Stdio.Stdio> =>
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio
+
     const produceOne = pipe(
       simulator.produce,
       Effect.flatMap((result) =>
         Effect.logInfo("produced a result on request").pipe(Effect.annotateLogs({ tighteningId: result.tighteningId }))
       )
     )
+
     return yield* pipe(
       Stream.runForEach(stdio.stdin, (chunk) =>
         // `A.range(1, 0)` is `[1]`, so an empty count has to be handled here.
         newlines(chunk) === 0
           ? Effect.void
-          : Effect.forEach(A.range(1, newlines(chunk)), () => produceOne, { discard: true })
+          : Effect.forEach(A.range(1, newlines(chunk)), () => produceOne, {
+              discard: true
+            })
       ),
       Effect.catchCause((cause) => Effect.logDebug("stdin closed, no result trigger", cause))
     )
@@ -104,22 +108,14 @@ const run = Effect.fnUntraced(function* (config: {
   readonly controllerName: string
 }) {
   const endpoint = new Endpoint({ host: config.host, port: config.port })
-  const recording = yield* makeRecording({
-    traceDb: config.traceDb,
-    file: yield* traceSink(config.traceFile),
-    start: {
-      side: "controller",
-      host: config.host,
-      port: config.port,
-      seed: config.seed,
-      latency: config.latency,
-      jitter: config.jitter
-    }
-  })
+
+  const recording = yield* Recording
+
   const link = latencyOf(config)
 
-  const listener = yield* makeTcpListener({
-    endpoint,
+  // Every accepted connection is traced and delayed before the simulator sees
+  // it; the listener's bindings still belong to this command's scope.
+  const network = simulatorOnTcp({
     decorate: (side) =>
       Effect.map(instrument(side, { source: "controller", recording, latency: link }), (wrapped) => ({
         ...wrapped,
@@ -127,16 +123,12 @@ const run = Effect.fnUntraced(function* (config: {
       }))
   })
 
-  const simulator = yield* makeWith(
-    {
-      endpoint,
-      controllerName: config.controllerName,
-      ...(config.resultInterval > 0 ? { resultInterval: Duration.millis(config.resultInterval) } : {}),
-      ...(config.faultRate > 0 ? { faults: { rate: config.faultRate } } : {})
-    },
-    Effect.succeed(listener.accept),
-    listener.refuse
-  )
+  const simulator = yield* makeSimulator({
+    endpoint,
+    controllerName: config.controllerName,
+    resultInterval: config.resultInterval > 0 ? Duration.millis(config.resultInterval) : undefined,
+    faults: config.faultRate > 0 ? { rate: config.faultRate } : undefined
+  }).pipe(Effect.provide(network))
 
   yield* Effect.logInfo("controller listening").pipe(
     Effect.annotateLogs({
@@ -151,13 +143,32 @@ const run = Effect.fnUntraced(function* (config: {
   // The line reader runs on its own fiber, so the main fiber is parked on an
   // interruptible hold and Ctrl-C reaches it.
   yield* Effect.forkChild(onEnter(simulator))
+
   return yield* Effect.onExit(Effect.never, () => summary(simulator))
 })
 
 const command = Command.make(
   "controller",
-  { host, port, seed, latency, jitter, traceFile, traceDb, faultRate, resultInterval, controllerName },
-  (config) => pipe(run(config), Random.withSeed(config.seed), Effect.scoped, Effect.asVoid)
+  {
+    host,
+    port,
+    seed,
+    latency,
+    jitter,
+    traceFile,
+    traceDb,
+    faultRate,
+    resultInterval,
+    controllerName
+  },
+  (config) =>
+    pipe(
+      run(config),
+      Random.withSeed(config.seed),
+      Effect.provide(recordingOf("controller", config)),
+      Effect.scoped,
+      Effect.asVoid
+    )
 ).pipe(Command.withDescription("Serve a simulated Open Protocol controller and trace every byte it exchanges"))
 
 Command.run(command, { version: "0.0.0" }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

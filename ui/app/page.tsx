@@ -18,5 +18,6 @@ export default async function Page() {
       renderedAt: Effect.map(DateTime.now, DateTime.formatIso)
     })
   )
+
   return <RunList initial={json} renderedAt={renderedAt} />
 }

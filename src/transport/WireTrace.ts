@@ -158,6 +158,7 @@ const observe = (
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const at = yield* now
+
     const emit = (event: WireEvent) =>
       pipe(
         record(event),
@@ -243,6 +244,7 @@ const observe = (
 export const tracedDuplex = Effect.fnUntraced(function* (duplex: Duplex, options: TraceOptions) {
   const incoming = yield* Ref.make("")
   const outgoing = yield* Ref.make("")
+
   return {
     incoming: Stream.tap(duplex.incoming, (bytes) => observe(options, incoming, "recv", bytes)),
     send: (bytes: Uint8Array) => Effect.andThen(observe(options, outgoing, "send", bytes), duplex.send(bytes))

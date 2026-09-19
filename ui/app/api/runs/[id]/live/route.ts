@@ -48,6 +48,7 @@ const feed = (runId: RunId, after: EventId) =>
   Effect.gen(function* () {
     const store = yield* WireStore
     const cursor = yield* Ref.make(after)
+
     const nextPage = pipe(
       Ref.get(cursor),
       Effect.flatMap((from) =>
@@ -59,12 +60,13 @@ const feed = (runId: RunId, after: EventId) =>
         O.match(A.last(page), { onNone: () => Effect.void, onSome: (last) => Ref.set(cursor, last.id) })
       )
     )
+
     return pipe(
       Stream.fromEffectSchedule(nextPage, Schedule.spaced(pollEvery)),
       Stream.filter(A.isReadonlyArrayNonEmpty),
       Stream.mapEffect((page) =>
         Effect.map(S.encodeEffect(EventPageJson)(page), (data) =>
-          Sse.encoder.write({ _tag: "Event", id: `${A.lastNonEmpty(page).id}`, event: "events", data })
+          Sse.encoder.write(Sse.Event.make({ id: `${A.lastNonEmpty(page).id}`, event: "events", data }))
         )
       ),
       Stream.encodeText
@@ -73,6 +75,7 @@ const feed = (runId: RunId, after: EventId) =>
 
 export async function GET(request: NextRequest, context: { readonly params: Promise<{ readonly id: string }> }) {
   const { id } = await context.params
+
   return O.match(S.decodeUnknownOption(RunIdFromString)(id), {
     onNone: () => new Response("unknown run", { status: 404 }),
     onSome: (runId) =>

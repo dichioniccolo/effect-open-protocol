@@ -16,9 +16,10 @@
  *
  * @since 0.0.0
  */
-import { Cause, Duration, Effect, pipe, Queue, Ref, Schedule } from "effect"
+import { Cause, Duration, Effect, Layer, pipe, Queue, Ref, Schedule } from "effect"
+import * as Context from "effect/Context"
 import type { TighteningResult } from "../protocol/TighteningResult.ts"
-import type { Dedup } from "./Dedup.ts"
+import { Dedup } from "./Dedup.ts"
 
 /**
  * What the application does with a result. Failing means "I did not take it":
@@ -73,7 +74,7 @@ export const defaultBufferSize = 16
  * @category models
  * @since 0.0.0
  */
-export interface ResultDelivery {
+export interface ResultDeliveryService {
   /** Enqueues a result; waits when the buffer is full (backpressure). */
   readonly submit: (result: TighteningResult) => Effect.Effect<void>
   /** Results handed to the handler, duplicates excluded. */
@@ -106,7 +107,7 @@ interface Counters {
  * @category constructors
  * @since 0.0.0
  */
-export const dropping: ResultDelivery = {
+export const dropping: ResultDeliveryService = {
   submit: (result) =>
     Effect.logDebug("dropping a result: no handler is configured").pipe(
       Effect.annotateLogs({ deviceId: result.deviceId, tighteningId: result.tighteningId })
@@ -116,19 +117,16 @@ export const dropping: ResultDelivery = {
 }
 
 /**
- * Starts the delivery loop for a device, for the lifetime of the calling scope.
+ * Starts the delivery loop for a device.
  *
  * `acknowledge` is called only after the handler succeeded, or immediately for
  * a duplicate whose earlier acknowledgement never reached the controller.
- *
- * @category constructors
- * @since 0.0.0
  */
-export const makeResultDelivery = Effect.fnUntraced(function* (options: {
+export const make = Effect.fnUntraced(function* (options: {
   readonly delivery: DeliveryOptions
-  readonly dedup: Dedup
   readonly acknowledge: (result: TighteningResult) => Effect.Effect<void, unknown>
 }) {
+  const dedup = yield* Dedup
   const queue = yield* Queue.bounded<TighteningResult>(options.delivery.bufferSize ?? defaultBufferSize)
   const counters = yield* Ref.make<Counters>({ delivered: 0, duplicates: 0 })
   const retry = options.delivery.handlerRetry ?? defaultHandlerRetry
@@ -143,16 +141,13 @@ export const makeResultDelivery = Effect.fnUntraced(function* (options: {
       )
     )
 
-  const redeliver = (result: TighteningResult): Effect.Effect<void> =>
-    pipe(
-      Ref.update(counters, (current) => ({ ...current, duplicates: current.duplicates + 1 })),
-      Effect.andThen(
-        Effect.logDebug("acknowledging a duplicate result").pipe(
-          Effect.annotateLogs({ deviceId: result.deviceId, tighteningId: result.tighteningId })
-        )
-      ),
-      Effect.andThen(acknowledge(result))
+  const redeliver = Effect.fnUntraced(function* (result: TighteningResult) {
+    yield* Ref.update(counters, (current) => ({ ...current, duplicates: current.duplicates + 1 }))
+    yield* Effect.logDebug("acknowledging a duplicate result").pipe(
+      Effect.annotateLogs({ deviceId: result.deviceId, tighteningId: result.tighteningId })
     )
+    yield* acknowledge(result)
+  })
 
   const handle = (result: TighteningResult): Effect.Effect<void> =>
     pipe(
@@ -163,25 +158,66 @@ export const makeResultDelivery = Effect.fnUntraced(function* (options: {
           Effect.logError("the result handler failed, not acknowledging", cause).pipe(
             Effect.annotateLogs({ deviceId: result.deviceId, tighteningId: result.tighteningId })
           ),
-        onSuccess: () =>
-          pipe(
-            options.dedup.remember(result.tighteningId),
-            Effect.andThen(Ref.update(counters, (current) => ({ ...current, delivered: current.delivered + 1 }))),
-            Effect.andThen(acknowledge(result))
-          )
+        onSuccess: Effect.fnUntraced(function* () {
+          yield* dedup.remember(result.tighteningId)
+          yield* Ref.update(counters, (current) => ({ ...current, delivered: current.delivered + 1 }))
+          yield* acknowledge(result)
+        })
       })
     )
 
   const deliver = (result: TighteningResult): Effect.Effect<void> =>
-    Effect.flatMap(options.dedup.seen(result.tighteningId), (duplicate) =>
-      duplicate ? redeliver(result) : handle(result)
-    )
+    Effect.flatMap(dedup.seen(result.tighteningId), (duplicate) => (duplicate ? redeliver(result) : handle(result)))
 
-  yield* pipe(Queue.take(queue), Effect.flatMap(deliver), Effect.forever, Effect.forkChild)
+  yield* Queue.take(queue).pipe(Effect.flatMap(deliver), Effect.forever, Effect.forkChild)
 
   return {
     submit: (result) => Effect.orDie(Queue.offer(queue, result)),
     delivered: Effect.map(Ref.get(counters), (current) => current.delivered),
     duplicates: Effect.map(Ref.get(counters), (current) => current.duplicates)
-  } satisfies ResultDelivery
+  } satisfies ResultDeliveryService
 })
+
+/**
+ * The delivery queue of one device.
+ *
+ * A connection provides `ResultDelivery.layer` for itself over its `Dedup`, so
+ * recovery and the read loop hand results to the same queue.
+ *
+ * **Example** (Reading what a device delivered)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { ResultDelivery } from "effect-open-protocol"
+ *
+ * const program = Effect.gen(function* () {
+ *   const delivery = yield* ResultDelivery
+ *   return yield* delivery.delivered
+ * })
+ * ```
+ *
+ * @category services
+ * @since 0.0.0
+ */
+export class ResultDelivery extends Context.Service<ResultDelivery, ResultDeliveryService>()(
+  "effect-open-protocol/ResultDelivery"
+) {}
+
+/**
+ * Delivers results to `handler` for the lifetime of the layer.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layer = (options: {
+  readonly delivery: DeliveryOptions
+  readonly acknowledge: (result: TighteningResult) => Effect.Effect<void, unknown>
+}): Layer.Layer<ResultDelivery, never, Dedup> => Layer.effect(ResultDelivery)(make(options))
+
+/**
+ * Drops every result, for a connection with no handler.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layerDropping: Layer.Layer<ResultDelivery> = Layer.succeed(ResultDelivery)(dropping)

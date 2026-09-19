@@ -9,7 +9,8 @@
  *
  * @since 0.0.0
  */
-import { Deferred, Effect, Match, pipe, Ref, Semaphore } from "effect"
+import { Deferred, Effect, Match, pipe, Predicate, Ref, Semaphore } from "effect"
+import * as Context from "effect/Context"
 import * as O from "effect/Option"
 import type { Duration } from "effect"
 import type { Message } from "../protocol/Messages.ts"
@@ -50,7 +51,9 @@ export const expectReply =
       Match.tag("CommandError", (error) =>
         error.mid === mid ? O.some(Effect.fail(new CommandRejected({ mid, code: error.code }))) : O.none()
       ),
-      Match.orElse(() => (direct !== undefined && message._tag === direct ? O.some(Effect.succeed(message)) : O.none()))
+      Match.orElse(() =>
+        direct !== undefined && Predicate.isTagged(message, direct) ? O.some(Effect.succeed(message)) : O.none()
+      )
     )
 
 interface Pending {
@@ -65,7 +68,7 @@ interface Pending {
  * @category models
  * @since 0.0.0
  */
-export interface RequestReply {
+export interface RequestReplyService {
   /**
    * Sends a message and waits for the reply that matches `expectation`,
    * queueing behind any request already in flight.
@@ -85,13 +88,8 @@ export interface RequestReply {
   readonly interruptAll: (error: ConnectionLost) => Effect.Effect<void>
 }
 
-/**
- * Builds a correlation slot over a send function.
- *
- * @category constructors
- * @since 0.0.0
- */
-export const makeRequestReply = Effect.fnUntraced(function* (options: {
+/** Builds a correlation slot over a send function. */
+export const make = Effect.fnUntraced(function* (options: {
   readonly send: (message: Message) => Effect.Effect<void, ConnectionLost>
   readonly responseTimeout: Duration.Duration
 }) {
@@ -110,6 +108,7 @@ export const makeRequestReply = Effect.fnUntraced(function* (options: {
         yield* Ref.set(slot, O.some({ mid, expectation, deferred }))
         yield* Effect.addFinalizer(() => Ref.set(slot, O.none()))
         yield* options.send(message)
+
         return yield* pipe(
           Deferred.await(deferred),
           Effect.timeoutOrElse({
@@ -123,6 +122,7 @@ export const makeRequestReply = Effect.fnUntraced(function* (options: {
   const offer = (message: Message): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       const pending = yield* Ref.get(slot)
+
       return yield* O.match(pending, {
         onNone: () => Effect.succeed(false),
         onSome: (current) =>
@@ -147,5 +147,19 @@ export const makeRequestReply = Effect.fnUntraced(function* (options: {
       })
     })
 
-  return { request, offer, interruptAll } satisfies RequestReply
+  return { request, offer, interruptAll } satisfies RequestReplyService
 })
+
+/**
+ * The correlation slot of one live session.
+ *
+ * Every attempt builds its own over the socket it just opened, so the slot
+ * dies with the session it belongs to: `RequestReply.make` is the way in, and
+ * the `Session` carries the result to whoever sends on it.
+ *
+ * @category services
+ * @since 0.0.0
+ */
+export class RequestReply extends Context.Service<RequestReply, RequestReplyService>()(
+  "effect-open-protocol/RequestReply"
+) {}

@@ -13,7 +13,8 @@
  *
  * @since 0.0.0
  */
-import { Effect, Ref } from "effect"
+import { Effect, Layer, Ref } from "effect"
+import * as Context from "effect/Context"
 import * as A from "effect/Array"
 import * as HashSet from "effect/HashSet"
 import * as O from "effect/Option"
@@ -25,7 +26,7 @@ import { TighteningId } from "../protocol/TighteningResult.ts"
  * @category models
  * @since 0.0.0
  */
-export interface Dedup {
+export interface DedupService {
   /** Whether this identifier was already delivered. */
   readonly seen: (id: TighteningId) => Effect.Effect<boolean>
   /** Records an identifier as delivered, evicting the oldest when full. */
@@ -72,27 +73,21 @@ interface State {
  */
 export const defaultCapacity = 1000
 
-/**
- * Builds a bounded dedup store.
- *
- * **Example** (Recognising a resend)
- *
- * ```ts
- * import { Effect } from "effect"
- * import { makeDedup, TighteningId } from "effect-open-protocol"
- *
- * const program = Effect.gen(function* () {
- *   const dedup = yield* makeDedup(16)
- *   const id = TighteningId.make(7)
- *   yield* dedup.remember(id)
- *   return yield* dedup.seen(id)
- * })
- * ```
- *
- * @category constructors
- * @since 0.0.0
- */
-export const makeDedup = Effect.fnUntraced(function* (capacity: number = defaultCapacity) {
+/** Advances the watermark across every identifier already delivered. */
+const advance = (from: TighteningId, ahead: HashSet.HashSet<TighteningId>): Pick<State, "watermark" | "ahead"> => {
+  const next = TighteningId.make(from + 1)
+
+  return HashSet.has(ahead, next) ? advance(next, HashSet.remove(ahead, next)) : { watermark: O.some(from), ahead }
+}
+
+/** The oldest identifier held aside, which is where a baseline has to start. */
+const lowestAhead = (ahead: HashSet.HashSet<TighteningId>): O.Option<TighteningId> =>
+  A.reduce(A.fromIterable(ahead), O.none<TighteningId>(), (lowest, id) =>
+    O.match(lowest, { onNone: () => O.some(id), onSome: (value) => O.some(id < value ? id : value) })
+  )
+
+/** Builds a bounded dedup store. */
+export const make = Effect.fnUntraced(function* (capacity: number = defaultCapacity) {
   const state = yield* Ref.make<State>({
     ids: HashSet.empty<TighteningId>(),
     order: [],
@@ -101,24 +96,14 @@ export const makeDedup = Effect.fnUntraced(function* (capacity: number = default
     emptyHistory: false
   })
 
-  /** Advances the watermark across every identifier already delivered. */
-  const advance = (
-    from: TighteningId,
-    ahead: HashSet.HashSet<TighteningId>
-  ): {
-    readonly watermark: O.Option<TighteningId>
-    readonly ahead: HashSet.HashSet<TighteningId>
-  } => {
-    const next = TighteningId.make(from + 1)
-    return HashSet.has(ahead, next) ? advance(next, HashSet.remove(ahead, next)) : { watermark: O.some(from), ahead }
-  }
-
   /** Records the identifier, evicting the oldest once the window is full. */
   const record = (current: State, id: TighteningId): Pick<State, "ids" | "order"> => {
     if (HashSet.has(current.ids, id)) {
       return { ids: current.ids, order: current.order }
     }
+
     const order = A.append(current.order, id)
+
     return A.length(order) <= capacity
       ? { ids: HashSet.add(current.ids, id), order }
       : O.match(A.head(order), {
@@ -137,6 +122,7 @@ export const makeDedup = Effect.fnUntraced(function* (capacity: number = default
     Ref.update(state, (current) => {
       const kept = record(current, id)
       const ahead = HashSet.add(current.ahead, id)
+
       return O.match(current.watermark, {
         // Without a baseline the identifier is held aside: treating whatever
         // arrives first as the baseline would write off everything older that
@@ -156,12 +142,6 @@ export const makeDedup = Effect.fnUntraced(function* (capacity: number = default
   const markBaseline = (id: TighteningId): Effect.Effect<void> =>
     Ref.update(state, (current) =>
       O.isSome(current.watermark) ? current : { ...current, ...advance(id, current.ahead) }
-    )
-
-  /** The oldest identifier held aside, which is where a baseline has to start. */
-  const lowestAhead = (ahead: HashSet.HashSet<TighteningId>): O.Option<TighteningId> =>
-    A.reduce(A.fromIterable(ahead), O.none<TighteningId>(), (lowest, id) =>
-      O.match(lowest, { onNone: () => O.some(id), onSome: (value) => O.some(id < value ? id : value) })
     )
 
   const markNoHistory: Effect.Effect<void> = Ref.update(state, (current) =>
@@ -185,5 +165,38 @@ export const makeDedup = Effect.fnUntraced(function* (capacity: number = default
     markNoHistory,
     sawEmptyHistory: Effect.map(Ref.get(state), (current) => current.emptyHistory),
     lastDelivered: Effect.map(Ref.get(state), (current) => current.watermark)
-  } satisfies Dedup
+  } satisfies DedupService
 })
+
+/**
+ * The duplicate window of one device.
+ *
+ * A connection provides `Dedup.layer` for itself, so its delivery queue and
+ * its gap recovery share one window and nothing leaks between devices.
+ *
+ * **Example** (Recognising a resend)
+ *
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Dedup, TighteningId } from "effect-open-protocol"
+ *
+ * const program = Effect.gen(function* () {
+ *   const dedup = yield* Dedup
+ *   const id = TighteningId.make(7)
+ *   yield* dedup.remember(id)
+ *   return yield* dedup.seen(id)
+ * })
+ * ```
+ *
+ * @category services
+ * @since 0.0.0
+ */
+export class Dedup extends Context.Service<Dedup, DedupService>()("effect-open-protocol/Dedup") {}
+
+/**
+ * Provides a window of `capacity` identifiers for the lifetime of the layer.
+ *
+ * @category layers
+ * @since 0.0.0
+ */
+export const layer = (capacity: number = defaultCapacity): Layer.Layer<Dedup> => Layer.effect(Dedup)(make(capacity))

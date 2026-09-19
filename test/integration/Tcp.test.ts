@@ -1,13 +1,16 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Duration, Effect, pipe, Ref, Stream, SubscriptionRef } from "effect"
+import { Duration, Effect, pipe, Predicate, Ref, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
-import { makeTcp } from "../../simulator/ControllerSimulator.ts"
-import { makeDeviceConnection } from "../../src/connection/DeviceConnection.ts"
+import * as O from "effect/Option"
+import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
+import { layer as simulatorOnTcp } from "../../simulator/TcpListener.ts"
+import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layer as layerTcp } from "../../src/transport/TcpTransport.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 
 const deviceId = DeviceId.make("tcp-tool")
+
 const endpoint = new Endpoint({ host: "127.0.0.1", port: 45455 })
 
 /**
@@ -27,21 +30,23 @@ describe("real TCP smoke test", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const simulator = yield* makeTcp({ endpoint, controllerName: "TcpSim" })
+          const simulator = yield* makeSimulator({ endpoint, controllerName: "TcpSim" })
           const received = yield* Ref.make<ReadonlyArray<number>>([])
-          const connection = yield* makeDeviceConnection({
+
+          const connection = yield* makeConnection({
             id: deviceId,
             endpoint,
             onResult: (result: TighteningResult) =>
-              Ref.update(received, (current) => A.append(current, result.tighteningId as number))
+              Ref.update(received, (current) => A.append(current, result.tighteningId))
           })
 
           const ready = yield* pipe(
             SubscriptionRef.changes(connection.state),
-            Stream.filter((current) => current._tag === "Ready"),
+            Stream.filter((current) => Predicate.isTagged(current, "Ready")),
             Stream.runHead
           )
-          expect(ready._tag).toBe("Some")
+
+          expect(O.isSome(ready)).toBe(true)
 
           yield* simulator.produce
           const results = yield* settle(Ref.get(received), (current) => A.length(current) === 1)
@@ -49,7 +54,7 @@ describe("real TCP smoke test", () => {
           expect(results).toEqual([1])
           expect(yield* connection.delivered).toBe(1)
         })
-      ).pipe(Effect.provide(layerTcp)),
+      ).pipe(Effect.provide([layerTcp, simulatorOnTcp()])),
     30_000
   )
 })
