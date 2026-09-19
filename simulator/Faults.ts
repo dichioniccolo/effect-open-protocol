@@ -45,16 +45,19 @@ export type FaultKind = typeof FaultKind.Type
  * @category models
  * @since 0.0.0
  */
-export interface FaultConfig {
-  /** Probability in `[0, 1]` that a given opportunity produces a fault. */
-  readonly rate: number
-  /** Kinds allowed in this run; defaults to all of them. */
-  readonly kinds?: ReadonlyArray<FaultKind> | undefined
-  /** Upper bound for injected reply delays. */
-  readonly maxDelay?: Duration.Duration | undefined
-  /** Upper bound for how long a link stays silent or refuses connections. */
-  readonly maxOutage?: Duration.Duration | undefined
-}
+export class FaultConfig extends S.Class<FaultConfig>("FaultConfig")(
+  {
+    /** Probability in `[0, 1]` that a given opportunity produces a fault. */
+    rate: S.Number.check(S.isBetween({ minimum: 0, maximum: 1 })),
+    /** Kinds allowed in this run. */
+    kinds: S.Array(FaultKind).pipe(S.withConstructorDefault(Effect.succeed(FaultKind.literals))),
+    /** Upper bound for injected reply delays. */
+    maxDelay: S.Duration.pipe(S.withConstructorDefault(Effect.succeed(Duration.seconds(8)))),
+    /** Upper bound for how long a link stays silent or refuses connections. */
+    maxOutage: S.Duration.pipe(S.withConstructorDefault(Effect.succeed(Duration.seconds(5))))
+  },
+  { description: "How aggressively faults are injected during a chaos run" }
+) {}
 
 /**
  * The fault decided for one opportunity.
@@ -83,22 +86,17 @@ export const Fault = Data.taggedEnum<Fault>()
 
 const none = Fault.None()
 
-const allKinds: ReadonlyArray<FaultKind> = FaultKind.literals
-
 const pickDuration = (max: Duration.Duration): Effect.Effect<Duration.Duration> =>
   Effect.map(Random.nextIntBetween(1, Math.max(2, Duration.toMillis(max))), (millis) => Duration.millis(millis))
 
-const faultOf = (kind: FaultKind, config: FaultConfig): Effect.Effect<Fault> => {
-  const maxDelay = config.maxDelay ?? Duration.seconds(8)
-  const maxOutage = config.maxOutage ?? Duration.seconds(5)
-
-  return Match.value(kind).pipe(
+const faultOf = (kind: FaultKind, config: FaultConfig): Effect.Effect<Fault> =>
+  Match.value(kind).pipe(
     Match.when("dropConnection", (): Effect.Effect<Fault> => Effect.succeed(Fault.DropConnection())),
     Match.when("goSilent", (): Effect.Effect<Fault> =>
-      Effect.map(pickDuration(maxOutage), (duration) => Fault.GoSilent({ duration }))
+      Effect.map(pickDuration(config.maxOutage), (duration) => Fault.GoSilent({ duration }))
     ),
     Match.when("delayReply", (): Effect.Effect<Fault> =>
-      Effect.map(pickDuration(maxDelay), (duration) => Fault.DelayReply({ duration }))
+      Effect.map(pickDuration(config.maxDelay), (duration) => Fault.DelayReply({ duration }))
     ),
     Match.when("splitFrame", (): Effect.Effect<Fault> =>
       Effect.map(Random.nextIntBetween(2, 5), (pieces) => Fault.SplitFrame({ pieces }))
@@ -106,11 +104,10 @@ const faultOf = (kind: FaultKind, config: FaultConfig): Effect.Effect<Fault> => 
     Match.when("coalesceFrames", (): Effect.Effect<Fault> => Effect.succeed(Fault.CoalesceFrames())),
     Match.when("rejectCommand", (): Effect.Effect<Fault> => Effect.succeed(Fault.RejectCommand({ code: 79 }))),
     Match.when("refuseConnections", (): Effect.Effect<Fault> =>
-      Effect.map(pickDuration(maxOutage), (duration) => Fault.RefuseConnections({ duration }))
+      Effect.map(pickDuration(config.maxOutage), (duration) => Fault.RefuseConnections({ duration }))
     ),
     Match.exhaustive
   )
-}
 
 /**
  * Decides whether this opportunity produces a fault, and which one.
@@ -119,9 +116,9 @@ const faultOf = (kind: FaultKind, config: FaultConfig): Effect.Effect<Fault> => 
  *
  * ```ts
  * import { Effect, Random } from "effect"
- * import { next } from "../simulator/Faults.ts"
+ * import { FaultConfig, next } from "../simulator/Faults.ts"
  *
- * const decision = Random.withSeed(42)(next({ rate: 0.5 }))
+ * const decision = Random.withSeed(42)(next(FaultConfig.makeUnsafe({ rate: 0.5 })))
  * ```
  *
  * @category constructors
@@ -129,15 +126,16 @@ const faultOf = (kind: FaultKind, config: FaultConfig): Effect.Effect<Fault> => 
  */
 export const next = (config: FaultConfig): Effect.Effect<Fault> =>
   Effect.gen(function* () {
-    const kinds = config.kinds ?? allKinds
     const roll = yield* Random.next
 
-    if (roll >= config.rate || A.length(kinds) === 0) {
+    if (roll >= config.rate || A.length(config.kinds) === 0) {
       return none
     }
 
-    const index = yield* Random.nextIntBetween(0, A.length(kinds))
-    const kind = A.get(A.fromIterable(kinds), index)
+    // Half-open: the inclusive default would draw an index one past the end,
+    // and the missing kind would read as "no fault" on that roll.
+    const index = yield* Random.nextIntBetween(0, A.length(config.kinds), { halfOpen: true })
+    const kind = A.get(config.kinds, index)
 
     return yield* O.match(kind, { onNone: () => Effect.succeed(none), onSome: (value) => faultOf(value, config) })
   })

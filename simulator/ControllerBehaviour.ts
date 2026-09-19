@@ -38,6 +38,10 @@ export const simulatorDevice = DeviceId.make("simulator")
  * @category models
  * @since 0.0.0
  */
+// crispen: the three handshake defaults below stay as `??` reads. Absorbing
+// them means making ControllerIdentity a schema with constructor defaults, but
+// SimulatorOptions extends this interface and callers pass plain literals, so
+// the move belongs with a SimulatorOptions redesign, not here.
 export interface ControllerIdentity {
   /** Controller identity reported in the handshake reply. */
   readonly cellId?: number | undefined

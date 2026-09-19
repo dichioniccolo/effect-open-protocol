@@ -17,6 +17,7 @@ import { NodeRuntime } from "@effect/platform-node"
 import { Duration, Effect, Random, Ref, Schedule } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
+import * as Faults from "../simulator/Faults.ts"
 import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
 import { DevicePool, layer as devicePoolLayer } from "../src/pool/DevicePool.ts"
 import { DeviceId, type TighteningResult } from "../src/protocol/TighteningResult.ts"
@@ -60,11 +61,11 @@ const runOnce = (options: {
           resultInterval: Duration.millis(100),
           ackTimeout: Duration.seconds(1),
           ackAttempts: 3,
-          faults: {
+          faults: new Faults.FaultConfig({
             rate: options.faultRate,
             maxDelay: Duration.seconds(2),
             maxOutage: Duration.seconds(2)
-          }
+          })
         })
 
         yield* pool.add({
