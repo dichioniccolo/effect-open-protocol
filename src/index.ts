@@ -1,10 +1,10 @@
 /**
  * Open Protocol client for tightening controllers, built with Effect.
  *
- * Every module is re-exported flat, and each one names its constructor after
- * what it builds (`DeviceConnection.make`, `Dedup.make`, ...), so nothing is
- * renamed on its way out. The two transports are the exception: both provide a
- * `layer`, so they keep their namespace and read as `TcpTransport.layer`.
+ * Data modules (the protocol, the connection state machine, settings, errors)
+ * are re-exported flat. Modules that build something keep their namespace, so
+ * their constructors and layers read as `Dedup.make`, `DeviceConnection.layer`
+ * or `TcpTransport.layer` instead of colliding under one `make` or `layer`.
  *
  * @since 0.0.0
  */

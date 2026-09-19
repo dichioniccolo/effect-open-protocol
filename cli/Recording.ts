@@ -12,12 +12,12 @@
  * @since 0.0.0
  */
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { Context, Effect, Fiber, FileSystem, Layer, Path, pipe, Queue, Ref } from "effect"
+import { Context, Effect, Fiber, FileSystem, Layer, Path, pipe, Queue, Ref, type Scope } from "effect"
 import * as A from "effect/Array"
 import * as DateTime from "effect/DateTime"
 import * as O from "effect/Option"
-import { layer as storeLayer, NewEvent, type RunId, RunStart, WireStore } from "../store/src/WireStore.ts"
-import type { WireEvent, WireSink } from "../src/transport/WireTrace.ts"
+import { layer as storeLayer, NewEvent, type RunId, type RunSide, RunStart, WireStore } from "../store/src/WireStore.ts"
+import { type WireEvent, wireEventLine, type WireSink } from "../src/transport/WireTrace.ts"
 
 /**
  * Hands out a sink for each connection a command opens or accepts, so every
@@ -98,21 +98,78 @@ const openDatabase = Effect.fnUntraced(function* (filename: string, start: RunSt
 })
 
 /**
- * Builds the recording for one command run: the JSONL sink, if any, plus the
+ * Opens the trace file, when one was asked for, and returns the sink that
+ * appends to it. The file closes with the calling scope.
+ */
+const openTraceFile = (
+  path: O.Option<string>
+): Effect.Effect<O.Option<WireSink>, never, FileSystem.FileSystem | Scope.Scope> =>
+  O.match(path, {
+    onNone: () => Effect.succeed(O.none()),
+    onSome: (target) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const file = yield* fs.open(target, { flag: "a" })
+        const encoder = new TextEncoder()
+
+        const sink: WireSink = (event: WireEvent) =>
+          pipe(
+            wireEventLine(event),
+            Effect.flatMap((line) => file.write(encoder.encode(`${line}\n`))),
+            Effect.asVoid,
+            // A trace that cannot be written must never take the run with it.
+            Effect.catchCause((cause) => Effect.logWarning("could not append to the trace file", cause))
+          )
+
+        return O.some(sink)
+      }).pipe(Effect.orDie)
+  })
+
+/**
+ * What a command run records about itself: where it traces to, and the flags
+ * that make the run replayable.
+ *
+ * @category models
+ * @since 0.0.0
+ */
+export interface RecordingConfig {
+  readonly host: string
+  readonly port: number
+  readonly seed: number
+  readonly latency: number
+  readonly jitter: number
+  /** JSONL file to append every event to, when the flags asked for one. */
+  readonly traceFile: O.Option<string>
+  /** The SQLite trace store both commands write into. */
+  readonly traceDb: string
+}
+
+/**
+ * Builds the recording for one command run: the JSONL file, if any, plus the
  * trace store at `traceDb`.
  *
  * A store that cannot be opened costs a warning and nothing else; the command
  * still runs and still logs every frame.
+ *
+ * @category constructors
+ * @since 0.0.0
  */
-export const make = Effect.fnUntraced(function* (options: {
-  readonly traceDb: string
-  readonly file: O.Option<WireSink>
-  readonly start: Omit<RunStart, "startedAt">
-}) {
+export const make = Effect.fnUntraced(function* (side: RunSide, config: RecordingConfig) {
   const startedAt = yield* now
+  const file = yield* openTraceFile(config.traceFile)
+
+  const start = new RunStart({
+    side,
+    host: config.host,
+    port: config.port,
+    seed: config.seed,
+    latency: config.latency,
+    jitter: config.jitter,
+    startedAt
+  })
 
   const database = yield* pipe(
-    openDatabase(options.traceDb, new RunStart({ ...options.start, startedAt })),
+    openDatabase(config.traceDb, start),
     Effect.map(O.some),
     Effect.catchCause((cause) =>
       Effect.as(Effect.logWarning("recording disabled, could not open the trace store", cause), O.none())
@@ -125,7 +182,7 @@ export const make = Effect.fnUntraced(function* (options: {
     nextConnection: Effect.map(
       Ref.updateAndGet(connections, (n) => n + 1),
       (connection) => {
-        const sinks = A.getSomes([options.file, O.map(database, (forConnection) => forConnection(connection))])
+        const sinks = A.getSomes([file, O.map(database, (forConnection) => forConnection(connection))])
 
         return (event: WireEvent) => Effect.forEach(sinks, (sink) => sink(event), { discard: true })
       }
@@ -154,10 +211,14 @@ export const make = Effect.fnUntraced(function* (options: {
  *   return yield* recording.nextConnection
  * }).pipe(
  *   Effect.provide(
- *     Recording.layer({
- *       traceDb: ".wire-trace/traces.sqlite",
- *       file: O.none(),
- *       start: { side: "client", host: "127.0.0.1", port: 4545, seed: 1, latency: 0, jitter: 0 }
+ *     Recording.layer("client", {
+ *       host: "127.0.0.1",
+ *       port: 4545,
+ *       seed: 1,
+ *       latency: 0,
+ *       jitter: 0,
+ *       traceFile: O.none(),
+ *       traceDb: ".wire-trace/traces.sqlite"
  *     })
  *   )
  * )
@@ -175,8 +236,7 @@ export class Recording extends Context.Service<Recording, RecordingService>()("w
  * @category layers
  * @since 0.0.0
  */
-export const layer = (options: {
-  readonly traceDb: string
-  readonly file: O.Option<WireSink>
-  readonly start: Omit<RunStart, "startedAt">
-}): Layer.Layer<Recording, never, FileSystem.FileSystem | Path.Path> => Layer.effect(Recording)(make(options))
+export const layer = (
+  side: RunSide,
+  config: RecordingConfig
+): Layer.Layer<Recording, never, FileSystem.FileSystem | Path.Path> => Layer.effect(Recording)(make(side, config))

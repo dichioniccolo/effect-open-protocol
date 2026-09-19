@@ -16,10 +16,9 @@
  *
  * @since 0.0.0
  */
-import { Cause, Duration, Effect, Layer, pipe, Queue, Ref, Schedule } from "effect"
-import * as Context from "effect/Context"
+import { Cause, Duration, Effect, pipe, Queue, Ref, Schedule } from "effect"
 import type { TighteningResult } from "../protocol/TighteningResult.ts"
-import { Dedup } from "./Dedup.ts"
+import type { Dedup } from "./Dedup.ts"
 
 /**
  * What the application does with a result. Failing means "I did not take it":
@@ -74,7 +73,7 @@ export const defaultBufferSize = 16
  * @category models
  * @since 0.0.0
  */
-export interface ResultDeliveryService {
+export interface ResultDelivery {
   /** Enqueues a result; waits when the buffer is full (backpressure). */
   readonly submit: (result: TighteningResult) => Effect.Effect<void>
   /** Results handed to the handler, duplicates excluded. */
@@ -99,15 +98,15 @@ interface Counters {
  *
  * ```ts
  * import { Effect } from "effect"
- * import { dropping } from "effect-open-protocol"
+ * import { ResultDelivery } from "effect-open-protocol"
  *
- * const program = Effect.map(dropping.delivered, (count) => count === 0)
+ * const program = Effect.map(ResultDelivery.dropping.delivered, (count) => count === 0)
  * ```
  *
  * @category constructors
  * @since 0.0.0
  */
-export const dropping: ResultDeliveryService = {
+export const dropping: ResultDelivery = {
   submit: (result) =>
     Effect.logDebug("dropping a result: no handler is configured").pipe(
       Effect.annotateLogs({ deviceId: result.deviceId, tighteningId: result.tighteningId })
@@ -117,16 +116,22 @@ export const dropping: ResultDeliveryService = {
 }
 
 /**
- * Starts the delivery loop for a device.
+ * Starts the delivery loop for a device, for the lifetime of the calling scope.
  *
  * `acknowledge` is called only after the handler succeeded, or immediately for
  * a duplicate whose earlier acknowledgement never reached the controller.
+ * `dedup` is the device's window, shared with its gap recovery so both see
+ * the same record of what was delivered.
+ *
+ * @category constructors
+ * @since 0.0.0
  */
 export const make = Effect.fnUntraced(function* (options: {
   readonly delivery: DeliveryOptions
+  readonly dedup: Dedup
   readonly acknowledge: (result: TighteningResult) => Effect.Effect<void, unknown>
 }) {
-  const dedup = yield* Dedup
+  const dedup = options.dedup
   const queue = yield* Queue.bounded<TighteningResult>(options.delivery.bufferSize ?? defaultBufferSize)
   const counters = yield* Ref.make<Counters>({ delivered: 0, duplicates: 0 })
   const retry = options.delivery.handlerRetry ?? defaultHandlerRetry
@@ -175,49 +180,5 @@ export const make = Effect.fnUntraced(function* (options: {
     submit: (result) => Effect.orDie(Queue.offer(queue, result)),
     delivered: Effect.map(Ref.get(counters), (current) => current.delivered),
     duplicates: Effect.map(Ref.get(counters), (current) => current.duplicates)
-  } satisfies ResultDeliveryService
+  } satisfies ResultDelivery
 })
-
-/**
- * The delivery queue of one device.
- *
- * A connection provides `ResultDelivery.layer` for itself over its `Dedup`, so
- * recovery and the read loop hand results to the same queue.
- *
- * **Example** (Reading what a device delivered)
- *
- * ```ts
- * import { Effect } from "effect"
- * import { ResultDelivery } from "effect-open-protocol"
- *
- * const program = Effect.gen(function* () {
- *   const delivery = yield* ResultDelivery
- *   return yield* delivery.delivered
- * })
- * ```
- *
- * @category services
- * @since 0.0.0
- */
-export class ResultDelivery extends Context.Service<ResultDelivery, ResultDeliveryService>()(
-  "effect-open-protocol/ResultDelivery"
-) {}
-
-/**
- * Delivers results to `handler` for the lifetime of the layer.
- *
- * @category layers
- * @since 0.0.0
- */
-export const layer = (options: {
-  readonly delivery: DeliveryOptions
-  readonly acknowledge: (result: TighteningResult) => Effect.Effect<void, unknown>
-}): Layer.Layer<ResultDelivery, never, Dedup> => Layer.effect(ResultDelivery)(make(options))
-
-/**
- * Drops every result, for a connection with no handler.
- *
- * @category layers
- * @since 0.0.0
- */
-export const layerDropping: Layer.Layer<ResultDelivery> = Layer.succeed(ResultDelivery)(dropping)

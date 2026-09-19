@@ -38,10 +38,6 @@ export const simulatorDevice = DeviceId.make("simulator")
  * @category models
  * @since 0.0.0
  */
-// crispen: the three handshake defaults below stay as `??` reads. Absorbing
-// them means making ControllerIdentity a schema with constructor defaults, but
-// SimulatorOptions extends this interface and callers pass plain literals, so
-// the move belongs with a SimulatorOptions redesign, not here.
 export interface ControllerIdentity {
   /** Controller identity reported in the handshake reply. */
   readonly cellId?: number | undefined
@@ -93,6 +89,8 @@ export const replyTo = (
         O.match(O.fromNullishOr(identity.rejectStartWith), {
           onNone: (): Message =>
             new CommunicationStartAccepted({
+              // Defaults read here rather than from a schema: callers pass
+              // `SimulatorOptions` as plain literals, and it extends the identity.
               cellId: identity.cellId ?? 1,
               channelId: identity.channelId ?? 1,
               controllerName: identity.controllerName ?? "Simulator"

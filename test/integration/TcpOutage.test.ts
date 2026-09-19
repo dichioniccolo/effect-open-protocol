@@ -3,7 +3,6 @@ import { Duration, Effect, Exit, pipe, Predicate, Ref, Schedule, Stream, Subscri
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { make as makeSimulator } from "../../simulator/ControllerSimulator.ts"
-import { SimulatorNetwork } from "../../simulator/SimulatorNetwork.ts"
 import { layer as simulatorOnTcp } from "../../simulator/TcpListener.ts"
 import { make as makeConnection } from "../../src/connection/DeviceConnection.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
@@ -29,7 +28,6 @@ describe("a controller that loses its port", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const transport = yield* Transport
-          const network = yield* SimulatorNetwork
           const simulator = yield* makeSimulator({ endpoint, controllerName: "OutageSim" })
 
           const received = yield* Ref.make<ReadonlyArray<string>>([])
@@ -56,7 +54,7 @@ describe("a controller that loses its port", () => {
           yield* settle(Ref.get(received), (current) => A.length(current) === 1)
 
           // The controller reboots: the listener goes, and the open session with it.
-          yield* network.refuse(endpoint, true)
+          yield* simulator.refuse(true)
 
           const dropped = yield* settle(
             SubscriptionRef.get(connection.state),
@@ -73,7 +71,7 @@ describe("a controller that loses its port", () => {
           const missed = yield* simulator.produce
           const missedId = `${missed.tighteningId}`
 
-          yield* network.refuse(endpoint, false)
+          yield* simulator.refuse(false)
 
           const delivered = yield* settle(Ref.get(received), (current) => A.contains(current, missedId), 500)
           expect(A.contains(delivered, missedId)).toBe(true)

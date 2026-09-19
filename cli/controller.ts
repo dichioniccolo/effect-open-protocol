@@ -21,12 +21,12 @@ import * as O from "effect/Option"
 import { Command, Flag } from "effect/unstable/cli"
 import * as Faults from "../simulator/Faults.ts"
 import { make as makeSimulator, type Simulator } from "../simulator/ControllerSimulator.ts"
-import { layer as simulatorOnTcp } from "../simulator/TcpListener.ts"
 import { Endpoint } from "../src/transport/Transport.ts"
-import { Recording } from "./Recording.ts"
-import { host, instrument, jitter, latency, latencyOf, port, recordingOf, seed, traceDb, traceFile } from "./Wire.ts"
+import * as Recording from "./Recording.ts"
+import { host, instrumentedListener, jitter, latency, latencyOf, port, seed, traceDb, traceFile } from "./Wire.ts"
 
 const faultRate = Flag.Finite("fault-rate").pipe(
+  Flag.withSchema(Faults.FaultRate),
   Flag.withDescription("Probability that a frame this controller sends triggers a fault"),
   Flag.withDefault(0)
 )
@@ -110,26 +110,12 @@ const run = Effect.fnUntraced(function* (config: {
 }) {
   const endpoint = new Endpoint({ host: config.host, port: config.port })
 
-  const recording = yield* Recording
-
-  const link = latencyOf(config)
-
-  // Every accepted connection is traced and delayed before the simulator sees
-  // it; the listener's bindings still belong to this command's scope.
-  const network = simulatorOnTcp({
-    decorate: (side) =>
-      Effect.map(instrument(side, { source: "controller", recording, latency: link }), (wrapped) => ({
-        ...wrapped,
-        close: side.close
-      }))
-  })
-
   const simulator = yield* makeSimulator({
     endpoint,
     controllerName: config.controllerName,
     resultInterval: config.resultInterval > 0 ? Duration.millis(config.resultInterval) : undefined,
     faults: config.faultRate > 0 ? new Faults.FaultConfig({ rate: config.faultRate }) : undefined
-  }).pipe(Effect.provide(network))
+  })
 
   yield* Effect.logInfo("controller listening").pipe(
     Effect.annotateLogs({
@@ -166,7 +152,10 @@ const command = Command.make(
     pipe(
       run(config),
       Random.withSeed(config.seed),
-      Effect.provide(recordingOf("controller", config)),
+      // Every accepted connection is traced and delayed before the simulator
+      // sees it; the listener's bindings still belong to this command's scope.
+      Effect.provide(instrumentedListener({ source: "controller", latency: latencyOf(config) })),
+      Effect.provide(Recording.layer("controller", config)),
       Effect.scoped,
       Effect.asVoid
     )

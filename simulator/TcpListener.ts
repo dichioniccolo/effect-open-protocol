@@ -17,39 +17,15 @@
 import { NodeSocketServer } from "@effect/platform-node"
 import { Deferred, Effect, Fiber, Layer, pipe, Predicate, Queue, Ref, Stream } from "effect"
 import * as A from "effect/Array"
-import * as MutableHashMap from "effect/MutableHashMap"
 import * as O from "effect/Option"
-import * as S from "effect/Schema"
 import type { ServerSide } from "../src/transport/InMemoryTransport.ts"
 import { ConnectionLost, type Endpoint } from "../src/transport/Transport.ts"
-import { SimulatorNetwork, type SimulatorNetworkService } from "./SimulatorNetwork.ts"
-
-/**
- * The simulated controller could not take its TCP port.
- *
- * @category errors
- * @since 0.0.0
- */
-export class SimulatorListenFailed extends S.TaggedError<SimulatorListenFailed>()("SimulatorListenFailed", {
-  endpoint: S.String,
-  reason: S.String
-}) {}
+import { type Listener, SimulatorListenFailed, SimulatorNetwork } from "./SimulatorNetwork.ts"
 
 /** Capacity of the accept queue, matching the in-memory network. */
 const capacity = 64
 
 const encoder = new TextEncoder()
-
-/** A bound TCP port that can be dropped and taken again. */
-interface TcpListener {
-  /** Connections accepted since the last take. */
-  readonly accept: Queue.Dequeue<ServerSide>
-  /**
-   * Drops the listener and every session it holds, or takes the port again.
-   * Calling it twice the same way is a no-op.
-   */
-  readonly refuse: (refused: boolean) => Effect.Effect<void>
-}
 
 /** Binds a TCP port for the lifetime of the calling scope. */
 const listen = Effect.fnUntraced(function* (options: {
@@ -181,10 +157,8 @@ const listen = Effect.fnUntraced(function* (options: {
     )
   })
 
-  return { accept: accepted, refuse } satisfies TcpListener
+  return { accepted, refuse } satisfies Listener
 })
-
-const key = (endpoint: Endpoint): string => `${endpoint.host}:${endpoint.port}`
 
 /**
  * Simulated controllers listening on real TCP ports.
@@ -213,22 +187,4 @@ const key = (endpoint: Endpoint): string => `${endpoint.host}:${endpoint.port}`
 export const layer = (
   options: { readonly decorate?: ((side: ServerSide) => Effect.Effect<ServerSide>) | undefined } = {}
 ): Layer.Layer<SimulatorNetwork> =>
-  Layer.sync(SimulatorNetwork)(() => {
-    const listeners = MutableHashMap.empty<string, TcpListener>()
-
-    const bind = Effect.fnUntraced(function* (endpoint: Endpoint) {
-      const listener = yield* listen({ endpoint, decorate: options.decorate })
-      MutableHashMap.set(listeners, key(endpoint), listener)
-      yield* Effect.addFinalizer(() => Effect.sync(() => MutableHashMap.remove(listeners, key(endpoint))))
-
-      return listener.accept
-    })
-
-    const refuse = (endpoint: Endpoint, refused: boolean): Effect.Effect<void> =>
-      O.match(MutableHashMap.get(listeners, key(endpoint)), {
-        onNone: () => Effect.void,
-        onSome: (listener) => listener.refuse(refused)
-      })
-
-    return { bind, refuse } satisfies SimulatorNetworkService
-  })
+  Layer.succeed(SimulatorNetwork)({ bind: (endpoint) => listen({ endpoint, decorate: options.decorate }) })

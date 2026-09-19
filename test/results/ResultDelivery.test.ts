@@ -1,11 +1,11 @@
 import { describe, expect, it } from "@effect/vitest"
 import { assertNone, assertSome } from "@effect/vitest/utils"
-import { Duration, Effect, Fiber, pipe, Ref, Schedule, type Scope } from "effect"
+import { Duration, Effect, Fiber, pipe, Ref, Schedule } from "effect"
 import { TestClock } from "effect/testing"
 import * as A from "effect/Array"
 import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../../src/protocol/TighteningResult.ts"
-import { Dedup, make as makeDedup } from "../../src/results/Dedup.ts"
-import { make as makeDelivery, ResultDelivery } from "../../src/results/ResultDelivery.ts"
+import * as Dedup from "../../src/results/Dedup.ts"
+import * as ResultDelivery from "../../src/results/ResultDelivery.ts"
 
 const deviceId = DeviceId.make("tool-1")
 
@@ -36,21 +36,15 @@ const recorder: Effect.Effect<Recorder> = Effect.all({
 const record = (ref: Ref.Ref<ReadonlyArray<number>>, result: TighteningResult) =>
   Ref.update(ref, (current) => A.append(current, result.tighteningId))
 
-/** The delivery queue over a dedup window the test keeps a handle on. */
-const deliveryWith = (
-  dedup: Dedup["Service"],
-  options: Parameters<typeof makeDelivery>[0]
-): Effect.Effect<ResultDelivery["Service"], never, Scope.Scope> =>
-  Effect.provideService(makeDelivery(options), Dedup, dedup)
-
 describe("ResultDelivery", () => {
   it.effect("acknowledges only after the handler succeeded", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const seen = yield* recorder
-        const dedup = yield* makeDedup(16)
+        const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* deliveryWith(dedup, {
+        const delivery = yield* ResultDelivery.make({
+          dedup,
           delivery: { handler: (result) => record(seen.handled, result) },
           acknowledge: (result) => record(seen.acked, result)
         })
@@ -70,9 +64,10 @@ describe("ResultDelivery", () => {
       Effect.gen(function* () {
         const seen = yield* recorder
         const attempts = yield* Ref.make(0)
-        const dedup = yield* makeDedup(16)
+        const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* deliveryWith(dedup, {
+        const delivery = yield* ResultDelivery.make({
+          dedup,
           delivery: {
             handler: () =>
               Effect.andThen(
@@ -100,9 +95,10 @@ describe("ResultDelivery", () => {
       Effect.gen(function* () {
         const seen = yield* recorder
         const attempts = yield* Ref.make(0)
-        const dedup = yield* makeDedup(16)
+        const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* deliveryWith(dedup, {
+        const delivery = yield* ResultDelivery.make({
+          dedup,
           delivery: {
             handler: (result) =>
               pipe(
@@ -127,9 +123,10 @@ describe("ResultDelivery", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const seen = yield* recorder
-        const dedup = yield* makeDedup(16)
+        const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* deliveryWith(dedup, {
+        const delivery = yield* ResultDelivery.make({
+          dedup,
           delivery: { handler: (result) => record(seen.handled, result) },
           acknowledge: (result) => record(seen.acked, result)
         })
@@ -151,9 +148,10 @@ describe("ResultDelivery", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const seen = yield* recorder
-        const dedup = yield* makeDedup(16)
+        const dedup = yield* Dedup.make(16)
 
-        const delivery = yield* deliveryWith(dedup, {
+        const delivery = yield* ResultDelivery.make({
+          dedup,
           delivery: {
             handler: (result) => Effect.andThen(Effect.sleep(Duration.seconds(1)), record(seen.handled, result)),
             bufferSize: 1
@@ -181,7 +179,7 @@ describe("ResultDelivery", () => {
   it.effect("keeps the dedup window bounded", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const dedup = yield* makeDedup(2)
+        const dedup = yield* Dedup.make(2)
         yield* dedup.markNoHistory
 
         yield* dedup.remember(TighteningId.make(1))
@@ -198,7 +196,7 @@ describe("ResultDelivery", () => {
   it.effect("waits for a baseline before trusting an identifier", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const dedup = yield* makeDedup(16)
+        const dedup = yield* Dedup.make(16)
 
         // A controller that has results we have not seen: until it tells us
         // where it is, a delivered result says nothing about what came before.
@@ -212,7 +210,7 @@ describe("ResultDelivery", () => {
   it.effect("takes the baseline from the controller, wherever it counts from", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const dedup = yield* makeDedup(16)
+        const dedup = yield* Dedup.make(16)
 
         yield* dedup.markBaseline(TighteningId.make(4712003))
         yield* dedup.remember(TighteningId.make(4712004))
@@ -225,7 +223,7 @@ describe("ResultDelivery", () => {
   it.effect("treats an empty controller as counting from its first result", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const dedup = yield* makeDedup(16)
+        const dedup = yield* Dedup.make(16)
 
         yield* dedup.markNoHistory
         yield* dedup.remember(TighteningId.make(7))

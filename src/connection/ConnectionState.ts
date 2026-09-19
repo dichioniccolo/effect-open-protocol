@@ -323,6 +323,16 @@ export const initial: ConnectionState = new Disconnected()
 export const isFinal = (state: ConnectionState): boolean => Predicate.isTagged(state, "Closed")
 
 /**
+ * Whether a close is already under way or done, so asking for one again has
+ * nothing left to do.
+ *
+ * @category predicates
+ * @since 0.0.0
+ */
+export const isClosedOrClosing = (state: ConnectionState): boolean =>
+  isFinal(state) || Predicate.isTagged(state, "Closing")
+
+/**
  * Whether the connection can carry application traffic.
  *
  * @category predicates

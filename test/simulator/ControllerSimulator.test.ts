@@ -89,12 +89,12 @@ describe("ControllerSimulator", () => {
   it.effect("refuses connections while the endpoint is closed off", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        yield* make({ endpoint })
+        const simulator = yield* make({ endpoint })
         const network = yield* InMemoryNetwork
-        yield* network.refuse(endpoint, true)
+        yield* simulator.refuse(true)
         const refused = yield* Effect.result(network.connect(endpoint))
         expect(Result.isFailure(refused)).toBe(true)
-        yield* network.refuse(endpoint, false)
+        yield* simulator.refuse(false)
         const accepted = yield* Effect.result(network.connect(endpoint))
         expect(Result.isSuccess(accepted)).toBe(true)
       })
