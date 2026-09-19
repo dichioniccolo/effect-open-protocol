@@ -40,6 +40,13 @@ const recorder: Effect.Effect<Recorder> = Effect.all({
 const record = (ref: Ref.Ref<ReadonlyArray<number>>, result: TighteningResult) =>
   Ref.update(ref, (current) => A.append(current, result.tighteningId))
 
+/** A result as its subscription pushes it, with an ack that records itself. */
+const pushedFor = (seen: Recorder, id: number) => {
+  const result = resultFor(id)
+
+  return { value: result, ack: record(seen.acked, result) }
+}
+
 describe("ResultDelivery", () => {
   it.effect("acknowledges only after the handler succeeded", () =>
     Effect.scoped(
@@ -50,11 +57,10 @@ describe("ResultDelivery", () => {
         const delivery = yield* ResultDelivery.make({
           dedup,
           ...defaults,
-          handler: (result) => record(seen.handled, result),
-          acknowledge: (result) => record(seen.acked, result)
+          handler: (result) => record(seen.handled, result)
         })
 
-        yield* delivery.submit(resultFor(1))
+        yield* delivery.submitPushed(pushedFor(seen, 1))
         yield* Effect.yieldNow
 
         expect(yield* Ref.get(seen.handled)).toEqual([1])
@@ -79,11 +85,10 @@ describe("ResultDelivery", () => {
               Ref.update(attempts, (n) => n + 1),
               Effect.fail("nope")
             ),
-          handlerRetry: Schedule.recurs(2),
-          acknowledge: (result) => record(seen.acked, result)
+          handlerRetry: Schedule.recurs(2)
         })
 
-        yield* delivery.submit(resultFor(1))
+        yield* delivery.submitPushed(pushedFor(seen, 1))
         yield* Effect.yieldNow
 
         expect(yield* Ref.get(seen.acked)).toEqual([])
@@ -109,11 +114,10 @@ describe("ResultDelivery", () => {
               Ref.updateAndGet(attempts, (n) => n + 1),
               Effect.flatMap((count) => (count < 2 ? Effect.fail("flaky") : record(seen.handled, result)))
             ),
-          handlerRetry: Schedule.recurs(3),
-          acknowledge: (result) => record(seen.acked, result)
+          handlerRetry: Schedule.recurs(3)
         })
 
-        yield* delivery.submit(resultFor(7))
+        yield* delivery.submitPushed(pushedFor(seen, 7))
         yield* Effect.yieldNow
 
         expect(yield* Ref.get(seen.handled)).toEqual([7])
@@ -131,13 +135,12 @@ describe("ResultDelivery", () => {
         const delivery = yield* ResultDelivery.make({
           dedup,
           ...defaults,
-          handler: (result) => record(seen.handled, result),
-          acknowledge: (result) => record(seen.acked, result)
+          handler: (result) => record(seen.handled, result)
         })
 
-        yield* delivery.submit(resultFor(3))
+        yield* delivery.submitPushed(pushedFor(seen, 3))
         yield* Effect.yieldNow
-        yield* delivery.submit(resultFor(3))
+        yield* delivery.submitPushed(pushedFor(seen, 3))
         yield* Effect.yieldNow
 
         expect(yield* Ref.get(seen.handled)).toEqual([3])
@@ -158,12 +161,11 @@ describe("ResultDelivery", () => {
           dedup,
           ...defaults,
           handler: (result) => Effect.andThen(Effect.sleep(Duration.seconds(1)), record(seen.handled, result)),
-          bufferSize: 1,
-          acknowledge: (result) => record(seen.acked, result)
+          bufferSize: 1
         })
 
         const submitting = yield* Effect.forkChild(
-          Effect.forEach(A.range(1, 4), (id) => delivery.submit(resultFor(id)), { discard: true })
+          Effect.forEach(A.range(1, 4), (id) => delivery.submitPushed(pushedFor(seen, id)), { discard: true })
         )
 
         yield* TestClock.adjust(Duration.seconds(1))

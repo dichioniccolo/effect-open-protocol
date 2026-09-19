@@ -14,16 +14,16 @@
  *
  * @since 0.0.0
  */
-import { Effect, Fiber, Layer, Match, pipe, Ref, Scope, Stream, SubscriptionRef } from "effect"
+import { Duration, Effect, Fiber, Layer, Match, pipe, Ref, Schedule, Scope, Stream, SubscriptionRef } from "effect"
 import * as Context from "effect/Context"
 import * as O from "effect/Option"
 import { CommunicationStopMid, LastResults, type Message } from "../protocol/Messages.ts"
 import type * as Mid from "../protocol/Mid.ts"
 import type { PayloadEncodeError } from "../protocol/ProtocolError.ts"
-import { type DeviceId, resultOf, type TighteningResult } from "../protocol/TighteningResult.ts"
+import { type DeviceId, resultOf } from "../protocol/TighteningResult.ts"
 import * as Dedup from "../results/Dedup.ts"
 import * as ResultDelivery from "../results/ResultDelivery.ts"
-import { type ConnectionFailed, ConnectionLost, Transport } from "../transport/Transport.ts"
+import { ConnectionFailed, ConnectionLost, Transport } from "../transport/Transport.ts"
 import { HandshakeRejected, NotReady } from "./ConnectionError.ts"
 import {
   Accepted,
@@ -36,6 +36,7 @@ import {
   type InvalidTransition,
   isClosedOrClosing,
   isReady,
+  isStreakStart,
   Opened,
   Recovered,
   Released,
@@ -135,25 +136,13 @@ const collecting = Effect.fnUntraced(function* (options: {
   const subscribe = Effect.orDie(Scope.provide(options.subscriptions.open(LastResults.rev(1), 1), scope))
 
   // Registered before the first attempt, so the first handshake subscribes.
-  const first = yield* subscribe
-  const subscription = yield* Ref.make(O.some(first))
-
-  // An ack names no result, so every registration acknowledges alike, and a
-  // result recovered with MID 0064 is acknowledged like a pushed one.
-  const acknowledge = (result: TighteningResult): Effect.Effect<void, ConnectionLost> =>
-    Effect.andThen(
-      first.ack,
-      Effect.logDebug("acknowledged a result").pipe(
-        Effect.annotateLogs({ deviceId: settings.id, tighteningId: result.tighteningId })
-      )
-    )
+  const subscription = yield* Ref.make(O.some(yield* subscribe))
 
   const delivery = yield* ResultDelivery.make({
     handler: options.handler,
     handlerRetry: settings.handlerRetry,
     bufferSize: settings.resultBuffer,
-    dedup,
-    acknowledge
+    dedup
   })
 
   const recovery = yield* GapRecovery.make({ settings, dedup, pipeline: delivery })
@@ -170,8 +159,8 @@ const collecting = Effect.fnUntraced(function* (options: {
         onSome: Effect.succeed
       })
 
-      yield* Stream.runForEach(current.values, (result) =>
-        recovery.submitResult(session, resultOf(settings.id, result.value))
+      yield* Stream.runForEach(current.values, (next) =>
+        recovery.submitPushed(session, { ...next, value: resultOf(settings.id, next.value) })
       )
 
       // The stream ends only with the connection.
@@ -202,6 +191,32 @@ const collecting = Effect.fnUntraced(function* (options: {
     during: (session) => Effect.raceFirst(pushed(session), reconcile(session))
   } satisfies Results
 })
+
+/**
+ * Runs `schedule`, and starts it over when `restart` is true at a failure.
+ * `Effect.retry` keeps a schedule's state for as long as the retried effect
+ * keeps failing. A session always ends by failing, so without this the
+ * backoff an early outage used up would stay spent after hours of healthy
+ * session. The supervisor records each failure in the state before the
+ * schedule steps, so `restart` can read it there.
+ */
+const restartingWhen = <Input>(
+  schedule: Schedule.Schedule<unknown, Input>,
+  restart: Effect.Effect<boolean>
+): Schedule.Schedule<unknown, Input> =>
+  Schedule.fromStep(
+    Effect.map(Effect.flatMap(Schedule.toStep(schedule), Ref.make), (current) =>
+      Effect.fnUntraced(function* (now: number, input: Input) {
+        if (yield* restart) {
+          yield* Ref.set(current, yield* Schedule.toStep(schedule))
+        }
+
+        const step = yield* Ref.get(current)
+
+        return yield* step(now, input)
+      })
+    )
+  )
 
 const reasonOf = (error: ConnectionFailed | ConnectionLost | HandshakeRejected): string =>
   Match.valueTags(error, {
@@ -251,10 +266,9 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
 
   const subscriptions = yield* Subscriptions.make({
     deviceId: settings.id,
-    // Acknowledgements go out on whatever session is open, handshake included:
-    // results recovered before the subscriptions are restored are
-    // acknowledged too. A control MID carries no field (its definition checks
-    // it), so failing to encode it would be a bug here.
+    // Acknowledgements go out on whatever session is open. A control MID
+    // carries no field (its definition checks it), so failing to encode it
+    // would be a bug here.
     send: (revision) =>
       Effect.flatMap(openSession(noSession), (open) =>
         Effect.catchTag(sendPayload(open.duplex, revision, {}), "PayloadEncodeError", Effect.die)
@@ -289,7 +303,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
 
   const routeUnsolicited = (message: Message): Effect.Effect<void> =>
     Match.value(message).pipe(
-      Match.tag("OldResult", (stored) => results.delivery.submit(resultOf(settings.id, stored))),
+      Match.tag("OldResult", (stored) => results.delivery.submitRecovered(resultOf(settings.id, stored))),
       Match.orElse((other) =>
         Effect.logWarning("unsolicited message dropped").pipe(
           Effect.annotateLogs({ deviceId: settings.id, message: other._tag })
@@ -300,9 +314,21 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const attempt = Effect.gen(function* () {
     yield* emit(new AttemptStarted())
 
-    const duplex = yield* transport
-      .connect(settings.endpoint)
-      .pipe(Effect.tapError((error) => emit(new Failed({ reason: error.reason }))))
+    // An unreachable host does not refuse the connection, it stays silent.
+    // Without a bound the attempt waits for the operating system to give up,
+    // minutes on Linux, instead of retrying on the backoff schedule.
+    const timedOut = new ConnectionFailed({
+      endpoint: settings.endpoint,
+      reason: `no connection within ${Duration.format(settings.connectTimeout)}`
+    })
+
+    const duplex = yield* Effect.tapError(
+      Effect.timeoutOrElse(transport.connect(settings.endpoint), {
+        duration: settings.connectTimeout,
+        orElse: () => Effect.fail(timedOut)
+      }),
+      (error) => emit(new Failed({ reason: error.reason }))
+    )
 
     yield* emit(new Opened())
     const lastSent = yield* Ref.make(0)
@@ -375,7 +401,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   const supervisor = pipe(
     attempt,
     Effect.tapError((error) => emitIfLegal(new Failed({ reason: reasonOf(error) }))),
-    Effect.retry(settings.reconnect),
+    Effect.retry(restartingWhen(settings.reconnect, Effect.map(SubscriptionRef.get(state), isStreakStart))),
     Effect.catchCause((cause) => Effect.logError("device connection stopped", cause)),
     Effect.forever
   )

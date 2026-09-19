@@ -1,12 +1,12 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Duration, Effect, Fiber, pipe, Predicate, Ref, Result, Schedule, Stream, SubscriptionRef } from "effect"
+import { Duration, Effect, Fiber, Layer, pipe, Predicate, Ref, Result, Schedule, Stream, SubscriptionRef } from "effect"
 import * as O from "effect/Option"
 import { TestClock } from "effect/testing"
 import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 import { KeepAliveMid } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
-import { Endpoint } from "../../src/transport/Transport.ts"
+import { Endpoint, Transport } from "../../src/transport/Transport.ts"
 import { type ConnectionState, Ready, WaitingToReconnect } from "../../src/connection/ConnectionState.ts"
 import * as DeviceConnection from "../../src/connection/DeviceConnection.ts"
 
@@ -143,6 +143,59 @@ describe("DeviceConnection", () => {
         yield* TestClock.adjust(Duration.seconds(5))
 
         expect(yield* Fiber.join(ready)).toBeInstanceOf(Ready)
+      })
+    )
+  )
+
+  it.effect("gives up on a connection that does not open and backs off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connection = yield* DeviceConnection.make({
+          id: deviceId,
+          endpoint,
+          connectTimeout: Duration.seconds(3),
+          reconnect: Schedule.spaced(Duration.seconds(1))
+        })
+
+        const waiting = yield* Effect.forkChild(awaitState(connection.state, "WaitingToReconnect"))
+        yield* TestClock.adjust(Duration.seconds(3))
+
+        expect(yield* Fiber.join(waiting)).toMatchObject({ reason: "no connection within 3s" })
+      })
+    ).pipe(
+      // A host that is down never answers the connection request.
+      Effect.provide(Layer.succeed(Transport)({ connect: () => Effect.never }))
+    )
+  )
+
+  it.effect("starts the backoff over after a healthy session", () =>
+    provided(
+      Effect.gen(function* () {
+        const simulator = yield* ControllerSimulator.make({ endpoint })
+        yield* simulator.refuse(true)
+
+        const connection = yield* DeviceConnection.make({
+          id: deviceId,
+          endpoint,
+          reconnect: Schedule.exponential(Duration.seconds(1))
+        })
+
+        // Four refused attempts, 1 + 2 + 4 seconds apart. The next wait is 8.
+        yield* awaitState(connection.state, "WaitingToReconnect")
+        yield* TestClock.adjust(Duration.seconds(7))
+        yield* simulator.refuse(false)
+
+        const ready = yield* Effect.forkChild(awaitState(connection.state, "Ready"))
+        yield* TestClock.adjust(Duration.seconds(8))
+        yield* Fiber.join(ready)
+
+        yield* simulator.drop
+        yield* awaitState(connection.state, "WaitingToReconnect")
+
+        const again = yield* Effect.forkChild(awaitState(connection.state, "Ready"))
+        yield* TestClock.adjust(Duration.seconds(1))
+
+        expect(yield* Fiber.join(again)).toBeInstanceOf(Ready)
       })
     )
   )
