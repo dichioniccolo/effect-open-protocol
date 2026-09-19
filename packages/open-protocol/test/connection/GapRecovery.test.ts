@@ -4,7 +4,7 @@ import * as A from "effect/Array"
 import * as O from "effect/Option"
 import * as Str from "effect/String"
 import * as GapRecovery from "../../src/connection/GapRecovery.ts"
-import { resolveSettings } from "../../src/connection/DeviceSettings.ts"
+import { type DeviceSettings, resolveSettings } from "../../src/connection/DeviceSettings.ts"
 import * as RequestReply from "../../src/connection/RequestReply.ts"
 import type { Session } from "../../src/connection/Session.ts"
 import type { Pushed } from "../../src/connection/Subscriptions.ts"
@@ -47,8 +47,10 @@ const settings = resolveSettings({
  * A session that records which MIDs were asked for and answers every old
  * result request from a fixed store.
  */
-const fixture = Effect.fnUntraced(function* () {
+const fixture = Effect.fnUntraced(function* (recoverySettings: DeviceSettings = settings, silentFirst = 0) {
   const asked = yield* Ref.make<ReadonlyArray<number>>([])
+  // The first `silentFirst` requests for a stored result go unanswered.
+  const unanswered = yield* Ref.make(silentFirst)
   const submitted = yield* Ref.make<ReadonlyArray<number>>([])
   const dedup = yield* Dedup.make(64)
 
@@ -71,7 +73,10 @@ const fixture = Effect.fnUntraced(function* () {
 
       const replies = yield* Ref.get(slot)
 
-      yield* O.match(replies, {
+      const stored = Predicate.isTagged(message, "RequestOldResult") && message.tighteningId !== 0
+      const silent = stored && (yield* Ref.getAndUpdate(unanswered, (n) => n - 1)) > 0
+
+      yield* O.match(silent ? O.none() : replies, {
         onNone: () => Effect.void,
         onSome: (current) =>
           Effect.asVoid(Effect.flatMap(Effect.orDie(decodeFrame(encodeMessage(reply))), current.offer))
@@ -97,7 +102,7 @@ const fixture = Effect.fnUntraced(function* () {
   } satisfies ResultDelivery
 
   // The window is real and the delivery queue is this stub.
-  const recovery = yield* GapRecovery.make({ settings, dedup, pipeline })
+  const recovery = yield* GapRecovery.make({ settings: recoverySettings, dedup, pipeline })
 
   return { asked, dedup, pipeline, recovery, session, submitted }
 })
@@ -131,14 +136,53 @@ describe("what triggers a MID 0064", () => {
     })
   )
 
-  it.effect("a result arriving before any baseline asks for nothing", () =>
+  it.live("a result arriving before any baseline asks where the results start", () =>
     Effect.gen(function* () {
       const gap = yield* fixture()
 
       yield* gap.recovery.submitPushed(gap.session, { value: resultFor(9), ack: Effect.void })
-      yield* Effect.yieldNow
+      yield* Effect.sleep(Duration.millis(50))
 
-      expect(yield* Ref.get(gap.asked)).toEqual([])
+      const requests = yield* Ref.get(gap.asked)
+      expect(A.length(requests)).toBeGreaterThan(0)
+      expect(A.every(requests, (mid) => mid === 64)).toBe(true)
+    })
+  )
+
+  it.effect("a gap larger than one pass is fetched to the end", () =>
+    Effect.gen(function* () {
+      // The fixture's controller holds results up to 3; one pass fetches one.
+      const gap = yield* fixture({ ...settings, recoveryLimit: 1 })
+      yield* gap.dedup.markBaseline(TighteningId.make(1))
+
+      yield* gap.recovery.recoverGap(gap.session)
+
+      expect(yield* Ref.get(gap.submitted)).toEqual([2, 3])
+    })
+  )
+
+  it.live("what a pass had to leave is fetched later without another trigger", () =>
+    Effect.gen(function* () {
+      const gap = yield* fixture(
+        {
+          ...settings,
+          recoveryAttempts: 1,
+          recoveryTimeout: Duration.millis(20),
+          recoveryRetryDelay: Duration.millis(10)
+        },
+        2
+      )
+
+      yield* gap.dedup.markBaseline(TighteningId.make(1))
+
+      // The only pass allowed gets no answer for 2 and 3 and gives up.
+      yield* gap.recovery.recoverGap(gap.session)
+      expect(yield* Ref.get(gap.submitted)).toEqual([])
+
+      yield* Effect.forkChild(gap.recovery.keepUp(gap.session))
+      yield* Effect.sleep(Duration.millis(200))
+
+      expect(yield* Ref.get(gap.submitted)).toEqual([2, 3])
     })
   )
 })

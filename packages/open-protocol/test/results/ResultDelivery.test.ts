@@ -181,19 +181,56 @@ describe("ResultDelivery", () => {
     )
   )
 
-  it.effect("keeps the dedup window bounded", () =>
+  it.effect("still knows an evicted identifier delivered above a gap", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const dedup = yield* Dedup.make(2)
-        yield* dedup.markNoHistory
+        yield* dedup.markBaseline(TighteningId.make(0))
+
+        // 1 is missing, so 2, 3 and 4 wait above the watermark, and the window
+        // of two has already evicted 2.
+        yield* dedup.remember(TighteningId.make(2))
+        yield* dedup.remember(TighteningId.make(3))
+        yield* dedup.remember(TighteningId.make(4))
+
+        expect(yield* dedup.seen(TighteningId.make(2))).toBe(true)
+      })
+    )
+  )
+
+  it.effect("still knows an evicted identifier below the watermark", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dedup = yield* Dedup.make(2)
+        yield* dedup.markBaseline(TighteningId.make(0))
 
         yield* dedup.remember(TighteningId.make(1))
         yield* dedup.remember(TighteningId.make(2))
         yield* dedup.remember(TighteningId.make(3))
 
-        expect(yield* dedup.seen(TighteningId.make(1))).toBe(false)
-        expect(yield* dedup.seen(TighteningId.make(3))).toBe(true)
-        assertSome(yield* dedup.lastDelivered, TighteningId.make(3))
+        expect(yield* dedup.seen(TighteningId.make(1))).toBe(true)
+      })
+    )
+  )
+
+  it.effect("lets recovery fetch again a result whose handler failed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const seen = yield* recorder
+        const dedup = yield* Dedup.make(16)
+
+        const delivery = yield* ResultDelivery.make({
+          dedup,
+          ...defaults,
+          handler: () => Effect.fail("nope"),
+          handlerRetry: Schedule.recurs(0)
+        })
+
+        yield* delivery.submitRecovered(resultFor(5))
+        yield* Effect.yieldNow
+
+        expect(yield* dedup.known(TighteningId.make(5))).toBe(false)
+        expect(yield* Ref.get(seen.acked)).toEqual([])
       })
     )
   )
@@ -225,14 +262,18 @@ describe("ResultDelivery", () => {
     )
   )
 
-  it.effect("treats an empty controller as counting from its first result", () =>
+  it.effect("waits for the floor of an empty controller before trusting a result", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const dedup = yield* Dedup.make(16)
 
+        // A late reply can arrive before the results below it, so the first
+        // result delivered says nothing about where the controller starts.
         yield* dedup.markNoHistory
         yield* dedup.remember(TighteningId.make(7))
+        assertNone(yield* dedup.lastDelivered)
 
+        yield* dedup.markBaseline(TighteningId.make(6))
         assertSome(yield* dedup.lastDelivered, TighteningId.make(7))
       })
     )

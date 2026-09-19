@@ -128,7 +128,9 @@ const start = Effect.fnUntraced(function* (options: SimulatorSettings, listener:
 
   /** Serves one accepted connection until it ends. */
   const serve = Effect.fnUntraced(function* (connection: ServerSide) {
-    yield* Ref.update(state, (current) => ({ ...current, connection: O.some(connection) }))
+    // A subscription belongs to the connection that sent it: a new connection
+    // starts without one, even if the previous one has not finished closing.
+    yield* Ref.update(state, (current) => ({ ...current, connection: O.some(connection), subscribed: false }))
 
     const onFrame = Effect.fnUntraced(function* (frame: string) {
       const message = yield* decodeMessage(frame)

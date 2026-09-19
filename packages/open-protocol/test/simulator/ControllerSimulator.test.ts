@@ -61,6 +61,23 @@ describe("ControllerSimulator", () => {
     ).pipe(Effect.provide(layerSimulated))
   )
 
+  it.effect("starts every connection without the previous one's subscription", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const simulator = yield* ControllerSimulator.make({ endpoint })
+        const network = yield* InMemoryNetwork
+        const first = yield* network.connect(endpoint)
+        yield* exchange(first, [new CommunicationStart(), new SubscribeResults()])
+
+        // The first connection is still open when the second one arrives.
+        const second = yield* network.connect(endpoint)
+        yield* exchange(second, [new KeepAlive()])
+
+        expect(yield* simulator.isSubscribed).toBe(false)
+      })
+    ).pipe(Effect.provide(layerSimulated))
+  )
+
   it.effect("rejects the handshake when configured to", () =>
     Effect.scoped(
       Effect.gen(function* () {

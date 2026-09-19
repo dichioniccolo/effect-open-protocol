@@ -44,3 +44,15 @@ existing packet's `CAPTURE.md`, or is struck through with a word of why.
   failures do not trigger it: `make` does no I/O, the connect happens later in
   the supervisor. Fix: complete `started` with `Deferred.failCause` (and on
   interruption), with a test for each path.~~ Fixed 2026-09-19, though neither path happens today. `make` never suspends and nothing in it dies. `add` now races `started` against the device fiber's exit anyway.
+
+- Head-of-line blocking in the read loop: pushed values wait in a subscription
+  queue of size 1, and nothing consumes the results subscription until the
+  session is `Ready`. A controller that pushes before 0060 (the chaos
+  simulator did, see `explorations/recovery-backlog/CAPTURE.md`) blocks the
+  reader, so no reply is read and the session hangs until requests time out.
+  A real controller should not do this, but the client could drop or buffer
+  instead of blocking.
+
+- `docs/REFERENCE.md` says "the same seed replays the same chaos run". It
+  does not: timing is real, and `--seed 7` gave different numbers on every run
+  (2026-09-19). Either make the claim true or reword it.

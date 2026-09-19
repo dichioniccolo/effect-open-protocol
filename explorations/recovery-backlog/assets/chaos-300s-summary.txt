@@ -1,0 +1,21 @@
+# bun run demo -- --seed 7 --duration 300 --devices 50 --fault-rate 0.2 (main @ 643bdf3)
+Devices:                  50
+Seed:                     7
+Results generated:        74147
+Results delivered:        38703
+Duplicates discarded:     15993
+Abandoned by controller:  191
+Reconnects pending:       0
+Results lost:             35444   FAILED
+Delivered twice:          0   OK
+
+# same command on 9fbd480 (before the inbox fixes)
+Devices:                  50
+Seed:                     7
+Results generated:        74002
+Results delivered:        38948
+Duplicates discarded:     14974
+Abandoned by controller:  90
+Reconnects pending:       0
+Results lost:             35054   FAILED
+Delivered twice:          0   OK

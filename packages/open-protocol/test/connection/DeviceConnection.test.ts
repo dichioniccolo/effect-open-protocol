@@ -168,6 +168,36 @@ describe("DeviceConnection", () => {
     )
   )
 
+  it.effect("backs off after a defect instead of restarting at once", () =>
+    Effect.gen(function* () {
+      const connects = yield* Ref.make(0)
+
+      const transport = Layer.succeed(Transport)({
+        connect: () =>
+          Effect.andThen(
+            Ref.update(connects, (n) => n + 1),
+            Effect.die("transport bug")
+          )
+      })
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const connection = yield* DeviceConnection.make({
+            id: deviceId,
+            endpoint,
+            reconnect: Schedule.spaced(Duration.seconds(1))
+          })
+
+          const waiting = yield* awaitState(connection.state, "WaitingToReconnect")
+          expect(waiting).toMatchObject({ reason: "defect: transport bug" })
+
+          yield* TestClock.adjust(Duration.millis(500))
+          expect(yield* Ref.get(connects)).toBe(1)
+        })
+      ).pipe(Effect.provide(transport))
+    })
+  )
+
   it.effect("starts the backoff over after a healthy session", () =>
     provided(
       Effect.gen(function* () {

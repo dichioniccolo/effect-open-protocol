@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Duration, Effect, pipe, Predicate, Ref, Schedule, Stream, SubscriptionRef } from "effect"
+import { Duration, Effect, Fiber, pipe, Predicate, Ref, Schedule, Stream, SubscriptionRef } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
 import { TestClock } from "effect/testing"
@@ -118,6 +118,40 @@ describe("result delivery over a connection", () => {
 
         expect(received).toEqual([1, 2, 3])
         expect(A.dedupe(received)).toEqual(received)
+      })
+    )
+  )
+
+  it.effect("recovers a result produced while the subscription was being restored", () =>
+    provided(
+      Effect.gen(function* () {
+        const simulator = yield* ControllerSimulator.make({ endpoint })
+        const handler = yield* sink
+
+        const connection = yield* DeviceConnection.make({
+          id: deviceId,
+          endpoint,
+          reconnect: Schedule.spaced(Duration.millis(100)),
+          onResult: handler.onResult
+        })
+
+        yield* awaitState(connection.state, "Ready")
+        yield* simulator.produce
+        yield* settle(Ref.get(handler.received), (current) => A.length(current) === 1)
+
+        // Result 2 is produced after the reconnect's recovery and before the
+        // controller has the subscription back, so it is never pushed, and no
+        // later tightening arrives to reveal the gap.
+        const subscribing = yield* Effect.forkChild(awaitState(connection.state, "Subscribing"))
+        yield* simulator.drop
+        yield* TestClock.adjust(Duration.seconds(1))
+        yield* Fiber.join(subscribing)
+        yield* simulator.produce
+        yield* awaitState(connection.state, "Ready")
+
+        const received = yield* settle(Ref.get(handler.received), (current) => A.length(current) === 2)
+
+        expect(received).toEqual([1, 2])
       })
     )
   )

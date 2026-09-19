@@ -128,6 +128,7 @@ export const make = Effect.fnUntraced(function* (options: {
   const counters = yield* Ref.make<Counters>({ delivered: 0, duplicates: 0 })
 
   const redeliver = Effect.fnUntraced(function* (queued: Queued) {
+    yield* dedup.release(queued.value.tighteningId)
     yield* Ref.update(counters, (current) => ({ ...current, duplicates: current.duplicates + 1 }))
     yield* Effect.logDebug("received a duplicate result").pipe(
       Effect.annotateLogs({ deviceId: queued.value.deviceId, tighteningId: queued.value.tighteningId })
@@ -141,8 +142,11 @@ export const make = Effect.fnUntraced(function* (options: {
       Effect.retry(options.handlerRetry),
       Effect.matchCauseEffect({
         onFailure: (cause: Cause.Cause<unknown>) =>
-          Effect.logError("the result handler failed, not acknowledging", cause).pipe(
-            Effect.annotateLogs({ deviceId: queued.value.deviceId, tighteningId: queued.value.tighteningId })
+          Effect.andThen(
+            dedup.release(queued.value.tighteningId),
+            Effect.logError("the result handler failed, not acknowledging", cause).pipe(
+              Effect.annotateLogs({ deviceId: queued.value.deviceId, tighteningId: queued.value.tighteningId })
+            )
           ),
         onSuccess: Effect.fnUntraced(function* () {
           yield* dedup.remember(queued.value.tighteningId)
@@ -159,7 +163,10 @@ export const make = Effect.fnUntraced(function* (options: {
 
   yield* Queue.take(queue).pipe(Effect.flatMap(deliver), Effect.forever, Effect.forkChild)
 
-  const enqueue = (queued: Queued): Effect.Effect<void> => Effect.orDie(Queue.offer(queue, queued))
+  // Claimed before it waits in the queue, so recovery does not fetch again a
+  // result that is already on its way to the handler.
+  const enqueue = (queued: Queued): Effect.Effect<void> =>
+    Effect.andThen(dedup.claim(queued.value.tighteningId), Effect.orDie(Queue.offer(queue, queued)))
 
   return {
     submitPushed: (pushed) => enqueue({ value: pushed.value, ack: acknowledge(pushed) }),

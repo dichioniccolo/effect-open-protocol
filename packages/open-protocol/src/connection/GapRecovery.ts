@@ -15,7 +15,7 @@ import * as O from "effect/Option"
 import { resultOf, type TighteningResult } from "../protocol/TighteningResult.ts"
 import type { Dedup } from "../results/Dedup.ts"
 import type { ResultDelivery } from "../results/ResultDelivery.ts"
-import { runRecovery } from "../results/ResultRecovery.ts"
+import { type Recovery, runRecovery } from "../results/ResultRecovery.ts"
 import { RequestOldResultMid } from "../protocol/Messages.ts"
 import type { Session } from "./Session.ts"
 import type { Pushed } from "./Subscriptions.ts"
@@ -30,7 +30,9 @@ import type { DeviceSettings } from "./DeviceSettings.ts"
 export interface GapRecovery {
   /** Fetches everything between the last contiguously delivered result and the newest one. */
   readonly recoverGap: (session: Session) => Effect.Effect<void>
-  /** Submits a pushed result, starting a recovery pass first when it reveals a gap. */
+  /** Retries, for as long as the session lives, whatever a pass had to leave for later. */
+  readonly keepUp: (session: Session) => Effect.Effect<never>
+  /** Submits a pushed result, starting a recovery pass first when it reveals a gap or no baseline exists yet. */
   readonly submitPushed: (session: Session, pushed: Pushed<TighteningResult>) => Effect.Effect<void>
 }
 
@@ -66,9 +68,12 @@ export const make = Effect.fnUntraced(function* (options: {
 }) {
   const { dedup, pipeline, settings } = options
   const recovering = yield* Ref.make(false)
+  // Set when the last pass gave up with identifiers still pending or left
+  // beyond the limit; nothing else would ask for them on a quiet line.
+  const owed = yield* Ref.make(false)
 
   const recoverGap = (session: Session): Effect.Effect<void> => {
-    const pass = (attempts: number): Effect.Effect<void> =>
+    const pass = (attempts: number): Effect.Effect<Recovery> =>
       Effect.gen(function* () {
         const recovery = yield* runRecovery({
           dedup,
@@ -95,13 +100,23 @@ export const make = Effect.fnUntraced(function* (options: {
           )
         }
 
+        // A pass fetches at most `recoveryLimit` results. While it stopped at
+        // that limit and got somewhere, the rest follows at once: nothing else
+        // would ask for it once the line goes quiet.
+        if (recovery.skipped > 0 && A.length(recovery.recovered) + A.length(recovery.missing) > 0) {
+          return yield* pass(attempts)
+        }
+
         // A pending identifier is one the controller may still have: the request
         // timed out or the link wobbled. Giving up on it here is how a result
-        // gets lost, so the pass repeats while the session lives.
+        // gets lost, so the pass repeats, and `keepUp` takes over after that.
         if (A.length(recovery.pending) > 0 && attempts > 1) {
           yield* Effect.sleep(settings.recoveryRetryDelay)
-          yield* pass(attempts - 1)
+
+          return yield* pass(attempts - 1)
         }
+
+        return recovery
       })
 
     return Effect.gen(function* () {
@@ -111,22 +126,34 @@ export const make = Effect.fnUntraced(function* (options: {
         return
       }
 
-      yield* pass(settings.recoveryAttempts).pipe(
-        Effect.catchCause((cause) => Effect.logWarning("gap recovery failed, continuing", cause)),
+      const left = yield* pass(settings.recoveryAttempts).pipe(
+        Effect.map((recovery) => A.length(recovery.pending) > 0 || recovery.skipped > 0),
+        Effect.catchCause((cause) => Effect.as(Effect.logWarning("gap recovery failed, continuing", cause), true)),
         Effect.ensuring(Ref.set(recovering, false))
       )
+
+      yield* Ref.set(owed, left)
     })
   }
 
   const submitPushed = Effect.fnUntraced(function* (session: Session, pushed: Pushed<TighteningResult>) {
     const watermark = yield* dedup.lastDelivered
 
-    if (O.isSome(watermark) && pushed.value.tighteningId > watermark.value + 1) {
+    // Without a baseline nothing can reveal a gap, so the result asks for one.
+    if (O.isNone(watermark) || pushed.value.tighteningId > watermark.value + 1) {
       yield* Effect.forkChild(recoverGap(session))
     }
 
     yield* pipeline.submitPushed(pushed)
   })
 
-  return { recoverGap, submitPushed } satisfies GapRecovery
+  const keepUp = (session: Session): Effect.Effect<never> =>
+    Effect.forever(
+      Effect.andThen(
+        Effect.sleep(settings.recoveryRetryDelay),
+        Effect.flatMap(Ref.get(owed), (left) => (left ? recoverGap(session) : Effect.void))
+      )
+    )
+
+  return { recoverGap, keepUp, submitPushed } satisfies GapRecovery
 })

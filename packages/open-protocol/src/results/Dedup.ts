@@ -30,6 +30,12 @@ export interface Dedup {
   readonly seen: (id: TighteningId) => Effect.Effect<boolean>
   /** Records an identifier as delivered, evicting the oldest when full. */
   readonly remember: (id: TighteningId) => Effect.Effect<void>
+  /** Marks an identifier as handed to delivery and not handled yet. */
+  readonly claim: (id: TighteningId) => Effect.Effect<void>
+  /** Drops a claim whose result was not delivered, so it can be fetched again. */
+  readonly release: (id: TighteningId) => Effect.Effect<void>
+  /** Delivered or on its way: what recovery need not ask for. */
+  readonly known: (id: TighteningId) => Effect.Effect<boolean>
   /** Highest identifier delivered so far, used to detect gaps after an outage. */
   readonly lastDelivered: Effect.Effect<O.Option<TighteningId>>
   /**
@@ -39,8 +45,9 @@ export interface Dedup {
    */
   readonly markBaseline: (id: TighteningId) => Effect.Effect<void>
   /**
-   * Records that the controller holds no results at all, so the next one it
-   * produces is the first we could ever have seen and becomes the baseline.
+   * Records that the controller held no results when first asked, so
+   * everything it holds now was produced while we were listening. Recovery
+   * then finds where its results start and sets the baseline there.
    */
   readonly markNoHistory: Effect.Effect<void>
   /** Whether the controller has told us, at some point, that it held nothing. */
@@ -62,6 +69,13 @@ interface State {
   readonly ahead: HashSet.HashSet<TighteningId>
   /** Set when the controller told us it has nothing stored. */
   readonly emptyHistory: boolean
+  /**
+   * Where the watermark started. Everything above it and up to the watermark
+   * was delivered or written off; everything at or below it is history.
+   */
+  readonly baseline: O.Option<TighteningId>
+  /** Handed to delivery and not handled yet. */
+  readonly claimed: HashSet.HashSet<TighteningId>
 }
 
 /** Advances the watermark across every identifier already delivered. */
@@ -70,12 +84,6 @@ const advance = (from: TighteningId, ahead: HashSet.HashSet<TighteningId>): Pick
 
   return HashSet.has(ahead, next) ? advance(next, HashSet.remove(ahead, next)) : { watermark: O.some(from), ahead }
 }
-
-/** The oldest identifier held aside, which is where a baseline has to start. */
-const lowestAhead = (ahead: HashSet.HashSet<TighteningId>): O.Option<TighteningId> =>
-  A.reduce(A.fromIterable(ahead), O.none<TighteningId>(), (lowest, id) =>
-    O.match(lowest, { onNone: () => O.some(id), onSome: (value) => O.some(id < value ? id : value) })
-  )
 
 /**
  * Builds the duplicate window of one device.
@@ -107,7 +115,9 @@ export const make = Effect.fnUntraced(function* (capacity: number) {
     order: [],
     watermark: O.none(),
     ahead: HashSet.empty<TighteningId>(),
-    emptyHistory: false
+    emptyHistory: false,
+    baseline: O.none(),
+    claimed: HashSet.empty<TighteningId>()
   })
 
   /** Records the identifier, evicting the oldest once the window is full. */
@@ -129,23 +139,29 @@ export const make = Effect.fnUntraced(function* (capacity: number) {
         })
   }
 
+  // Past the baseline the answer is exact, however old the identifier: up to
+  // the watermark everything was delivered, and `ahead` holds what was
+  // delivered above it. Only history relies on the bounded window.
   const seen = (id: TighteningId): Effect.Effect<boolean> =>
-    Effect.map(Ref.get(state), (current) => HashSet.has(current.ids, id))
+    Effect.map(
+      Ref.get(state),
+      (current) =>
+        HashSet.has(current.ids, id) ||
+        HashSet.has(current.ahead, id) ||
+        (O.exists(current.baseline, (start) => id > start) && O.exists(current.watermark, (mark) => id <= mark))
+    )
 
   const remember = (id: TighteningId): Effect.Effect<void> =>
     Ref.update(state, (current) => {
-      const kept = record(current, id)
+      const kept = { ...record(current, id), claimed: HashSet.remove(current.claimed, id) }
       const ahead = HashSet.add(current.ahead, id)
 
       return O.match(current.watermark, {
         // Without a baseline the identifier is held aside: treating whatever
         // arrives first as the baseline would write off everything older that
-        // we never received. The exception is a controller that told us it has
-        // nothing stored, where the first result really is the first there is.
-        onNone: () =>
-          current.emptyHistory
-            ? { ...current, ...kept, ...advance(id, HashSet.remove(ahead, id)) }
-            : { ...current, ...kept, ahead },
+        // we never received, even on a controller that was empty when first
+        // asked, since a late reply can arrive before the results below it.
+        onNone: () => ({ ...current, ...kept, ahead }),
         onSome: (mark) =>
           id === mark + 1
             ? { ...current, ...kept, ...advance(id, HashSet.remove(ahead, id)) }
@@ -155,26 +171,37 @@ export const make = Effect.fnUntraced(function* (capacity: number) {
 
   const markBaseline = (id: TighteningId): Effect.Effect<void> =>
     Ref.update(state, (current) =>
-      O.isSome(current.watermark) ? current : { ...current, ...advance(id, current.ahead) }
+      O.isSome(current.watermark)
+        ? current
+        : {
+            ...current,
+            baseline: O.some(id),
+            ...advance(
+              id,
+              HashSet.filter(current.ahead, (held) => held > id)
+            )
+          }
     )
 
-  const markNoHistory: Effect.Effect<void> = Ref.update(state, (current) =>
-    O.isSome(current.watermark)
-      ? { ...current, emptyHistory: true }
-      : // A result already arrived while we were asking: it is the baseline.
-        O.match(lowestAhead(current.ahead), {
-          onNone: () => ({ ...current, emptyHistory: true }),
-          onSome: (lowest) => ({
-            ...current,
-            emptyHistory: true,
-            ...advance(lowest, HashSet.remove(current.ahead, lowest))
-          })
-        })
-  )
+  const markNoHistory: Effect.Effect<void> = Ref.update(state, (current) => ({ ...current, emptyHistory: true }))
+
+  const claim = (id: TighteningId): Effect.Effect<void> =>
+    Ref.update(state, (current) => ({ ...current, claimed: HashSet.add(current.claimed, id) }))
+
+  const release = (id: TighteningId): Effect.Effect<void> =>
+    Ref.update(state, (current) => ({ ...current, claimed: HashSet.remove(current.claimed, id) }))
+
+  const known = (id: TighteningId): Effect.Effect<boolean> =>
+    Effect.flatMap(seen(id), (delivered) =>
+      delivered ? Effect.succeed(true) : Effect.map(Ref.get(state), (current) => HashSet.has(current.claimed, id))
+    )
 
   return {
     seen,
     remember,
+    claim,
+    release,
+    known,
     markBaseline,
     markNoHistory,
     sawEmptyHistory: Effect.map(Ref.get(state), (current) => current.emptyHistory),

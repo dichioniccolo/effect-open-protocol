@@ -155,7 +155,10 @@ const collecting = Effect.fnUntraced(function* (options: {
   const pushed = (session: Session): Effect.Effect<never, ConnectionLost> =>
     Effect.gen(function* () {
       const current = yield* O.match(yield* Ref.get(subscription), {
-        onNone: () => Effect.tap(subscribe, (again) => Ref.set(subscription, O.some(again))),
+        // Registering and remembering are one step: interrupted between the
+        // two, the registry would hold a subscription nobody consumes, and
+        // every later attempt would fail with `AlreadySubscribed`.
+        onNone: () => Effect.uninterruptible(Effect.tap(subscribe, (again) => Ref.set(subscription, O.some(again)))),
         onSome: Effect.succeed
       })
 
@@ -174,16 +177,26 @@ const collecting = Effect.fnUntraced(function* (options: {
       )
     )
 
-  // Recovery is driven by events: a session starting, and a pushed result
-  // whose identifier sits above the watermark. A caller who also wants the
-  // line polled asks for it with `recoveryInterval`, and pays one MID 0064
-  // per interval for the one case events miss: results lost while the
-  // session stayed up, with no later tightening to reveal the gap.
+  // Recovery is driven by events: a session starting, the subscription
+  // coming up, and a pushed result whose identifier sits above the
+  // watermark. The pass after subscribing catches what the controller
+  // produced during the handshake's own recovery, which it never pushes, and
+  // whatever that pass left pending; after it, anything a pass had to leave
+  // for later is retried until it is fetched. A caller who also wants the line polled
+  // asks for it with `recoveryInterval`, and pays one MID 0064 per interval
+  // for the one case events miss: results lost while the session stayed up,
+  // with no later tightening to reveal the gap.
   const reconcile = (session: Session): Effect.Effect<never> =>
-    O.match(O.fromNullishOr(settings.recoveryInterval), {
-      onNone: () => Effect.never,
-      onSome: (interval) => Effect.forever(Effect.andThen(Effect.sleep(interval), recovery.recoverGap(session)))
-    })
+    Effect.andThen(
+      recovery.recoverGap(session),
+      Effect.raceFirst(
+        recovery.keepUp(session),
+        O.match(O.fromNullishOr(settings.recoveryInterval), {
+          onNone: () => Effect.never,
+          onSome: (interval) => Effect.forever(Effect.andThen(Effect.sleep(interval), recovery.recoverGap(session)))
+        })
+      )
+    )
 
   return {
     delivery,
@@ -400,6 +413,15 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
 
   const supervisor = pipe(
     attempt,
+    // A defect is a bug, but restarting at once would repeat it in a tight
+    // loop from a state that no longer allows a new attempt. It is logged and
+    // then handled like a lost session: recorded, and backed off.
+    Effect.catchDefect((defect) =>
+      Effect.andThen(
+        Effect.logError("device connection defect", defect),
+        Effect.fail(new ConnectionLost({ reason: `defect: ${defect}` }))
+      )
+    ),
     Effect.tapError((error) => emitIfLegal(new Failed({ reason: reasonOf(error) }))),
     Effect.retry(restartingWhen(settings.reconnect, Effect.map(SubscriptionRef.get(state), isStreakStart))),
     Effect.catchCause((cause) => Effect.logError("device connection stopped", cause)),

@@ -482,25 +482,35 @@ acknowledgement is yours to send.
 
 **A result the controller gives up on is gone**, which is why gap recovery
 exists. The library asks for missing results by identifier (MID 0064) and
-delivers them through the same path. Two events trigger it: a session starting,
-which establishes where the controller stands, and a pushed identifier that
-jumps ahead of the last one delivered, which is the gap itself. A healthy link
-therefore carries one MID 0064 per session and nothing more.
+delivers them through the same path. Three events trigger it: a session
+starting, which establishes where the controller stands; the subscription
+coming back, which catches what the controller produced during that first pass
+and never pushed; and a pushed identifier that jumps ahead of the last one
+delivered, which is the gap itself. A healthy link therefore carries two MID
+0064 per session and nothing more. Only the controller's "not found" (MID 0004
+code 15) writes a result off. Any other refusal, a timeout, or a reply for a
+different identifier leaves it pending, and the pass asks again.
 
 Both triggers depend on something arriving, which leaves one case uncovered:
 results missed while the session stayed up, with no later tightening to reveal
 the gap. Setting `recoveryInterval` closes it by polling, at the price of one
 MID 0064 per interval per device for as long as the process runs. It is off
-unless asked for. Recovery is bounded by `recoveryLimit` so a device offline for
-a week cannot stall its own reconnect.
+unless asked for. A pass fetches at most `recoveryLimit` results (100 by
+default), skipping those already delivered, and further passes follow until
+the gap is closed.
 
 Identifiers do not start at zero. The baseline comes from asking the controller
-for its latest result on the first connection, and if that request fails no
-baseline is recorded at all: the first result that reaches the handler sets it,
-whatever number it carries.
+for its latest result on the first connection. If that request fails, the next
+pass tries again, and a pushed result arriving before any baseline starts one.
+A controller that held nothing when first asked has no history, so its baseline
+is where its results start: recovery walks down from its newest result until
+the controller answers "not found".
 
-Duplicate detection keeps the last 1,000 identifiers per device in memory. It
-does not survive a restart of your process. **In production your handler should
+Duplicate detection is exact from the baseline on: everything up to the last
+contiguous result is known delivered, and every result delivered above a gap
+that has not closed yet is kept. Results older than the baseline rely on a
+window of the last 1,000 identifiers per device. None of it survives a restart
+of your process. **In production your handler should
 be idempotent on `(deviceId, tighteningId)`**. A unique constraint in your
 database is the usual answer. This is an integration requirement, not a detail.
 
@@ -691,8 +701,6 @@ logged and the state is observable.
 - Duplicate detection and the recovery watermark are in memory: a restart
   forgets both, and results acknowledged just before a crash could be delivered
   again. Idempotent handlers cover this.
-- Gap recovery is bounded by `recoveryLimit` (100 by default); a longer outage
-  needs a larger bound or a manual reconciliation.
 - The built-in MIDs are defined at revision 1 only. A newer revision arrives as
   `UnknownMessage` until someone defines it.
 - One instance per set of devices: the pool owns every device it is given.

@@ -43,7 +43,7 @@ export interface DeviceConfig {
   readonly subscriptionBuffer?: number | undefined
   /** How many identifiers the duplicate detector remembers. Defaults to 1000. */
   readonly dedupCapacity?: number | undefined
-  /** Upper bound on results fetched after an outage. Defaults to 100. */
+  /** How many results one recovery pass fetches before the next pass takes over. Defaults to 100. */
   readonly recoveryLimit?: number | undefined
   /** How long a graceful close waits for the communication stop to flush. Defaults to 1 second. */
   readonly stopTimeout?: Duration.Duration | undefined
