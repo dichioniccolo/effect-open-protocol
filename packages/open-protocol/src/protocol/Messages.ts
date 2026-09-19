@@ -1,49 +1,35 @@
 /**
- * The supported Open Protocol messages and their codec.
+ * The Open Protocol messages this library speaks, defined with `Mid`.
  *
- * Only the subset this library needs is modelled (see the packet design doc):
- * communication start/stop, generic accept/error, last tightening result
- * subscribe/data/acknowledge/unsubscribe, old result upload request/reply and
- * keep-alive. Any other MID decodes to `UnknownMessage` so an unexpected
- * message can be logged and dropped instead of breaking the connection.
+ * Only the subset the library needs is modelled: communication start/stop,
+ * generic accept/error, last tightening result subscribe/data/acknowledge/
+ * unsubscribe, old result upload request/reply and keep-alive. Each is a
+ * class for its values and a `Mid` definition for its wire format, the same
+ * mechanism a user-defined MID goes through. Any other MID, or a revision the
+ * library does not define, decodes to `UnknownMessage` so it can be logged
+ * and dropped instead of breaking the connection.
  *
  * @since 0.0.0
  */
-import { Match, pipe, Predicate, Result } from "effect"
+import { Effect, pipe, Predicate, Result } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import * as Rec from "effect/Record"
 import * as S from "effect/Schema"
+import * as SchemaTransformation from "effect/SchemaTransformation"
 import * as Str from "effect/String"
-import { padNumber, padText, parseDigits } from "./Ascii.ts"
+import * as Field from "./Field.ts"
 import { decodeHeader, encodeHeader, Header, headerLength, terminator } from "./Header.ts"
-import { PayloadDecodeError, type ProtocolError } from "./ProtocolError.ts"
+import * as Mid from "./Mid.ts"
+import { type MalformedHeader, PayloadEncodeError, type UnsupportedFeature } from "./ProtocolError.ts"
 import {
-  decodeLastResult,
-  decodeOldResult,
   type DeviceId,
-  encodeLastResult,
-  encodeOldResult,
+  fieldsOf,
+  LastResultBody,
+  OldResultBody,
+  resultOf,
   TighteningId,
   TighteningResult
 } from "./TighteningResult.ts"
-
-/**
- * MID numbers this library speaks.
- *
- * @category models
- * @since 0.0.0
- */
-export const Mid = S.Literals([1, 2, 3, 4, 5, 60, 61, 62, 63, 64, 65, 9999]).annotate({
-  identifier: "Mid",
-  description: "Open Protocol message identifiers supported by this library"
-})
-
-/**
- * @category models
- * @since 0.0.0
- */
-export type Mid = typeof Mid.Type
 
 /**
  * Enables the communication with a controller (MID 0001).
@@ -53,7 +39,7 @@ export type Mid = typeof Mid.Type
  */
 export class CommunicationStart extends S.TaggedClass<CommunicationStart>()(
   "CommunicationStart",
-  {},
+  { revision: S.tag(1) },
   {
     description: "MID 0001, opens the session"
   }
@@ -68,6 +54,7 @@ export class CommunicationStart extends S.TaggedClass<CommunicationStart>()(
 export class CommunicationStartAccepted extends S.TaggedClass<CommunicationStartAccepted>()(
   "CommunicationStartAccepted",
   {
+    revision: S.tag(1),
     cellId: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
     channelId: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99 })),
     controllerName: S.String
@@ -83,7 +70,7 @@ export class CommunicationStartAccepted extends S.TaggedClass<CommunicationStart
  */
 export class CommunicationStop extends S.TaggedClass<CommunicationStop>()(
   "CommunicationStop",
-  {},
+  { revision: S.tag(1) },
   {
     description: "MID 0003, closes the session"
   }
@@ -98,6 +85,7 @@ export class CommunicationStop extends S.TaggedClass<CommunicationStop>()(
 export class CommandError extends S.TaggedClass<CommandError>()(
   "CommandError",
   {
+    revision: S.tag(1),
     mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
     code: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 99 }))
   },
@@ -113,6 +101,7 @@ export class CommandError extends S.TaggedClass<CommandError>()(
 export class CommandAccepted extends S.TaggedClass<CommandAccepted>()(
   "CommandAccepted",
   {
+    revision: S.tag(1),
     mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 }))
   },
   { description: "MID 0005, positive acknowledge carrying the accepted MID" }
@@ -126,7 +115,7 @@ export class CommandAccepted extends S.TaggedClass<CommandAccepted>()(
  */
 export class SubscribeResults extends S.TaggedClass<SubscribeResults>()(
   "SubscribeResults",
-  {},
+  { revision: S.tag(1) },
   {
     description: "MID 0060, subscribes to the last tightening result"
   }
@@ -141,6 +130,7 @@ export class SubscribeResults extends S.TaggedClass<SubscribeResults>()(
 export class LastResult extends S.TaggedClass<LastResult>()(
   "LastResult",
   {
+    revision: S.tag(1),
     result: TighteningResult
   },
   { description: "MID 0061, last tightening result" }
@@ -154,7 +144,7 @@ export class LastResult extends S.TaggedClass<LastResult>()(
  */
 export class AcknowledgeResult extends S.TaggedClass<AcknowledgeResult>()(
   "AcknowledgeResult",
-  {},
+  { revision: S.tag(1) },
   {
     description: "MID 0062, acknowledges the last tightening result"
   }
@@ -168,7 +158,7 @@ export class AcknowledgeResult extends S.TaggedClass<AcknowledgeResult>()(
  */
 export class UnsubscribeResults extends S.TaggedClass<UnsubscribeResults>()(
   "UnsubscribeResults",
-  {},
+  { revision: S.tag(1) },
   {
     description: "MID 0063, unsubscribes from tightening results"
   }
@@ -184,6 +174,7 @@ export class UnsubscribeResults extends S.TaggedClass<UnsubscribeResults>()(
 export class RequestOldResult extends S.TaggedClass<RequestOldResult>()(
   "RequestOldResult",
   {
+    revision: S.tag(1),
     tighteningId: TighteningId
   },
   { description: "MID 0064, uploads an old tightening result by id" }
@@ -198,6 +189,7 @@ export class RequestOldResult extends S.TaggedClass<RequestOldResult>()(
 export class OldResult extends S.TaggedClass<OldResult>()(
   "OldResult",
   {
+    revision: S.tag(1),
     result: TighteningResult
   },
   { description: "MID 0065, old tightening result reply" }
@@ -211,7 +203,7 @@ export class OldResult extends S.TaggedClass<OldResult>()(
  */
 export class KeepAlive extends S.TaggedClass<KeepAlive>()(
   "KeepAlive",
-  {},
+  { revision: S.tag(1) },
   {
     description: "MID 9999, keep-alive"
   }
@@ -239,178 +231,340 @@ export class UnknownMessage extends S.TaggedClass<UnknownMessage>()(
  * @category models
  * @since 0.0.0
  */
-export type Message =
-  | CommunicationStart
-  | CommunicationStartAccepted
-  | CommunicationStop
-  | CommandError
-  | CommandAccepted
-  | SubscribeResults
-  | LastResult
-  | AcknowledgeResult
-  | UnsubscribeResults
-  | RequestOldResult
-  | OldResult
-  | KeepAlive
-  | UnknownMessage
-
-const numberAt = (
-  mid: number,
-  data: string,
-  from: number,
-  to: number,
-  parameter: string
-): Result.Result<number, PayloadDecodeError> =>
-  pipe(Str.substring(from, to)(data), (raw) =>
-    Str.length(raw) !== to - from
-      ? Result.fail(new PayloadDecodeError({ mid, reason: `${parameter} is truncated` }))
-      : parseDigits(raw, () => new PayloadDecodeError({ mid, reason: `${parameter} is not numeric` }))
-  )
-
-const decodeStartAccepted = (data: string): Result.Result<CommunicationStartAccepted, PayloadDecodeError> =>
-  Result.gen(function* () {
-    const cellId = yield* numberAt(2, data, 2, 6, "cellId")
-    const channelId = yield* numberAt(2, data, 8, 10, "channelId")
-    const controllerName = Str.substring(12, 37)(data)
-
-    return new CommunicationStartAccepted({ cellId, channelId, controllerName: Str.trimEnd(controllerName) })
-  })
-
-const decodeCommandError = (data: string): Result.Result<CommandError, PayloadDecodeError> =>
-  Result.gen(function* () {
-    const mid = yield* numberAt(4, data, 0, 4, "mid")
-    const code = yield* numberAt(4, data, 4, 6, "code")
-
-    return new CommandError({ mid, code })
-  })
-
-const decodeRequestOldResult = (data: string): Result.Result<RequestOldResult, PayloadDecodeError> =>
-  pipe(
-    numberAt(64, data, 0, 10, "tighteningId"),
-    Result.flatMap((value) =>
-      pipe(
-        S.decodeResult(TighteningId)(value),
-        Result.mapError(() => new PayloadDecodeError({ mid: 64, reason: "tighteningId out of range" }))
-      )
-    ),
-    Result.map((tighteningId) => new RequestOldResult({ tighteningId }))
-  )
-
-/** What one modelled message is on the wire: its MID, and how its data field decodes. */
-interface Wire<M extends Message> {
-  readonly mid: Mid
-  readonly decode: (data: string, deviceId: DeviceId) => Result.Result<M, ProtocolError>
-}
-
-const wire = <M extends Message>(mid: Mid, decode: Wire<M>["decode"]): Wire<M> => ({ mid, decode })
-
-/** A message whose data field carries nothing: the MID is the whole message. */
-const empty = <M extends Message>(mid: Mid, message: () => M): Wire<M> => wire(mid, () => Result.succeed(message()))
+export const Message = S.Union([
+  CommunicationStart,
+  CommunicationStartAccepted,
+  CommunicationStop,
+  CommandError,
+  CommandAccepted,
+  SubscribeResults,
+  LastResult,
+  AcknowledgeResult,
+  UnsubscribeResults,
+  RequestOldResult,
+  OldResult,
+  KeepAlive,
+  UnknownMessage
+]).annotate({ identifier: "Message", description: "A decoded Open Protocol message" })
 
 /**
- * The wire format of every modelled message, keyed by tag.
- *
- * It is the one place a MID is written down: both directions read it, so a new
- * message is added here and nowhere else, and `satisfies` refuses an entry
- * whose decoder builds a different message than its key names.
+ * @category models
+ * @since 0.0.0
  */
-const wireFormat = {
-  CommunicationStart: empty(1, () => new CommunicationStart()),
-  CommunicationStartAccepted: wire(2, (data) => decodeStartAccepted(data)),
-  CommunicationStop: empty(3, () => new CommunicationStop()),
-  CommandError: wire(4, (data) => decodeCommandError(data)),
-  CommandAccepted: wire(5, (data) =>
-    pipe(
-      numberAt(5, data, 0, 4, "mid"),
-      Result.map((mid) => new CommandAccepted({ mid }))
-    )
-  ),
-  SubscribeResults: empty(60, () => new SubscribeResults()),
-  LastResult: wire(61, (data, deviceId) =>
-    pipe(
-      decodeLastResult(deviceId, data),
-      Result.map((result) => new LastResult({ result }))
-    )
-  ),
-  AcknowledgeResult: empty(62, () => new AcknowledgeResult()),
-  UnsubscribeResults: empty(63, () => new UnsubscribeResults()),
-  RequestOldResult: wire(64, (data) => decodeRequestOldResult(data)),
-  OldResult: wire(65, (data, deviceId) =>
-    pipe(
-      decodeOldResult(deviceId, data),
-      Result.map((result) => new OldResult({ result }))
-    )
-  ),
-  KeepAlive: empty(9999, () => new KeepAlive())
-} satisfies { readonly [T in Exclude<Message, UnknownMessage>["_tag"]]: Wire<Extract<Message, { readonly _tag: T }>> }
+export type Message = typeof Message.Type
 
-const decoderFor: ReadonlyMap<number, Wire<Message>["decode"]> = new Map(
-  A.map(Rec.values(wireFormat), (format) => [format.mid, format.decode] as const)
-)
+const mid = Field.digits({ width: 4 })
 
-const decodeBody = (header: Header, data: string, deviceId: DeviceId): Result.Result<Message, ProtocolError> =>
-  O.match(O.fromNullishOr(decoderFor.get(header.mid)), {
-    onNone: (): Result.Result<Message, ProtocolError> =>
-      Result.succeed(new UnknownMessage({ mid: header.mid, revision: header.revision, data })),
-    onSome: (decode) => decode(data, deviceId)
-  })
+/**
+ * MID 0002 revision 1: the controller accepted the session.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const CommunicationStartAcceptedMid = Mid.define({
+  tag: "CommunicationStartAccepted",
+  mid: 2,
+  revisions: {
+    1: Mid.as(
+      CommunicationStartAccepted,
+      Field.layout([
+        ["cellId", Field.digits({ id: "01", width: 4 })],
+        ["channelId", Field.digits({ id: "02", width: 2 })],
+        ["controllerName", Field.text({ id: "03", width: 25 })]
+      ])
+    )
+  }
+})
+
+/**
+ * MID 0001 revision 1: opens the session, answered by MID 0002.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const CommunicationStartMid = Mid.request({
+  tag: "CommunicationStart",
+  mid: 1,
+  revisions: { 1: Mid.as(CommunicationStart, Field.layout([])) },
+  replies: { 1: CommunicationStartAcceptedMid.rev(1) }
+})
+
+/**
+ * MID 0003 revision 1: closes the session.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const CommunicationStopMid = Mid.request({
+  tag: "CommunicationStop",
+  mid: 3,
+  revisions: { 1: Mid.as(CommunicationStop, Field.layout([])) },
+  replies: { 1: Mid.accepted }
+})
+
+/**
+ * MID 0004 revision 1: the controller rejected a command.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const CommandErrorMid = Mid.define({
+  tag: "CommandError",
+  mid: 4,
+  revisions: {
+    1: Mid.as(
+      CommandError,
+      Field.layout([
+        ["mid", mid],
+        ["code", Field.digits({ width: 2 })]
+      ])
+    )
+  }
+})
+
+/**
+ * MID 0005 revision 1: the controller accepted a command.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const CommandAcceptedMid = Mid.define({
+  tag: "CommandAccepted",
+  mid: 5,
+  revisions: { 1: Mid.as(CommandAccepted, Field.layout([["mid", mid]])) }
+})
+
+/**
+ * MID 0060 revision 1: subscribes to tightening results.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const SubscribeResultsMid = Mid.request({
+  tag: "SubscribeResults",
+  mid: 60,
+  revisions: { 1: Mid.as(SubscribeResults, Field.layout([])) },
+  replies: { 1: Mid.accepted }
+})
+
+/**
+ * MID 0061 revision 1: a pushed tightening result.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const LastResultMid = Mid.define({
+  tag: "LastResult",
+  mid: 61,
+  revisions: {
+    1: Mid.custom(
+      LastResultBody.pipe(
+        S.decodeTo(
+          S.toType(LastResult),
+          SchemaTransformation.transformEffect({
+            decode: (body) =>
+              Mid.FrameContext.use(({ deviceId }) =>
+                Effect.map(resultOf(deviceId, body), (result) => new LastResult({ result }))
+              ),
+            encode: (message) =>
+              Effect.succeed({ ...fieldsOf(message.result), parameterSetChangedAt: message.result.timestamp })
+          })
+        )
+      )
+    )
+  }
+})
+
+/**
+ * MID 0062 revision 1: acknowledges a pushed result; nothing answers it.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const AcknowledgeResultMid = Mid.request({
+  tag: "AcknowledgeResult",
+  mid: 62,
+  revisions: { 1: Mid.as(AcknowledgeResult, Field.layout([])) },
+  replies: { 1: Mid.noReply }
+})
+
+/**
+ * MID 0063 revision 1: cancels the result subscription.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const UnsubscribeResultsMid = Mid.request({
+  tag: "UnsubscribeResults",
+  mid: 63,
+  revisions: { 1: Mid.as(UnsubscribeResults, Field.layout([])) },
+  replies: { 1: Mid.accepted }
+})
+
+/**
+ * MID 0065 revision 1: a stored result returned by the controller.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const OldResultMid = Mid.define({
+  tag: "OldResult",
+  mid: 65,
+  revisions: {
+    1: Mid.custom(
+      OldResultBody.pipe(
+        S.decodeTo(
+          S.toType(OldResult),
+          SchemaTransformation.transformEffect({
+            decode: (body) =>
+              Mid.FrameContext.use(({ deviceId }) =>
+                Effect.map(resultOf(deviceId, body), (result) => new OldResult({ result }))
+              ),
+            encode: (message) => Effect.succeed(fieldsOf(message.result))
+          })
+        )
+      )
+    )
+  }
+})
+
+/**
+ * MID 0064 revision 1: asks for a stored result, answered by MID 0065.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const RequestOldResultMid = Mid.request({
+  tag: "RequestOldResult",
+  mid: 64,
+  revisions: {
+    1: Mid.as(RequestOldResult, Field.layout([["tighteningId", Field.digits({ width: 10, schema: TighteningId })]]))
+  },
+  replies: { 1: OldResultMid.rev(1) }
+})
+
+const keepAliveEcho = Mid.define({
+  tag: "KeepAlive",
+  mid: 9999,
+  revisions: { 1: Mid.as(KeepAlive, Field.layout([])) }
+})
+
+/**
+ * MID 9999 revision 1: keep-alive, mirrored by the controller.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const KeepAliveMid = Mid.request({
+  tag: "KeepAlive",
+  mid: 9999,
+  revisions: { 1: Mid.as(KeepAlive, Field.layout([])) },
+  replies: { 1: keepAliveEcho.rev(1) }
+})
+
+/**
+ * The definition of every message this library models, one per MID.
+ *
+ * @category definitions
+ * @since 0.0.0
+ */
+export const builtIns: ReadonlyArray<Mid.AnyDefinition> = [
+  CommunicationStartMid,
+  CommunicationStartAcceptedMid,
+  CommunicationStopMid,
+  CommandErrorMid,
+  CommandAcceptedMid,
+  SubscribeResultsMid,
+  LastResultMid,
+  AcknowledgeResultMid,
+  UnsubscribeResultsMid,
+  RequestOldResultMid,
+  OldResultMid,
+  keepAliveEcho
+]
+
+const unknownOf = (header: Header, data: string): Message =>
+  new UnknownMessage({ mid: header.mid, revision: header.revision, data })
+
+const isMessage = S.is(Message)
+
+const fallBack = (header: Header, data: string, reason: string): Effect.Effect<Message> =>
+  Effect.as(
+    Effect.logWarning("frame kept as an unknown message").pipe(
+      Effect.annotateLogs({ mid: header.mid, revision: header.revision, reason })
+    ),
+    unknownOf(header, data)
+  )
 
 /**
  * Decodes one complete frame, terminator excluded.
  *
+ * **Details**
+ *
  * `deviceId` is stamped onto decoded results; it never travels on the wire.
+ * Only a malformed frame header fails. A MID the library does not model, a
+ * revision it does not define, or a data field that does not decode all
+ * become `UnknownMessage` (the last two with a warning), so one odd frame never
+ * costs the session.
  *
  * **Example** (Decoding a keep-alive frame)
  *
  * ```ts
- * import { Result } from "effect"
+ * import { Effect } from "effect"
  * import { decodeMessage, DeviceId } from "effect-open-protocol"
  *
- * const decoded = decodeMessage("00209999            ", DeviceId.makeUnsafe("tool-1"))
+ * const decoded = decodeMessage("00209999            ", DeviceId.make("tool-1"))
  *
- * console.log(Result.isSuccess(decoded))
+ * Effect.runPromise(decoded).then((message) => console.log(message._tag))
  * ```
  *
  * @category decoding
  * @since 0.0.0
  */
-export const decodeMessage = (frame: string, deviceId: DeviceId): Result.Result<Message, ProtocolError> =>
-  pipe(
-    decodeHeader(frame),
-    Result.flatMap((header) => decodeBody(header, Str.substring(headerLength, Str.length(frame))(frame), deviceId))
-  )
+export const decodeMessage = (
+  frame: string,
+  deviceId: DeviceId
+): Effect.Effect<Message, MalformedHeader | UnsupportedFeature> =>
+  Effect.gen(function* () {
+    const header = yield* Effect.fromResult(decodeHeader(frame))
+    const data = Str.substring(headerLength, Str.length(frame))(frame)
 
-const revisionOf = (message: Message): number => (Predicate.isTagged(message, "UnknownMessage") ? message.revision : 1)
+    return yield* O.match(
+      A.findFirst(builtIns, (definition) => definition.mid === header.mid),
+      {
+        onNone: () => Effect.succeed(unknownOf(header, data)),
+        onSome: (definition) =>
+          O.match(definition.lookup(header.revision), {
+            onNone: () => fallBack(header, data, `revision ${header.revision} is not defined`),
+            onSome: (revision) =>
+              pipe(
+                Mid.decode(revision, data, deviceId),
+                Effect.flatMap((value) =>
+                  isMessage(value) ? Effect.succeed(value) : fallBack(header, data, "not a modelled message")
+                ),
+                Effect.catchTag("PayloadDecodeError", (error) => fallBack(header, data, error.reason))
+              )
+          })
+      }
+    )
+  })
 
-const midOf = (message: Message): number =>
-  Predicate.isTagged(message, "UnknownMessage") ? message.mid : wireFormat[message._tag].mid
-
-const dataOf = (message: Message): string =>
-  Match.value(message).pipe(
-    Match.tag(
-      "CommunicationStartAccepted",
-      (accepted) =>
-        "01" +
-        padNumber(accepted.cellId, 4) +
-        "02" +
-        padNumber(accepted.channelId, 2) +
-        "03" +
-        padText(accepted.controllerName, 25)
-    ),
-    Match.tag("CommandError", (error) => padNumber(error.mid, 4) + padNumber(error.code, 2)),
-    Match.tag("CommandAccepted", (accepted) => padNumber(accepted.mid, 4)),
-    Match.tag("LastResult", (last) => encodeLastResult(last.result)),
-    Match.tag("RequestOldResult", (request) => padNumber(request.tighteningId, 10)),
-    Match.tag("OldResult", (old) => encodeOldResult(old.result)),
-    Match.tag("UnknownMessage", (unknown) => unknown.data),
-    Match.orElse(() => "")
+const revisionFor = (message: Exclude<Message, UnknownMessage>): O.Option<Mid.AnyRevision> =>
+  O.flatMap(
+    A.findFirst(builtIns, (definition) => definition.tag === message._tag),
+    (definition) => definition.lookup(message.revision)
   )
 
 /**
  * Renders a message as a complete frame, NUL terminator included.
  *
- * The header length is computed from the rendered data field, so
- * `decodeMessage(encodeMessage(m), deviceId)` returns `m`.
+ * **Details**
+ *
+ * The header carries the message's own revision, and its length is computed
+ * from the rendered data field, so decoding `encodeMessage(m)` returns `m`.
+ * An `UnknownMessage` is written back verbatim. A modelled message whose value
+ * does not fit its fields is a defect: its class already refused anything its
+ * wire format cannot carry.
  *
  * **Example** (Encoding a subscribe request)
  *
@@ -423,17 +577,25 @@ const dataOf = (message: Message): string =>
  * @category encoding
  * @since 0.0.0
  */
-export const encodeMessage = (message: Message): string => {
-  const data = dataOf(message)
-
-  const header = new Header({
-    length: headerLength + Str.length(data),
-    mid: midOf(message),
-    revision: revisionOf(message),
-    noAck: false,
-    stationId: 1,
-    spindleId: 1
-  })
-
-  return encodeHeader(header) + data + terminator
-}
+export const encodeMessage = (message: Message): string =>
+  Predicate.isTagged(message, "UnknownMessage")
+    ? encodeHeader(
+        new Header({
+          length: headerLength + Str.length(message.data),
+          mid: message.mid,
+          revision: message.revision,
+          noAck: false,
+          stationId: 1,
+          spindleId: 1
+        })
+      ) +
+      message.data +
+      terminator
+    : Result.getOrThrowWith(
+        pipe(
+          revisionFor(message),
+          Result.fromOption(() => new PayloadEncodeError({ mid: 0, reason: `${message._tag} has no definition` })),
+          Result.flatMap((revision) => Mid.encode(revision, message))
+        ),
+        (error) => error
+      )

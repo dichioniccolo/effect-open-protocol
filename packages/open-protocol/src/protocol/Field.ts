@@ -21,8 +21,8 @@ import * as Str from "effect/String"
 import { isDigits, padNumber, padText } from "./Ascii.ts"
 
 declare module "effect/Schema" {
-  // oxlint-disable-next-line no-shadow -- augmentation must reopen Effect's own namespace
   namespace Annotations {
+    // oxlint-disable-next-line no-shadow -- augmentation must reopen Effect's own interface
     interface Annotations {
       /** Where a field sits on the wire; read by {@link layout}. */
       readonly openProtocolField?: FieldPlacement | undefined

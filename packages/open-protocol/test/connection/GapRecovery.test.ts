@@ -1,10 +1,13 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Duration, Effect, Predicate, Ref, Stream } from "effect"
 import * as A from "effect/Array"
+import * as O from "effect/Option"
+import * as Str from "effect/String"
 import * as GapRecovery from "../../src/connection/GapRecovery.ts"
 import { resolveSettings } from "../../src/connection/DeviceSettings.ts"
+import * as RequestReply from "../../src/connection/RequestReply.ts"
 import type { Session } from "../../src/connection/Session.ts"
-import { type Message, OldResult } from "../../src/protocol/Messages.ts"
+import { decodeMessage, OldResult } from "../../src/protocol/Messages.ts"
 import { ControllerTimestamp, DeviceId, TighteningId, TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
 import * as Dedup from "../../src/results/Dedup.ts"
@@ -42,25 +45,30 @@ const fixture = Effect.fnUntraced(function* () {
   const submitted = yield* Ref.make<ReadonlyArray<number>>([])
   const dedup = yield* Dedup.make(64)
 
-  // Recovery only talks through `replies`; the duplex is an inert stand-in.
-  const session: Session = {
-    duplex: { incoming: Stream.empty, send: () => Effect.void },
-    replies: {
-      request: (message: Message, mid: number) =>
-        Effect.andThen(
-          Ref.update(asked, (current) => A.append(current, mid)),
-          Effect.succeed(
-            Predicate.isTagged(message, "RequestOldResult")
-              ? new OldResult({
-                  result: resultFor(message.tighteningId === 0 ? 3 : message.tighteningId)
-                })
-              : new OldResult({ result: resultFor(3) })
-          )
-        ),
-      offer: () => Effect.succeed(false),
-      interruptAll: () => Effect.void
-    }
-  }
+  // Recovery only talks through `replies`, so the controller is a send
+  // function that answers every old result request from a fixed store.
+  const slot = yield* Ref.make(O.none<RequestReply.RequestReply>())
+
+  const answer = (frame: string) =>
+    Effect.gen(function* () {
+      const message = yield* Effect.orDie(decodeMessage(Str.substring(0, Str.length(frame) - 1)(frame), deviceId))
+      yield* Ref.update(asked, (current) => A.append(current, Number(Str.substring(4, 8)(frame))))
+
+      const reply = new OldResult({
+        result: resultFor(
+          Predicate.isTagged(message, "RequestOldResult") && message.tighteningId !== 0 ? message.tighteningId : 3
+        )
+      })
+
+      const replies = yield* Ref.get(slot)
+
+      yield* O.match(replies, { onNone: () => Effect.void, onSome: (current) => Effect.asVoid(current.offer(reply)) })
+    })
+
+  const replies = yield* RequestReply.make({ send: answer, responseTimeout: Duration.seconds(1), deviceId })
+  yield* Ref.set(slot, O.some(replies))
+
+  const session: Session = { duplex: { incoming: Stream.empty, send: () => Effect.void }, replies }
 
   const pipeline = {
     submit: (result: TighteningResult) =>

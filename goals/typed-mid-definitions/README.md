@@ -34,9 +34,10 @@ follow the instructions in goals/typed-mid-definitions/GOAL.md
 
 ## Current Phase
 
-P1 First slice (0064 → 0065): in progress. P0 landed: `src/protocol/Field.ts`
-(fields as Schemas, `Field.layout`), 0061/0065 bodies rebuilt on it, and the
-private slot codec deleted.
+P3 in progress: tests for `UnexpectedRevision` and the body decode fallback,
+and the simulator answering `0004` to MIDs it does not model. P0–P2 are done:
+`Field`, `Mid`, built-ins as definitions, typed `request`, and the old codec
+and untyped `request` removed. See PLAN.md §What Landed So Far.
 
 ## Latest Evidence
 

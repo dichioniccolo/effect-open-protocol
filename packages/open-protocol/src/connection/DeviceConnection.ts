@@ -18,11 +18,12 @@ import { Effect, Fiber, Layer, Match, pipe, Ref, SubscriptionRef } from "effect"
 import * as Context from "effect/Context"
 import * as O from "effect/Option"
 import { AcknowledgeResult, CommunicationStop, type Message } from "../protocol/Messages.ts"
+import type * as Mid from "../protocol/Mid.ts"
 import type { DeviceId, TighteningResult } from "../protocol/TighteningResult.ts"
 import * as Dedup from "../results/Dedup.ts"
 import * as ResultDelivery from "../results/ResultDelivery.ts"
 import { type ConnectionFailed, ConnectionLost, Transport } from "../transport/Transport.ts"
-import { CommandRejected, HandshakeRejected, NotReady, RequestTimeout } from "./ConnectionError.ts"
+import { HandshakeRejected, NotReady } from "./ConnectionError.ts"
 import {
   Accepted,
   AttemptStarted,
@@ -44,7 +45,7 @@ import { type DeviceConfig, type DeviceSettings, resolveSettings } from "./Devic
 import * as GapRecovery from "./GapRecovery.ts"
 import { startCommunication, subscribeResults } from "./Handshake.ts"
 import * as RequestReply from "./RequestReply.ts"
-import { keepAliveLoop, readLoop, sendRaw, type Session } from "./Session.ts"
+import { keepAliveLoop, readLoop, sendFrame, sendRaw, type Session } from "./Session.ts"
 
 /**
  * A live connection as the rest of the library sees it.
@@ -57,11 +58,10 @@ export interface DeviceConnectionService {
   /** Current state, observable as a stream of changes. */
   readonly state: SubscriptionRef.SubscriptionRef<ConnectionState>
   /** Sends a message and waits for its reply; fails fast when not `Ready`. */
-  readonly request: (
-    message: Message,
-    mid: number,
-    direct?: Message["_tag"] | undefined
-  ) => Effect.Effect<Message, NotReady | RequestTimeout | CommandRejected | ConnectionLost>
+  readonly request: <Rev extends Mid.AnyRequestRevision>(
+    revision: Rev,
+    payload: Mid.Payload<Rev>
+  ) => Effect.Effect<RequestReply.ReplyOf<Rev>, NotReady | RequestReply.RequestError>
   /** Sends a message without expecting a reply. */
   readonly send: (message: Message) => Effect.Effect<void, NotReady | ConnectionLost>
   /** Stops the connection and returns once every resource is released. */
@@ -235,9 +235,10 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
     const lastSent = yield* Ref.make(0)
 
     const replies = yield* RequestReply.make({
-      send: (message) =>
+      deviceId: settings.id,
+      send: (frame) =>
         pipe(
-          sendRaw(duplex, message),
+          sendFrame(duplex, frame),
           Effect.tap(() =>
             Effect.clockWith((clock) => clock.currentTimeMillis).pipe(Effect.flatMap((now) => Ref.set(lastSent, now)))
           )
@@ -359,8 +360,7 @@ export const make = Effect.fnUntraced(function* (config: DeviceConfig) {
   return {
     deviceId: settings.id,
     state,
-    request: (message, mid, direct) =>
-      withSession((current) => current.replies.request(message, mid, RequestReply.expectReply(mid, direct))),
+    request: (revision, payload) => withSession((current) => current.replies.request(revision, payload)),
     send: (message) => withSession((current) => sendRaw(current.duplex, message)),
     close,
     delivered: results.delivery.delivered,

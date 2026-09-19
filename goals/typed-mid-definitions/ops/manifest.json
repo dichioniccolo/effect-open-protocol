@@ -54,17 +54,17 @@
     {
       "id": "P1",
       "name": "First slice: 0064 → 0065",
-      "status": "in-progress"
+      "status": "complete"
     },
     {
       "id": "P2",
       "name": "Migrate built-ins",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "id": "P3",
       "name": "Decode fallback and simulator",
-      "status": "pending"
+      "status": "in-progress"
     },
     {
       "id": "P4",

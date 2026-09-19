@@ -17,6 +17,11 @@ export * from "./protocol/Ascii.ts"
 /**
  * @since 0.0.0
  */
+export * as Field from "./protocol/Field.ts"
+
+/**
+ * @since 0.0.0
+ */
 export * from "./protocol/Framer.ts"
 
 /**
@@ -28,6 +33,11 @@ export * from "./protocol/Header.ts"
  * @since 0.0.0
  */
 export * from "./protocol/Messages.ts"
+
+/**
+ * @since 0.0.0
+ */
+export * as Mid from "./protocol/Mid.ts"
 
 /**
  * @since 0.0.0

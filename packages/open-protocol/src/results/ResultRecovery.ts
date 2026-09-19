@@ -8,13 +8,13 @@
  *
  * @since 0.0.0
  */
-import { Data, Effect, pipe, Predicate } from "effect"
+import { Data, Effect, pipe } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import type { CommandRejected, RequestTimeout } from "../connection/ConnectionError.ts"
-import { type Message, RequestOldResult } from "../protocol/Messages.ts"
+import type { CommandRejected } from "../connection/ConnectionError.ts"
+import type { RequestError } from "../connection/RequestReply.ts"
+import type { OldResult } from "../protocol/Messages.ts"
 import { TighteningId, type TighteningResult } from "../protocol/TighteningResult.ts"
-import type { ConnectionLost } from "../transport/Transport.ts"
 import type { Dedup } from "./Dedup.ts"
 
 /**
@@ -59,9 +59,6 @@ type Attempt = Data.TaggedEnum<{
 
 const Attempt = Data.taggedEnum<Attempt>()
 
-const resultOf = (message: Message): O.Option<TighteningResult> =>
-  Predicate.isTagged(message, "OldResult") ? O.some(message.result) : O.none()
-
 /**
  * Everything a recovery request can fail with. The distinction that matters is
  * `CommandRejected`, the controller's own "I do not have it".
@@ -69,7 +66,7 @@ const resultOf = (message: Message): O.Option<TighteningResult> =>
  * @category models
  * @since 0.0.0
  */
-export type RecoveryFailure = CommandRejected | RequestTimeout | ConnectionLost
+export type RecoveryFailure = RequestError
 
 /**
  * Asks the controller for everything produced since the last delivered result.
@@ -85,7 +82,7 @@ export type RecoveryFailure = CommandRejected | RequestTimeout | ConnectionLost
  */
 export const runRecovery = Effect.fnUntraced(function* (options: {
   readonly dedup: Dedup
-  readonly request: (message: Message, mid: number) => Effect.Effect<Message, RecoveryFailure>
+  readonly request: (id: TighteningId) => Effect.Effect<OldResult, RecoveryFailure>
   readonly submit: (result: TighteningResult) => Effect.Effect<void>
   /**
    * Most missed results fetched in one pass. A device that was offline for a
@@ -100,10 +97,12 @@ export const runRecovery = Effect.fnUntraced(function* (options: {
    * Asks for one stored result. A controller answering "I do not have it" is
    * an answer (`None`); anything else is silence, and silence is retried.
    */
-  const fetch = (id: TighteningId): Effect.Effect<O.Option<TighteningResult>, RequestTimeout | ConnectionLost> =>
+  const fetch = (
+    id: TighteningId
+  ): Effect.Effect<O.Option<TighteningResult>, Exclude<RecoveryFailure, CommandRejected>> =>
     pipe(
-      options.request(new RequestOldResult({ tighteningId: id }), 64),
-      Effect.map(resultOf),
+      options.request(id),
+      Effect.map((old) => O.some(old.result)),
       Effect.catchTag("CommandRejected", () => Effect.succeed(O.none<TighteningResult>()))
     )
 

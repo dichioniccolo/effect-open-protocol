@@ -10,10 +10,9 @@
  */
 import { Duration, Effect, Ref, Stream } from "effect"
 import { frames } from "../protocol/Framer.ts"
-import { decodeMessage, encodeMessage, KeepAlive, type Message } from "../protocol/Messages.ts"
+import { decodeMessage, encodeMessage, KeepAliveMid, type Message } from "../protocol/Messages.ts"
 import type { DeviceId } from "../protocol/TighteningResult.ts"
 import { ConnectionLost, type Duplex } from "../transport/Transport.ts"
-import { expectReply } from "./RequestReply.ts"
 import type { RequestReply } from "./RequestReply.ts"
 
 /**
@@ -30,18 +29,23 @@ export interface Session {
 const encoder = new TextEncoder()
 
 /**
- * Writes a message straight to the socket, without expecting a reply.
+ * Writes an encoded frame straight to the socket, without expecting a reply.
+ *
+ * @category sending
+ * @since 0.0.0
+ */
+export const sendFrame = (duplex: Duplex, frame: string): Effect.Effect<void, ConnectionLost> =>
+  duplex.send(encoder.encode(frame))
+
+/**
+ * Sends one modelled message, without waiting for anything.
  *
  * @category sending
  * @since 0.0.0
  */
 export const sendRaw = (duplex: Duplex, message: Message): Effect.Effect<void, ConnectionLost> =>
-  duplex.send(encoder.encode(encodeMessage(message)))
+  sendFrame(duplex, encodeMessage(message))
 
-/**
- * A framing or decoding error leaves the byte stream unsynchronised, and TCP
- * offers no boundary to resynchronise on, so the session is declared lost.
- */
 const protocolLost = (tag: string): Effect.Effect<never, ConnectionLost> =>
   Effect.fail(new ConnectionLost({ reason: `protocol error: ${tag}` }))
 
@@ -62,7 +66,7 @@ export const readLoop = (
   frames(session.duplex.incoming).pipe(
     Stream.runForEach(
       Effect.fnUntraced(function* (frame: string) {
-        const message = yield* Effect.fromResult(decodeMessage(frame, deviceId))
+        const message = yield* decodeMessage(frame, deviceId)
         const consumed = yield* session.replies.offer(message)
 
         if (!consumed) {
@@ -74,8 +78,7 @@ export const readLoop = (
       MalformedHeader: (error) => protocolLost(error._tag),
       InvalidLength: (error) => protocolLost(error._tag),
       MissingTerminator: (error) => protocolLost(error._tag),
-      UnsupportedFeature: (error) => protocolLost(error._tag),
-      PayloadDecodeError: (error) => protocolLost(error._tag)
+      UnsupportedFeature: (error) => protocolLost(error._tag)
     }),
     Effect.andThen(Effect.fail(new ConnectionLost({ reason: "the controller closed the connection" })))
   )
@@ -103,9 +106,14 @@ export const keepAliveLoop = (
       return
     }
 
-    yield* session.replies.request(new KeepAlive(), 9999, expectReply(9999, "KeepAlive")).pipe(
+    yield* session.replies.request(KeepAliveMid.rev(1), {}).pipe(
       Effect.andThen(Ref.set(lastSent, now)),
-      Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" }))),
-      Effect.catchTag("CommandRejected", () => Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" })))
+      Effect.catchTags({
+        RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "keep-alive timed out" })),
+        CommandRejected: () => Effect.fail(new ConnectionLost({ reason: "keep-alive rejected" })),
+        UnexpectedRevision: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` })),
+        PayloadDecodeError: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` })),
+        PayloadEncodeError: (error) => Effect.fail(new ConnectionLost({ reason: `keep-alive failed: ${error._tag}` }))
+      })
     )
   }).pipe(Effect.forever)

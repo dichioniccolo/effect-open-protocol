@@ -16,7 +16,7 @@ import type { TighteningResult } from "../protocol/TighteningResult.ts"
 import type { Dedup } from "../results/Dedup.ts"
 import type { ResultDelivery } from "../results/ResultDelivery.ts"
 import { runRecovery } from "../results/ResultRecovery.ts"
-import { expectReply } from "./RequestReply.ts"
+import { RequestOldResultMid } from "../protocol/Messages.ts"
 import type { Session } from "./Session.ts"
 import type { DeviceSettings } from "./DeviceSettings.ts"
 
@@ -71,10 +71,10 @@ export const make = Effect.fnUntraced(function* (options: {
       Effect.gen(function* () {
         const recovery = yield* runRecovery({
           dedup,
-          request: (message, mid) =>
+          request: (tighteningId) =>
             // Recovery is bulk work that retries, so it waits far less than a
             // command does: a slow reply here costs a whole pass.
-            session.replies.request(message, mid, expectReply(mid, "OldResult"), settings.recoveryTimeout),
+            session.replies.request(RequestOldResultMid.rev(1), { tighteningId }, settings.recoveryTimeout),
           submit: pipeline.submit,
           limit: settings.recoveryLimit
         })

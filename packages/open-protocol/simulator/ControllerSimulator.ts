@@ -138,7 +138,7 @@ const start = Effect.fnUntraced(function* (options: SimulatorSettings, listener:
     yield* Ref.update(state, (current) => ({ ...current, connection: O.some(connection) }))
 
     const onFrame = Effect.fnUntraced(function* (frame: string) {
-      const message = yield* Effect.fromResult(decodeMessage(frame, simulatorDevice))
+      const message = yield* decodeMessage(frame, simulatorDevice)
       const current = yield* Ref.modify(state, (value) => [value, observe(message, value)])
 
       if (Predicate.isTagged(message, "AcknowledgeResult")) {
