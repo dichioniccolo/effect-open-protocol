@@ -46,3 +46,24 @@ export class RequestTimeout extends S.TaggedError<RequestTimeout>()("RequestTime
 export class NotReady extends S.TaggedError<NotReady>()("NotReady", {
   state: S.String
 }) {}
+
+/**
+ * The reply a request waits for arrived at a revision the request did not
+ * declare, so it cannot be read as the promised type.
+ *
+ * **Example** (A controller answering 0065 at revision 2)
+ *
+ * ```ts
+ * import { UnexpectedRevision } from "effect-open-protocol"
+ *
+ * const error = new UnexpectedRevision({ mid: 65, expected: 1, received: 2 })
+ * ```
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class UnexpectedRevision extends S.TaggedError<UnexpectedRevision>()("UnexpectedRevision", {
+  mid: S.Number.check(S.isInt(), S.isBetween({ minimum: 0, maximum: 9999 })),
+  expected: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 })),
+  received: S.Number.check(S.isInt(), S.isBetween({ minimum: 1, maximum: 999 }))
+}) {}

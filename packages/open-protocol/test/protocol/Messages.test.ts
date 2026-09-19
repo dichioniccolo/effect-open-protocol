@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { assertFailure, assertSuccess } from "@effect/vitest/utils"
-import { pipe, Predicate, Result } from "effect"
+import { Effect, Predicate } from "effect"
 import * as A from "effect/Array"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
@@ -8,6 +8,7 @@ import { decodeHeader, encodeHeader, Header } from "../../src/protocol/Header.ts
 import {
   AcknowledgeResult,
   CommandAccepted,
+  CommandAcceptedMid,
   CommandError,
   CommunicationStart,
   CommunicationStartAccepted,
@@ -16,14 +17,15 @@ import {
   encodeMessage,
   KeepAlive,
   LastResult,
+  builtIns,
   type Message,
-  Mid,
   OldResult,
   RequestOldResult,
   SubscribeResults,
   UnknownMessage,
   UnsubscribeResults
 } from "../../src/protocol/Messages.ts"
+import * as Mid from "../../src/protocol/Mid.ts"
 import { MalformedHeader, UnsupportedFeature } from "../../src/protocol/ProtocolError.ts"
 import {
   ControllerTimestamp,
@@ -126,21 +128,24 @@ describe("Header", () => {
   })
 })
 
-describe("Messages", () => {
-  it("round trips every supported message", () => {
-    A.forEach(messages, (message) => {
-      assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
-    })
-  })
+const roundTrip = (message: Message) => decodeMessage(withoutTerminator(encodeMessage(message)), deviceId)
 
-  it("gives every modelled message its own MID from the supported domain", () => {
+describe("Messages", () => {
+  it.effect("round trips every supported message", () =>
+    Effect.forEach(messages, (message) => Effect.map(roundTrip(message), (decoded) => expect(decoded).toEqual(message)))
+  )
+
+  it("gives every modelled message its own MID from the defined ones", () => {
+    const defined = A.map(builtIns, (definition) => definition.mid)
+
     const mids = A.map(
       A.filter(messages, (message) => !Predicate.isTagged(message, "UnknownMessage")),
       (message) => Number(Str.substring(4, 8)(encodeMessage(message)))
     )
 
-    A.forEach(mids, (mid) => expect(S.is(Mid)(mid)).toBe(true))
+    A.forEach(mids, (mid) => expect(defined).toContain(mid))
     expect(A.length(A.dedupe(mids))).toBe(A.length(mids))
+    expect(A.length(A.dedupe(defined))).toBe(A.length(defined))
   })
 
   it("announces a length that excludes the terminator", () => {
@@ -149,31 +154,34 @@ describe("Messages", () => {
     expect(Str.length(frame)).toBe(21)
   })
 
-  it("keeps an unsupported MID as an unknown message", () => {
-    assertSuccess(
-      decodeMessage("00229900001         ab", deviceId),
-      new UnknownMessage({ mid: 9900, revision: 1, data: "ab" })
+  it.effect("keeps an unsupported MID as an unknown message", () =>
+    Effect.map(decodeMessage("00229900001         ab", deviceId), (decoded) =>
+      expect(decoded).toEqual(new UnknownMessage({ mid: 9900, revision: 1, data: "ab" }))
     )
-  })
+  )
 
-  it.prop("round trips tightening results", [idValue, torqueValue, angleValue], ([tighteningId, torque, angle]) => {
-    const message = new LastResult({
-      result: result({
-        tighteningId,
-        torque: torque / 100,
-        angle,
-        status: "NOK",
-        torqueStatus: "Low",
-        angleStatus: "OK",
-        vin: "VIN000123",
-        parameterSetId: 12
+  it.effect.prop(
+    "round trips tightening results",
+    [idValue, torqueValue, angleValue],
+    ([tighteningId, torque, angle]) => {
+      const message = new LastResult({
+        result: result({
+          tighteningId,
+          torque: torque / 100,
+          angle,
+          status: "NOK",
+          torqueStatus: "Low",
+          angleStatus: "OK",
+          vin: "VIN000123",
+          parameterSetId: 12
+        })
       })
-    })
 
-    assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
-  })
+      return Effect.map(roundTrip(message), (decoded) => expect(decoded).toEqual(message))
+    }
+  )
 
-  it.prop("round trips old results", [idValue, torqueValue, angleValue], ([tighteningId, torque, angle]) => {
+  it.effect.prop("round trips old results", [idValue, torqueValue, angleValue], ([tighteningId, torque, angle]) => {
     const message = new OldResult({
       result: result({
         tighteningId,
@@ -187,12 +195,31 @@ describe("Messages", () => {
       })
     })
 
-    assertSuccess(decodeMessage(withoutTerminator(encodeMessage(message)), deviceId), message)
+    return Effect.map(roundTrip(message), (decoded) => expect(decoded).toEqual(message))
   })
 
-  it("reports a truncated result payload", () => {
-    const frame = withoutTerminator(encodeMessage(new LastResult({ result: sample })))
-    const truncated = pipe(Str.substring(0, Str.length(frame) - 4)(frame), (text) => text)
-    expect(Result.isFailure(decodeMessage(truncated, deviceId))).toBe(true)
+  it.effect("keeps a result whose data field does not decode as an unknown message", () =>
+    Effect.gen(function* () {
+      const frame = withoutTerminator(encodeMessage(new LastResult({ result: sample })))
+      const truncated = Str.substring(0, Str.length(frame) - 4)(frame)
+      const decoded = yield* decodeMessage(truncated, deviceId)
+
+      expect(decoded).toEqual(
+        new UnknownMessage({ mid: 61, revision: 1, data: Str.substring(20, Str.length(truncated))(truncated) })
+      )
+    })
+  )
+
+  it.effect("keeps a revision the library does not define as an unknown message", () =>
+    Effect.map(decodeMessage("00229999002         ab", deviceId), (decoded) =>
+      expect(decoded).toEqual(new UnknownMessage({ mid: 9999, revision: 2, data: "ab" }))
+    )
+  )
+
+  it("writes the message's revision into the header", () => {
+    const frame = encodeMessage(new CommandAccepted({ mid: 60 }))
+
+    expect(Str.substring(8, 11)(frame)).toBe("001")
+    assertSuccess(Mid.encode(CommandAcceptedMid.rev(1), new CommandAccepted({ mid: 60 })), frame)
   })
 })

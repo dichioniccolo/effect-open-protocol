@@ -69,6 +69,26 @@ export class PayloadDecodeError extends S.TaggedError<PayloadDecodeError>()("Pay
 }) {}
 
 /**
+ * A value could not be written as a frame: a field does not fit its width, or
+ * the value is not one its revision's schema accepts.
+ *
+ * **Example** (An out-of-range value)
+ *
+ * ```ts
+ * import { PayloadEncodeError } from "effect-open-protocol"
+ *
+ * const error = new PayloadEncodeError({ mid: 2, reason: "12345 does not fit in 4 digits" })
+ * ```
+ *
+ * @category errors
+ * @since 0.0.0
+ */
+export class PayloadEncodeError extends S.TaggedError<PayloadEncodeError>()("PayloadEncodeError", {
+  mid: S.Number,
+  reason: S.String
+}) {}
+
+/**
  * Every failure the codec can produce.
  *
  * @category errors

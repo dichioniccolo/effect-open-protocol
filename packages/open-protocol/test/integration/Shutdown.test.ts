@@ -20,7 +20,7 @@ import * as ControllerSimulator from "../../simulator/ControllerSimulator.ts"
 import type { ConnectionState } from "../../src/connection/ConnectionState.ts"
 import * as DeviceConnection from "../../src/connection/DeviceConnection.ts"
 import * as DevicePool from "../../src/pool/DevicePool.ts"
-import { KeepAlive } from "../../src/protocol/Messages.ts"
+import { KeepAlive, KeepAliveMid } from "../../src/protocol/Messages.ts"
 import { DeviceId, type TighteningResult } from "../../src/protocol/TighteningResult.ts"
 import { layerSimulated } from "../../simulator/SimulatorNetwork.ts"
 import { Endpoint } from "../../src/transport/Transport.ts"
@@ -137,7 +137,7 @@ describe("shutdown", () => {
 
         // The controller never answers, so this request would sit for five
         // minutes if the session did not fail its waiters on the way out.
-        const pending = yield* Effect.forkChild(Effect.result(connection.request(new KeepAlive(), 9999, "KeepAlive")))
+        const pending = yield* Effect.forkChild(Effect.result(connection.request(KeepAliveMid.rev(1), {})))
         yield* Effect.yieldNow
         yield* simulator.drop
 

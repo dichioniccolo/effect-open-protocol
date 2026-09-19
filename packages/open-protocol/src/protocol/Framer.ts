@@ -13,14 +13,17 @@ import * as A from "effect/Array"
 import * as Str from "effect/String"
 import { parseDigits } from "./Ascii.ts"
 import { headerLength, terminator } from "./Header.ts"
-import { InvalidLength, MalformedHeader, MissingTerminator, type ProtocolError } from "./ProtocolError.ts"
+import { InvalidLength, MalformedHeader, MissingTerminator } from "./ProtocolError.ts"
 
 const decoder = new TextDecoder("latin1")
 
 const takeFrames = (
   buffer: string,
   frames: ReadonlyArray<string>
-): Result.Result<{ readonly buffer: string; readonly frames: ReadonlyArray<string> }, ProtocolError> => {
+): Result.Result<
+  { readonly buffer: string; readonly frames: ReadonlyArray<string> },
+  InvalidLength | MalformedHeader | MissingTerminator
+> => {
   const lengthField = Str.substring(0, 4)(buffer)
 
   return Str.length(buffer) < 4
@@ -63,8 +66,10 @@ const takeFrames = (
 export const step = (
   buffer: string,
   chunk: Uint8Array
-): Result.Result<{ readonly buffer: string; readonly frames: ReadonlyArray<string> }, ProtocolError> =>
-  takeFrames(buffer + decoder.decode(chunk), [])
+): Result.Result<
+  { readonly buffer: string; readonly frames: ReadonlyArray<string> },
+  InvalidLength | MalformedHeader | MissingTerminator
+> => takeFrames(buffer + decoder.decode(chunk), [])
 
 /**
  * Lifts `step` onto a byte stream, failing the stream on the first framing
@@ -76,7 +81,9 @@ export const step = (
  * @category framing
  * @since 0.0.0
  */
-export const frames = <E, R>(bytes: Stream.Stream<Uint8Array, E, R>): Stream.Stream<string, E | ProtocolError, R> =>
+export const frames = <E, R>(
+  bytes: Stream.Stream<Uint8Array, E, R>
+): Stream.Stream<string, E | InvalidLength | MalformedHeader | MissingTerminator, R> =>
   pipe(
     bytes,
     Stream.mapAccumEffect(

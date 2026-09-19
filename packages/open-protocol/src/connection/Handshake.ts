@@ -8,12 +8,14 @@
  *
  * @since 0.0.0
  */
-import { Effect, pipe, Predicate } from "effect"
-import { CommunicationStart, SubscribeResults } from "../protocol/Messages.ts"
+import { Effect, pipe } from "effect"
+import { CommunicationStartMid, SubscribeResultsMid } from "../protocol/Messages.ts"
 import { ConnectionLost } from "../transport/Transport.ts"
 import { HandshakeRejected } from "./ConnectionError.ts"
-import { expectReply } from "./RequestReply.ts"
 import type { Session } from "./Session.ts"
+
+const lost = (step: string, tag: string): Effect.Effect<never, ConnectionLost> =>
+  Effect.fail(new ConnectionLost({ reason: `${step} failed: ${tag}` }))
 
 /**
  * Opens the session with MID 0001 and returns the name the controller
@@ -27,12 +29,15 @@ import type { Session } from "./Session.ts"
  */
 export const startCommunication = (session: Session): Effect.Effect<string, ConnectionLost | HandshakeRejected> =>
   pipe(
-    session.replies.request(new CommunicationStart(), 1, expectReply(1, "CommunicationStartAccepted")),
-    Effect.map((accepted) =>
-      Predicate.isTagged(accepted, "CommunicationStartAccepted") ? accepted.controllerName : ""
-    ),
-    Effect.catchTag("CommandRejected", (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code }))),
-    Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })))
+    session.replies.request(CommunicationStartMid.rev(1), {}),
+    Effect.map((accepted) => accepted.controllerName),
+    Effect.catchTags({
+      CommandRejected: (rejected) => Effect.fail(new HandshakeRejected({ code: rejected.code })),
+      RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "handshake timed out" })),
+      UnexpectedRevision: (error) => lost("handshake", error._tag),
+      PayloadDecodeError: (error) => lost("handshake", error._tag),
+      PayloadEncodeError: (error) => lost("handshake", error._tag)
+    })
   )
 
 /**
@@ -46,10 +51,14 @@ export const startCommunication = (session: Session): Effect.Effect<string, Conn
  */
 export const subscribeResults = (session: Session): Effect.Effect<void, ConnectionLost> =>
   pipe(
-    session.replies.request(new SubscribeResults(), 60, expectReply(60)),
+    session.replies.request(SubscribeResultsMid.rev(1), {}),
     Effect.asVoid,
-    Effect.catchTag("CommandRejected", (rejected) =>
-      Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` }))
-    ),
-    Effect.catchTag("RequestTimeout", () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })))
+    Effect.catchTags({
+      CommandRejected: (rejected) =>
+        Effect.fail(new ConnectionLost({ reason: `subscription refused with code ${rejected.code}` })),
+      RequestTimeout: () => Effect.fail(new ConnectionLost({ reason: "subscribe timed out" })),
+      UnexpectedRevision: (error) => lost("subscribe", error._tag),
+      PayloadDecodeError: (error) => lost("subscribe", error._tag),
+      PayloadEncodeError: (error) => lost("subscribe", error._tag)
+    })
   )

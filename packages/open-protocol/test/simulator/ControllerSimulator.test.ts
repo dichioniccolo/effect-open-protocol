@@ -38,7 +38,7 @@ const exchange = (connection: Duplex, outgoing: ReadonlyArray<Message>) =>
     })
     const collected = yield* Fiber.join(replies)
 
-    return yield* Effect.forEach(collected, (frame) => Effect.fromResult(decodeMessage(frame, deviceId)))
+    return yield* Effect.forEach(collected, (frame) => decodeMessage(frame, deviceId))
   })
 
 describe("ControllerSimulator", () => {

@@ -7,12 +7,12 @@
  *
  * @since 0.0.0
  */
-import { pipe, Result } from "effect"
+import type { Effect } from "effect"
 import * as A from "effect/Array"
 import * as S from "effect/Schema"
+import type * as SchemaIssue from "effect/SchemaIssue"
 import * as Str from "effect/String"
 import * as Field from "./Field.ts"
-import { PayloadDecodeError } from "./ProtocolError.ts"
 
 /**
  * Identifier of the device a result came from. Assigned by this library, not
@@ -240,8 +240,11 @@ export interface ResultFields {
  * @category decoding
  * @since 0.0.0
  */
-export const resultFrom = (deviceId: DeviceId, fields: ResultFields): Result.Result<TighteningResult, S.SchemaError> =>
-  S.decodeResult(TighteningResult)({
+export const resultOf = (
+  deviceId: DeviceId,
+  fields: ResultFields
+): Effect.Effect<TighteningResult, SchemaIssue.Issue> =>
+  TighteningResult.makeEffect({
     deviceId,
     tighteningId: fields.tighteningId,
     vin: fields.vin,
@@ -271,50 +274,3 @@ export const fieldsOf = (result: TighteningResult): ResultFields => ({
   angle: result.angle,
   timestamp: result.timestamp
 })
-
-const decodeError = (mid: number) => (error: S.SchemaError) => new PayloadDecodeError({ mid, reason: error.message })
-
-/**
- * @category decoding
- * @since 0.0.0
- */
-export const decodeLastResult = (
-  deviceId: DeviceId,
-  data: string
-): Result.Result<TighteningResult, PayloadDecodeError> =>
-  pipe(
-    S.decodeResult(LastResultBody)(data),
-    Result.flatMap((fields) => resultFrom(deviceId, fields)),
-    Result.mapError(decodeError(61))
-  )
-
-/**
- * @category decoding
- * @since 0.0.0
- */
-export const decodeOldResult = (
-  deviceId: DeviceId,
-  data: string
-): Result.Result<TighteningResult, PayloadDecodeError> =>
-  pipe(
-    S.decodeResult(OldResultBody)(data),
-    Result.flatMap((fields) => resultFrom(deviceId, fields)),
-    Result.mapError(decodeError(65))
-  )
-
-/**
- * @category encoding
- * @since 0.0.0
- */
-export const encodeLastResult = (result: TighteningResult): string =>
-  Result.getOrThrowWith(
-    S.encodeResult(LastResultBody)({ ...fieldsOf(result), parameterSetChangedAt: result.timestamp }),
-    decodeError(61)
-  )
-
-/**
- * @category encoding
- * @since 0.0.0
- */
-export const encodeOldResult = (result: TighteningResult): string =>
-  Result.getOrThrowWith(S.encodeResult(OldResultBody)(fieldsOf(result)), decodeError(65))
