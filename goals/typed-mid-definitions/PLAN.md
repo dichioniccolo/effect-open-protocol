@@ -2,14 +2,14 @@
 
 ## Status
 
-Status: `pending`
+Status: `in-progress`
 
 ## Phases
 
 | Phase | Status | Goal | Exit criteria |
 | --- | --- | --- | --- |
-| P0 Field codec | pending | Public `Field.*` module: fixed-width fields as Schemas, with and without parameter IDs, filler fields, and enum digits, over `Ascii.ts`. The 0061/0065 bodies are rebuilt on it, and the private slot codec in `TighteningResult.ts` is removed. | The property round trips at `test/protocol/Messages.test.ts:159,176` pass with their assertions unchanged; `bun run check` and `bun run test` green. |
-| P1 First slice: 0064 → 0065 | pending | Definition module (MID number, per-revision Schemas, reply map), the codec for definitions, and typed `request` in `RequestReply` and `DeviceConnection`, all proven on 0064 → 0065. `GapRecovery` switches to the typed call. The old path still serves the other MIDs during this phase. | `request(RequestOldResult.rev(1), { tighteningId })` returns `OldResult` revision 1, pinned by `expectTypeOf`; the GapRecovery tests are green. |
+| P0 Field codec | complete | Public `Field.*` module: fixed-width fields as Schemas, with and without parameter IDs, filler fields, and enum digits, over `Ascii.ts`. The 0061/0065 bodies are rebuilt on it, and the private slot codec in `TighteningResult.ts` is removed. | The property round trips at `test/protocol/Messages.test.ts:159,176` pass with their assertions unchanged; `bun run check` and `bun run test` green. |
+| P1 First slice: 0064 → 0065 | in-progress | Definition module (MID number, per-revision Schemas, reply map), the codec for definitions, and typed `request` in `RequestReply` and `DeviceConnection`, all proven on 0064 → 0065. `GapRecovery` switches to the typed call. The old path still serves the other MIDs during this phase. | `request(RequestOldResult.rev(1), { tighteningId })` returns `OldResult` revision 1, pinned by `expectTypeOf`; the GapRecovery tests are green. |
 | P2 Migrate built-ins | pending | Every other built-in becomes a definition. The handshake, keep-alive and `ResultRecovery` use the typed call. `wireFormat`, `decoderFor`, `dataOf`, `midOf`, `revisionOf`, the closed `Mid` literals, `request(message, mid, direct?)` and `expectReply` are removed. `packages/cli` and `apps/ui` are fixed where the break forces it. | No old-path code remains (`rg "wireFormat\|expectReply\|revisionOf" packages` is empty); the whole suite is green. |
 | P3 Decode fallback and simulator | pending | Body decode failures and undefined revisions become `UnknownMessage` plus a warning, and the session survives. A pending dedicated reply at an undefined revision gets `UnexpectedRevision`. The simulator answers `0004` to MIDs it doesn't model. | A test for each path; header errors still end the session (existing tests). |
 | P4 Example MID and docs | pending | One example custom MID (at least two revisions and a declared reply) with codec round trips and a typed request over the in-memory transport. README sections for defining and requesting a MID. JSDoc rubric pass on every new export. | Full verification matrix in `SPEC.md` green. |

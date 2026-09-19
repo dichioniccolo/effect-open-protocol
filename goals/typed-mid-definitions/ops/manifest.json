@@ -49,12 +49,12 @@
     {
       "id": "P0",
       "name": "Field codec",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "id": "P1",
       "name": "First slice: 0064 → 0065",
-      "status": "pending"
+      "status": "in-progress"
     },
     {
       "id": "P2",
