@@ -7,16 +7,22 @@
  *
  * It behaves like the controllers the library talks to: it answers the
  * handshake, accepts a subscription, pushes results and waits for MID 0062,
- * serves MID 0064 from its store, and misbehaves on demand. Press Enter to
- * produce one result immediately, which is how you make a result exist while
- * the link is down and then watch the client recover it. Ctrl-C prints what it
- * produced.
+ * serves MID 0064 from its store, and misbehaves on demand.
+ *
+ * Three commands on stdin drive it by hand, each one a line ending with Enter.
+ * Enter alone produces one result immediately. `d` takes the link down,
+ * dropping the open connection and refusing new ones the way a rebooting
+ * controller does. `u` brings it back.
+ * Together they are the outage this library exists for: take the link down,
+ * produce a result the client cannot receive, bring it up, and watch the
+ * client fetch it with MID 0064. Ctrl-C prints what the controller produced.
  *
  * @since 0.0.0
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Duration, Effect, pipe, Random, Stdio, Stream } from "effect"
+import { Duration, Effect, Match, pipe, Random, Ref, Stdio, Stream } from "effect"
 import * as A from "effect/Array"
+import * as Str from "effect/String"
 import { Command, Flag } from "effect/unstable/cli"
 import { Endpoint } from "effect-open-protocol"
 import * as ControllerSimulator from "effect-open-protocol/simulator/ControllerSimulator.ts"
@@ -40,11 +46,10 @@ const controllerName = Flag.String("controller-name").pipe(
   Flag.withDefault("Simulator")
 )
 
-/** How many lines a chunk of stdin completed. */
-const newlines = (bytes: Uint8Array): number => A.length(A.filter(A.fromIterable(bytes), (byte) => byte === 10))
+const decoder = new TextDecoder()
 
 /**
- * Produces one result per line on stdin.
+ * Runs the commands typed on stdin.
  *
  * Lines, not keypresses: reading keys would put the terminal in raw mode, and a
  * raw terminal turns Ctrl-C into a keystroke instead of a signal. Keeping the
@@ -53,9 +58,10 @@ const newlines = (bytes: Uint8Array): number => A.length(A.filter(A.fromIterable
  *
  * Stdin that is closed or not a terminal simply never produces anything.
  */
-const onEnter = (simulator: ControllerSimulator.Simulator): Effect.Effect<void, never, Stdio.Stdio> =>
+const onCommand = (simulator: ControllerSimulator.Simulator): Effect.Effect<void, never, Stdio.Stdio> =>
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio
+    const partial = yield* Ref.make("")
 
     const produceOne = pipe(
       simulator.produce,
@@ -64,16 +70,43 @@ const onEnter = (simulator: ControllerSimulator.Simulator): Effect.Effect<void, 
       )
     )
 
+    // A dropped connection alone would let the client straight back in on its
+    // next attempt, so the endpoint stops accepting too. Together they are a
+    // controller that went away, which is what an outage looks like from here.
+    const takeDown = pipe(
+      simulator.refuse(true),
+      Effect.andThen(simulator.drop),
+      Effect.andThen(Effect.logInfo("link down: connection dropped, new ones refused"))
+    )
+
+    const bringUp = pipe(
+      simulator.refuse(false),
+      Effect.andThen(Effect.logInfo("link up: accepting connections again"))
+    )
+
+    const run = (line: string): Effect.Effect<void> =>
+      Match.value(Str.toLowerCase(Str.trim(line))).pipe(
+        Match.when("", () => produceOne),
+        Match.when("d", () => takeDown),
+        Match.when("u", () => bringUp),
+        Match.orElse((other) =>
+          Effect.logInfo("unknown command, expected Enter, d or u").pipe(Effect.annotateLogs({ typed: other }))
+        )
+      )
+
+    /** The lines a chunk completed, with whatever it left half-typed kept for the next one. */
+    const lines = (chunk: Uint8Array): Effect.Effect<ReadonlyArray<string>> =>
+      Ref.modify(partial, (held) => {
+        const parts = Str.split(held + decoder.decode(chunk), "\n")
+
+        return [A.dropRight(parts, 1), A.lastNonEmpty(parts)]
+      })
+
     return yield* pipe(
       Stream.runForEach(stdio.stdin, (chunk) =>
-        // `A.range(1, 0)` is `[1]`, so an empty count has to be handled here.
-        newlines(chunk) === 0
-          ? Effect.void
-          : Effect.forEach(A.range(1, newlines(chunk)), () => produceOne, {
-              discard: true
-            })
+        Effect.flatMap(lines(chunk), (completed) => Effect.forEach(completed, run, { discard: true }))
       ),
-      Effect.catchCause((cause) => Effect.logDebug("stdin closed, no result trigger", cause))
+      Effect.catchCause((cause) => Effect.logDebug("stdin closed, no commands", cause))
     )
   })
 
@@ -121,9 +154,13 @@ const run = Effect.fnUntraced(function* (
     })
   )
 
+  yield* Effect.logInfo(
+    "type a command and press Enter: nothing produces a result, d takes the link down, u brings it back"
+  )
+
   // The line reader runs on its own fiber, so the main fiber is parked on an
   // interruptible hold and Ctrl-C reaches it.
-  yield* Effect.forkChild(onEnter(simulator))
+  yield* Effect.forkChild(onCommand(simulator))
 
   return yield* Effect.onExit(Effect.never, () => summary(simulator))
 })

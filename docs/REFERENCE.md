@@ -113,7 +113,7 @@ Two commands put a controller and a client in separate terminals and print
 every byte that crosses between them.
 
 ```sh
-bun run controller -- --port 4545 --result-interval 2000
+bun run controller -- --port 4545
 bun run client     -- --port 4545 --latency 40 --jitter 15
 ```
 
@@ -152,10 +152,29 @@ socket itself.
 | `--result-interval` | controller | Milliseconds between generated results. `0` produces none on a timer. |
 | `--controller-name` | controller | Name reported in the handshake reply. |
 
-Pressing Enter in the controller's terminal produces one result immediately.
-That is how you demonstrate gap recovery by hand: raise `--fault-rate` until
-the link breaks, press Enter while it is down, and watch the client come back
-and fetch the result with MID 0064 and 0065.
+The controller's terminal takes three commands, which is how the outage is
+driven by hand rather than waited for. They are lines, not keypresses, so each
+one ends with Enter. Reading keys would need a raw terminal, and a raw terminal
+turns Ctrl-C into a byte instead of a signal, which would leave the command
+with no way to stop.
+
+| Typed | What the controller does |
+| --- | --- |
+| Enter alone | Produces one tightening result immediately. |
+| `d`, Enter | Drops the open connection and stops accepting new ones, the way a controller that went away behaves. |
+| `u`, Enter | Accepts connections again. |
+
+So gap recovery is four lines. Enter, and a result goes out as MID 0061 and
+comes back acknowledged as 0062. `d`, and the client loses the session and
+starts retrying on its backoff schedule. Enter twice while it is down, so two
+results exist that the client never saw. `u`, and the client reconnects, asks
+MID 0064 for the latest result, finds the gap, fetches both with 0064 and 0065,
+and delivers them. On Ctrl-C the controller's `generated` equals the client's
+`delivered`.
+
+`--fault-rate` is the other way in, and the one the tests use: it breaks things
+on its own, at random, from a seed. Its outages are short by design, so for a
+demonstration the typed commands are steadier.
 
 Two runs with the same `--seed` and `--trace-file` produce trace files that
 `diff` clean, which is what makes a trace usable as evidence. Every `raw` value
