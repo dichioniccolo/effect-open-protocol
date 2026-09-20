@@ -148,3 +148,41 @@ points.
 `BRIEF.md`'s rabbit holes, so carrying them as gated candidates duplicated that
 prose and left a false promise of future re-entry. Epitaph: *out of scope in
 the brief, so not worth a MAP row.*
+
+## 2026-09-20 (second round, after the first change shipped)
+
+### Q8 — No raw SQL inside objects and services. How far does that go?
+
+**Answer:** Three moves. A run is inserted through `SqlModel.makeRepository`,
+which lives in its own `RunRepository` service. Every statement no derivation
+expresses moves to `packages/store/src/queries.ts`, named and typed, taking the
+client it runs on. `WireStore` then composes those and holds no statement text
+at all. Migrations keep their DDL; that is where SQL belongs.
+
+**Rationale:** The user's objection is to SQL sitting inside the objects and
+services, not to SQL existing. Derivation removes one statement outright;
+naming the rest turns `WireStore` into a description of what a trace store does
+rather than how. `RunRepository` is a service of its own because deriving it
+inside `WireStore.make` would make the store own the table's CRUD as a side
+effect of existing.
+
+**Rejected:**
+
+- *`makeResolvers` for `insertEvents`* — it emits the same multi-row statement,
+  but `SqlRequest` hashes by payload and **deduplicates equal requests**
+  (`SqlResolver.ts:40-51,77-87`). Two traced events are equal whenever the same
+  bytes cross the same connection inside the same millisecond, and their row
+  ids - the only distinguishing field - are assigned by the database after the
+  insert. The recorder would silently lose rows. This reverses the correction
+  logged above: the resolver's batching axis is the smaller problem; dedup is
+  the disqualifying one.
+- *A `runs_with_counts` view* — moves the projection into `migrations.ts`
+  rather than removing it, and the run list still needs a statement.
+- *Leaving the derivation inside `WireStore.make`* — works, but hides a
+  repository inside a store.
+
+**Consequence:** `Run.id` is no longer `Model.GeneratedByDb`. That helper omits
+the id from the `update` variant, and `makeRepository` requires the id column in
+it (`Model.ts:205-229`, `SqlModel.ts:33-40`); the documented shape for a primary
+key used in update payloads is `Model.Field({ select, update, json })`.
+`Run.insert` is unchanged, so nothing the recorder writes changed.

@@ -10,17 +10,25 @@
  * the driver, which keeps the runtime choice (Bun, for `bun:sqlite`) at the
  * edges.
  *
+ * No statement is written here. A run is inserted through `RunRepository`,
+ * derived from the `Run` model, and the reads no derivation expresses - a run
+ * list with its event counts, a paged and filtered event page - live in
+ * `queries.ts`. What is left is the service: what a trace store does, and the
+ * schemas each call decodes with.
+ *
  * @since 0.0.0
  */
 import { Context, Effect, Layer, pipe } from "effect"
 import * as A from "effect/Array"
-import * as O from "effect/Option"
+import type * as O from "effect/Option"
 import * as S from "effect/Schema"
 import * as Migrator from "effect/unstable/sql/Migrator"
 import { SqlClient } from "effect/unstable/sql/SqlClient"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import * as SqlSchema from "effect/unstable/sql/SqlSchema"
 import { migrations } from "./migrations.ts"
+import * as Q from "./queries.ts"
+import * as RunRepository from "./RunRepository.ts"
 import { EventQuery, Run, RunId, RunSummary, TracedEvent } from "./Schema.ts"
 
 /**
@@ -46,10 +54,6 @@ export interface WireStoreService {
   /** A page of a run's events after a cursor, oldest first. */
   readonly events: (query: EventQuery) => Effect.Effect<ReadonlyArray<TracedEvent>, SqlError | S.SchemaError>
 }
-
-const runColumns = `r.id, r.side, r.startedAt, r.endedAt, r.host, r.port, r.seed, r.latency, r.jitter,
-  (select count(*) from events e where e.runId = r.id) as eventCount,
-  (select max(e.at) from events e where e.runId = r.id) as lastEventAt`
 
 /**
  * Builds the store over whatever `SqlClient` is in context, applying the
@@ -80,22 +84,18 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient
   yield* Migrator.make({})({ loader: Migrator.fromRecord(migrations) })
 
-  const insertRun = SqlSchema.findOne({
-    Request: Run.insert,
-    Result: S.Struct({ id: RunId }),
-    execute: (start) => sql`insert into runs ${sql.insert(start)} returning id`
-  })
+  const runs = yield* RunRepository.RunRepository
 
   const listRuns = SqlSchema.findAll({
     Request: S.Void,
     Result: RunSummary,
-    execute: () => sql`select ${sql.literal(runColumns)} from runs r order by r.id desc`
+    execute: () => Q.listRunSummaries(sql)
   })
 
   const findRun = SqlSchema.findOneOption({
     Request: RunId,
     Result: RunSummary,
-    execute: (id) => sql`select ${sql.literal(runColumns)} from runs r where r.id = ${id}`
+    execute: (id) => Q.findRunSummary(sql, id)
   })
 
   const encodeEvents = S.encodeEffect(S.Array(TracedEvent.insert))
@@ -103,33 +103,19 @@ export const make = Effect.gen(function* () {
   const events = SqlSchema.findAll({
     Request: EventQuery,
     Result: TracedEvent,
-    execute: (query) =>
-      sql`select * from events where ${sql.and(
-        A.getSomes([
-          O.some(sql`runId = ${query.runId}`),
-          O.some(sql`id > ${query.after}`),
-          O.map(O.fromNullishOr(query.kind), (kind) => sql`kind = ${kind}`),
-          O.map(O.fromNullishOr(query.direction), (direction) => sql`direction = ${direction}`),
-          O.map(O.fromNullishOr(query.mid), (mid) => sql`mid = ${mid}`)
-        ])
-      )} order by id limit ${query.limit}`
+    execute: (query) => Q.eventPage(sql, query)
   })
 
   return WireStore.of({
-    startRun: (start) =>
-      insertRun(start).pipe(
-        Effect.map((row) => row.id),
-        // `insert ... returning` always yields the row it inserted.
-        Effect.catchTag("NoSuchElementError", Effect.die)
-      ),
-    endRun: (id, endedAt) => Effect.asVoid(sql`update runs set endedAt = ${endedAt} where id = ${id}`),
+    startRun: (start) => Effect.map(runs.insert(start), (run) => run.id),
+    endRun: (id, endedAt) => Effect.asVoid(Q.stampRunEnd(sql, id, endedAt)),
     insertEvents: (batch) =>
       A.match(batch, {
         onEmpty: () => Effect.void,
         onNonEmpty: (rows) =>
           pipe(
             encodeEvents(rows),
-            Effect.flatMap((encoded) => sql`insert into events ${sql.insert(encoded)}`),
+            Effect.flatMap((encoded) => Q.insertEventRows(sql, encoded)),
             sql.withTransaction,
             Effect.asVoid
           )
@@ -167,10 +153,12 @@ export class WireStore extends Context.Service<WireStore, WireStoreService>()(
 ) {}
 
 /**
- * Opens the store over a `SqlClient`, running its migrations first.
+ * Opens the store over a `SqlClient`, running its migrations first and
+ * deriving the `runs` repository it builds on.
  *
  * @category layers
  * @since 0.0.0
  */
-export const layer: Layer.Layer<WireStore, SqlError | Migrator.MigrationError, SqlClient> =
-  Layer.effect(WireStore)(make)
+export const layer: Layer.Layer<WireStore, SqlError | Migrator.MigrationError, SqlClient> = Layer.effect(WireStore)(
+  make
+).pipe(Layer.provide(RunRepository.layer))
