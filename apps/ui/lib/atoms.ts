@@ -14,7 +14,7 @@ import * as S from "effect/Schema"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http"
 import * as Atom from "effect/unstable/reactivity/Atom"
-import type { EventId, Run, RunId, StoredEvent } from "@effect-open-protocol/store"
+import type { EventId, RunId, RunSummary, TracedEvent } from "@effect-open-protocol/store"
 import { EventPageJson, Filters, midsOf, noFilters, RunListJson, visible } from "./wire"
 
 const runtime = Atom.runtime(FetchHttpClient.layer)
@@ -35,13 +35,13 @@ export type RunStatus = typeof RunStatus.Type
 
 /** A listed run and where it stands at the time of the poll. */
 export interface ListedRun {
-  readonly run: Run
+  readonly run: RunSummary
   readonly status: RunStatus
 }
 
 const statusAt =
   (now: DateTime.Utc) =>
-  (run: Run): RunStatus =>
+  (run: RunSummary): RunStatus =>
     O.isSome(run.endedAt)
       ? "ended"
       : pipe(
@@ -54,7 +54,7 @@ const statusAt =
         : "quiet"
 
 /** Lists the runs with their status, stamped against the current time. */
-export const listRuns = (runs: ReadonlyArray<Run>, now: DateTime.Utc): ReadonlyArray<ListedRun> =>
+export const listRuns = (runs: ReadonlyArray<RunSummary>, now: DateTime.Utc): ReadonlyArray<ListedRun> =>
   A.map(runs, (run) => ({ run, status: statusAt(now)(run) }))
 
 const fetchRuns = pipe(
@@ -78,10 +78,10 @@ export const runsAtom = runtime
   .pipe(Atom.withServerValueInitial)
 
 /** Every event of a run the browser has, oldest first. */
-export const eventsAtom = Atom.family((_: RunId) => Atom.make<ReadonlyArray<StoredEvent>>([]).pipe(Atom.keepAlive))
+export const eventsAtom = Atom.family((_: RunId) => Atom.make<ReadonlyArray<TracedEvent>>([]).pipe(Atom.keepAlive))
 
 /** The newest event id the browser holds for a run, or 0 before the first. */
-const cursorOf = (events: ReadonlyArray<StoredEvent>): number =>
+const cursorOf = (events: ReadonlyArray<TracedEvent>): number =>
   O.getOrElse(
     O.map(A.last(events), (event) => event.id),
     () => 0
@@ -114,7 +114,7 @@ const connection = (runId: RunId, after: number) =>
           Stream.pipeThroughChannel(Sse.decode()),
           Stream.filter((event) => event.event === "events"),
           Stream.mapEffect((event) => S.decodeEffect(EventPageJson)(event.data)),
-          Stream.prepend<ReadonlyArray<StoredEvent>>([[]])
+          Stream.prepend<ReadonlyArray<TracedEvent>>([[]])
         )
     )
   )
@@ -133,7 +133,7 @@ export const liveAtom = Atom.family((runId: RunId) =>
     .atom((get) => {
       const events = eventsAtom(runId)
 
-      const append = (page: ReadonlyArray<StoredEvent>) =>
+      const append = (page: ReadonlyArray<TracedEvent>) =>
         Effect.sync(() =>
           get.registry.update(events, (held) => {
             const after = cursorOf(held)

@@ -1,7 +1,7 @@
 "use client"
 
 import { useAtom, useAtomInitialValues, useAtomSet, useAtomValue } from "@effect/atom-react"
-import type { Run, StoredEvent } from "@effect-open-protocol/store"
+import type { RunSummary, TracedEvent } from "@effect-open-protocol/store"
 import { Match } from "effect"
 import * as A from "effect/Array"
 import * as Num from "effect/Number"
@@ -53,7 +53,7 @@ export function RunView({ run, events }: { readonly run: string; readonly events
   })
 }
 
-function LoadedRun({ run, initial }: { readonly run: Run; readonly initial: ReadonlyArray<StoredEvent> }) {
+function LoadedRun({ run, initial }: { readonly run: RunSummary; readonly initial: ReadonlyArray<TracedEvent> }) {
   useAtomInitialValues([[eventsAtom(run.id), initial]])
   const all = useAtomValue(eventsAtom(run.id))
   const shown = useAtomValue(visibleAtom(run.id))
@@ -126,7 +126,7 @@ function FilterBar({
   shown,
   total
 }: {
-  readonly runId: Run["id"]
+  readonly runId: RunSummary["id"]
   readonly shown: number
   readonly total: number
 }) {
@@ -192,7 +192,7 @@ function FilterBar({
   )
 }
 
-const arrow = (event: StoredEvent) =>
+const arrow = (event: TracedEvent) =>
   Match.value(event.direction).pipe(
     Match.when("send", () => <span title="Sent">→</span>),
     Match.when("recv", () => <span title="Received">←</span>),
@@ -227,8 +227,8 @@ function PacketTable({
   events,
   total
 }: {
-  readonly runId: Run["id"]
-  readonly events: ReadonlyArray<StoredEvent>
+  readonly runId: RunSummary["id"]
+  readonly events: ReadonlyArray<TracedEvent>
   readonly total: number
 }) {
   const setSelected = useAtomSet(selectedAtom)
@@ -366,7 +366,7 @@ const SectionTitle = ({ children }: { readonly children: string }) => (
   <h3 className="text-xs font-medium text-muted-foreground">{children}</h3>
 )
 
-function DetailPane({ runId }: { readonly runId: Run["id"] }) {
+function DetailPane({ runId }: { readonly runId: RunSummary["id"] }) {
   const open = useAtomValue(selectedEventAtom(runId))
 
   return (

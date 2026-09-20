@@ -39,7 +39,7 @@ rebuilding them). Date sections; research goes stale.
 
 ## In-Repo Capability Inventory (2026-09-17)
 
-Repo `effect-flow` is an agent-tooling scaffold: no `src/`, no `docs/`.
+The repo is an agent-tooling scaffold: no `src/`, no `docs/`.
 `package.json` pins `effect@4.0.0-rc.115`, `@effect/vitest@4.0.0-rc.115`,
 `vitest@^5`, `typescript@^7`, Bun runtime (`CLAUDE.md`). Effect reference
 source linked at `.repos/effect` (MIT).
@@ -67,7 +67,7 @@ Plan primitive → Effect v4 location (verified in `.repos/effect`):
 ## Constraints Discovered
 
 1. **Plan is Effect v3-shaped, repo is Effect v4.** `@effect/platform`,
-   `@effect/cli`, `Context.Tag`, `Data.TaggedError` naming in the plan map to
+   `@effect/cli`, `Context.Tag`, `Data.TaggedError` naming in the digest map to
    `effect/unstable/socket`, `effect/unstable/cli`, `Context.Service`,
    `Schema.TaggedError` in v4. Plan itself says "verify APIs on current docs,
    adapt and flag", so this is adaptation, not a scope change. Socket/CLI
@@ -75,9 +75,9 @@ Plan primitive → Effect v4 location (verified in `.repos/effect`):
 2. **Runtime/tooling conflict.** Plan: Node.js + `npm install/test/build/demo`.
    Repo `CLAUDE.md`: Bun (`bun run test`, `bunx`). tsdown needs Node ≥22.18
    regardless. Decide target runtime and DoD commands.
-3. **Project home.** Plan names repo `effect-open-protocol`; current repo is
-   `effect-flow` agent scaffold. Decide: build here, or new repo seeded with
-   this tooling.
+3. **Project home.** The library is `effect-open-protocol`; this repo is an
+   agent scaffold. Decide: build here, or a new repo seeded with this
+   tooling.
 4. Open Protocol details remain "to verify" (plan-owned); Phase 1 design stop
    is the checkpoint, not this exploration.
 5. Spec is Atlas Copco-owned: cite, do not reproduce text in repo.

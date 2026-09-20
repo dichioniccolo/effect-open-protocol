@@ -15,10 +15,8 @@ Origin and full intent: exploration
 — shaped pitch [`BRIEF.md`](../../explorations/effect-open-protocol/BRIEF.md),
 plan digest [`CAPTURE.md`](../../explorations/effect-open-protocol/CAPTURE.md),
 sequencing [`MAP.md`](../../explorations/effect-open-protocol/MAP.md). The
-user's original 11-file plan (read, not imported) is authoritative where the
-digest is terse; if its path
-`/mnt/d/Users/nicky/Downloads/openprotocol-effect-plan/openprotocol-effect-plan/`
-is reachable, read it before each phase.
+`CAPTURE.md` digest of the user's requirements is the authority; where it is
+terse, ask the user rather than assuming more was meant.
 
 ## Non-Goals
 
@@ -26,7 +24,7 @@ From `BRIEF.md` No-Gos:
 
 - Multi-instance coordination, leader election, leases, consensus. One
   instance owns its devices.
-- Full Open Protocol coverage; only the plan's MID subset.
+- Full Open Protocol coverage; only the specified MID subset.
 - Durable result persistence; external brokers (Kafka, RabbitMQ, Redis).
 - NestJS or any DI framework other than Effect `Context`/`Layer`.
 - Web dashboard, authentication, Docker, cloud deployment.
@@ -39,7 +37,7 @@ From `BRIEF.md` No-Gos:
 
 ## Source Hierarchy
 
-1. User objective: the external plan + exploration `DECISIONS.md`.
+1. User objective: the `CAPTURE.md` requirements digest + exploration `DECISIONS.md`.
 2. `CLAUDE.md` and required skills (effect-first-development,
    schema-first-development).
 3. Governing standards (`standards/`, `.patterns/`).

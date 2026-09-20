@@ -17,14 +17,14 @@ code composed from Effect v4 bricks (repo has no `src/`); cites are relative to
 
 | Slug | Mission | Depends on | Capabilities cited |
 | --- | --- | --- | --- |
-| `effect-open-protocol` | Deliver the plan end to end: Effect v4 Open Protocol library (codec, connection, result delivery, pool, TCP + in-memory transport), seeded fault-injecting simulator, chaos demo, README/ADRs; tsdown build; clean DoD run; shipped as mergeable PR. | none | Build/test tooling: root `package.json`, `tsconfig.json`, `vitest.config.ts`; tsdown NET-NEW dev dep. Codec: `effect/src/Schema.ts`, `Stream.ts`, `Channel.ts`, `vitest/src/index.ts:265` (`it.prop`). Transport: `effect/src/unstable/socket/Socket.ts:57,180`, `platform/node-shared/src/NodeSocket.ts:90`, `NodeSocketServer.ts:69`, `Context.ts`. Connection: `Schedule.ts:850,1093`, `Deferred.ts`, `SubscriptionRef.ts`, `Scope.ts`, `Semaphore.ts`, `effect/src/testing/TestClock.ts`. Delivery: `Queue.ts`, `MutableHashSet.ts`. Pool: `FiberMap.ts` (evaluate `LayerMap.ts`/`RcMap.ts`). Demo: `effect/src/unstable/cli/`, `Random.ts`. Docs: `.patterns/jsdoc-documentation.md`, `.claude/skills/quality-review-fix-loop`. Open Protocol codec, connection, delivery, pool, simulator, demo, README: NET-NEW. |
+| `effect-open-protocol` | Deliver the requirements end to end: Effect v4 Open Protocol library (codec, connection, result delivery, pool, TCP + in-memory transport), seeded fault-injecting simulator, chaos demo, README/ADRs; tsdown build; clean DoD run; shipped as mergeable PR. | none | Build/test tooling: root `package.json`, `tsconfig.json`, `vitest.config.ts`; tsdown NET-NEW dev dep. Codec: `effect/src/Schema.ts`, `Stream.ts`, `Channel.ts`, `vitest/src/index.ts:265` (`it.prop`). Transport: `effect/src/unstable/socket/Socket.ts:57,180`, `platform/node-shared/src/NodeSocket.ts:90`, `NodeSocketServer.ts:69`, `Context.ts`. Connection: `Schedule.ts:850,1093`, `Deferred.ts`, `SubscriptionRef.ts`, `Scope.ts`, `Semaphore.ts`, `effect/src/testing/TestClock.ts`. Delivery: `Queue.ts`, `MutableHashSet.ts`. Pool: `FiberMap.ts` (evaluate `LayerMap.ts`/`RcMap.ts`). Demo: `effect/src/unstable/cli/`, `Random.ts`. Docs: `.patterns/jsdoc-documentation.md`, `.claude/skills/quality-review-fix-loop`. Open Protocol codec, connection, delivery, pool, simulator, demo, README: NET-NEW. |
 
 ## Sequencing
 
 Inside the goal, strict plan order, each phase closing with green
 `bunx tsc --noEmit` + `bun run test`:
 
-1. Design and tooling (plan Phase 1): tsdown build, package rename, design doc;
+1. Design and tooling (Phase 1): tsdown build, package rename, design doc;
    **stop for user confirmation**.
 2. Protocol codec + in-memory transport + minimal simulator (Phase 2).
 3. Device connection (Phase 3).

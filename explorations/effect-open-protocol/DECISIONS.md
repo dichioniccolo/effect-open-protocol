@@ -9,14 +9,14 @@ with the reason.
 
 ## 2026-09-17 — plan-is-scope
 
-**Question:** How much of the external plan (`CAPTURE.md` 2026-09-17) is up for
+**Question:** How much of the stated scope (`CAPTURE.md` 2026-09-17) is up for
 renegotiation?
 
 **Answer:** None. User: "Questo è quello che voglio fare … tutto il resto va
-bene così com'è." The 11-file plan is the scope, non-goals, phases and DoD.
+bene così com'è." The digest is the scope, non-goals, phases and DoD.
 
-**Rationale:** User-authored, already shaped. Align only resolves conflicts
-between plan and repo reality.
+**Rationale:** The user already shaped it. Align only resolves conflicts
+between those requirements and repo reality.
 
 ## 2026-09-17 — build-tool
 
@@ -56,9 +56,9 @@ requires Node anyway. Rejected "Node+npm only" (ignores repo conventions) and
 
 ## 2026-09-17 — project-home
 
-**Question:** Build in `effect-flow` or a new `effect-open-protocol` repo?
+**Question:** Build `effect-open-protocol` in this repo or a new one?
 
-**Answer:** Here, in `effect-flow`. Package renamed to `effect-open-protocol`.
+**Answer:** Here. The package is `effect-open-protocol`.
 
 **Rationale:** Recommended. Reuses goals/skills pipeline; no tooling copy.
 
@@ -67,7 +67,7 @@ requires Node anyway. Rejected "Node+npm only" (ignores repo conventions) and
 **Question:** Exact MID numbers/field widths, controller behavior on missing ACK,
 keep-alive timeout, replay-from-id relevance.
 
-**Answer:** DEFERRED to plan Phase 1 (design doc + stop for user confirmation).
+**Answer:** DEFERRED to Phase 1 (design doc + stop for user confirmation).
 
 **Rationale:** Plan (`00`, `03`, `05`, `10`) assigns these to Phase 1 with the
 user as domain authority; answering now would duplicate that gate.

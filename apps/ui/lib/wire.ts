@@ -9,14 +9,14 @@ import * as O from "effect/Option"
 import * as Result from "effect/Result"
 import * as S from "effect/Schema"
 import * as Str from "effect/String"
-import { Run, RunId, StoredEvent } from "@effect-open-protocol/store"
+import { RunId, RunSummary, TracedEvent } from "@effect-open-protocol/store"
 import { decodeHeader, type Header, unescapeWire, WireDirection } from "effect-open-protocol"
 
 /** Every recorded run, as the run list receives it. */
-export const RunList = S.Array(Run)
+export const RunList = S.Array(RunSummary)
 
 /** A page of one run's events, oldest first. */
-export const EventPage = S.Array(StoredEvent)
+export const EventPage = S.Array(TracedEvent)
 
 /** The JSON text of a run list. */
 export const RunListJson = S.fromJsonString(S.toCodecJson(RunList))
@@ -45,7 +45,7 @@ export class Filters extends S.Class<Filters>("Filters")(
 export const noFilters = new Filters({ showChunks: false, direction: "all", mid: O.none() })
 
 /** The events a run's packet list shows under the given filters. */
-export const visible = (events: ReadonlyArray<StoredEvent>, filters: Filters): ReadonlyArray<StoredEvent> =>
+export const visible = (events: ReadonlyArray<TracedEvent>, filters: Filters): ReadonlyArray<TracedEvent> =>
   A.filter(
     events,
     (event) =>
@@ -58,7 +58,7 @@ export const visible = (events: ReadonlyArray<StoredEvent>, filters: Filters): R
   )
 
 /** Every MID that appears in a run, sorted, for the MID filter. */
-export const midsOf = (events: ReadonlyArray<StoredEvent>): ReadonlyArray<string> =>
+export const midsOf = (events: ReadonlyArray<TracedEvent>): ReadonlyArray<string> =>
   A.sort(A.dedupe(A.getSomes(A.map(events, (event) => event.mid))), Str.Order)
 
 const latin1 = new TextDecoder("latin1")
@@ -67,11 +67,11 @@ const latin1 = new TextDecoder("latin1")
  * The decoded header of a recorded frame, or none for a chunk or a frame
  * whose header does not parse.
  */
-export const headerOf = (event: StoredEvent): O.Option<Header> =>
+export const headerOf = (event: TracedEvent): O.Option<Header> =>
   event.kind === "frame" ? Result.getSuccess(decodeHeader(latin1.decode(unescapeWire(event.raw)))) : O.none()
 
 /** A run id as it appears in a URL. */
 export const RunIdFromString = S.FiniteFromString.pipe(S.decodeTo(RunId))
 
 /** The JSON text of one run. */
-export const RunJson = S.fromJsonString(S.toCodecJson(Run))
+export const RunJson = S.fromJsonString(S.toCodecJson(RunSummary))

@@ -1,0 +1,150 @@
+# Decisions
+
+## 2026-09-20
+
+### Q1 — What is the actual target, given `makeRepository` covers 2 of 6 store operations?
+
+**Answer:** Model variants only. Collapse the hand-rolled schema pairs into
+`Model.Class` definitions; keep every query on `SqlSchema` / raw `sql`.
+
+**Rationale:** `RESEARCH.md` found the store is already schema-driven
+(`SqlSchema.findOne/findAll/findOneOption`, `WireStore.ts:81-114`), so there is
+no hand-decoding to remove. The duplication lives in `Schema.ts`, where
+`RunStart`/`Run` and `NewEvent`/`StoredEvent` are an insert/select variant split
+written by hand — exactly what `Model.GeneratedByDb` derives.
+
+**Rejected:**
+
+- *Models + `makeRepository` where it fits* — would cover only
+  `startRun`/`endRun`/`findRun`, add a repository indirection for a minority of
+  calls, and flip `findRun` from `Option` to a `NoSuchElementError` failure.
+- *Full repository-first store* — needs a `runs_with_counts` view and per-row
+  event inserts, losing the batched single-statement insert on the recorder's
+  hot path (`Recording.ts:64-70`).
+- *Kill the packet* — the `Schema.ts` collapse is real value; not a dead end.
+
+**Correction (2026-09-20, after the change shipped):** the rejection above is
+right, but one premise was not. `makeRepository`'s `insert` is row-at-a-time
+(`SqlModel.ts:88-120`), which is what rules it out of the recorder's hot path —
+but `makeResolvers` *does* batch writes: its `insertVoid` receives the array of
+pending requests and emits one multi-row insert (`SqlModel.ts:311-317`), the
+same statement `insertEvents` builds. It is still the wrong tool here, because
+a `RequestResolver` batches requests that are concurrent, while the recorder
+batches across time through a queue (`Recording.ts:67-80`) — and by the time
+that queue yields a batch, `insertEvents` already issues the statement a
+resolver would, inside an explicit transaction. So: "the repository's
+row-at-a-time insert does not fit the hot path, and the resolver batches on the
+wrong axis", not "`Model` cannot batch inserts".
+
+### Q2 — How much exported-API churn is acceptable?
+
+**Answer:** Free to break. Rename exported symbols and fix every call site in
+one pass.
+
+**Rationale:** All packages are at `0.0.0`, and every consumer is in-tree
+(`packages/cli/src/Recording.ts:19`, `apps/ui/`, the tests). Aliasing old names
+would preserve the two-names-per-concept duplication this change exists to
+remove.
+
+**Rejected:** *Keep names as aliases* (keeps the duplication);
+*store-internal only* (zero churn, zero gain outside `WireStore.ts`).
+
+### Q3 — How does the `Run` model carry `eventCount` / `lastEventAt`?
+
+**Answer:** Separate read model. `Run` is the `runs` row exactly; `RunSummary`
+extends it with the computed pair and is what `listRuns` / `findRun` decode.
+
+```ts
+export class Run extends Model.Class<Run>("Run")({
+  id: Model.GeneratedByDb(RunId),
+  side: RunSide,
+  startedAt: S.String,
+  endedAt: Model.FieldOption(S.String),
+  host: S.String,
+  port: S.Int,
+  seed: S.Int,
+  latency: Count,
+  jitter: Count
+}) {}
+
+export class RunSummary extends Run.extend<RunSummary>("RunSummary")({
+  eventCount: Count,
+  lastEventAt: S.OptionFromNullOr(S.String)
+}) {}
+```
+
+**Rationale:** Each schema matches a query result that actually exists —
+`Run` the table, `RunSummary` the `runColumns` projection
+(`WireStore.ts:48-50`). `Run.insert` replaces `RunStart` with no field lost.
+
+**Rejected:**
+
+- *`FieldOnly(["select"])` on the computed pair* — one model, but its select
+  variant would then never match `select * from runs`, so the model would lie
+  about the table it names.
+- *SQL view* — adds a migration and moves the projection out of sight for a
+  two-column convenience.
+
+**Risk carried forward:** `Model.Class` returns a `Schema.Class` whose `extend`
+produces a plain class, so `RunSummary` has no `insert`/`update` variants. That
+is what a read model wants, but it must be confirmed against
+`.repos/effect/packages/effect/src/unstable/schema/VariantSchema.ts:275-300`
+during implementation.
+
+### Q4 — What replaces `NewEvent` / `StoredEvent`?
+
+**Answer:** One model, `TracedEvent`, with `id: Model.GeneratedByDb(EventId)`.
+`TracedEvent.insert` replaces `NewEvent`; `TracedEvent` replaces `StoredEvent`.
+
+**Rationale:** Unambiguous beside `effect-open-protocol`'s `WireEvent` /
+`WireEventKind`, which the same modules import.
+
+**Rejected:** *`StoredEvent`* (reads wrong on `StoredEvent.insert`, a row not
+yet stored); *`Event`* (collides with the protocol vocabulary at import sites).
+
+### Q5 — Do the `WireStore` service signatures change too?
+
+**Answer:** Follow the models. Same six operations with the same semantics
+(`findRun` still returns `Option`); only the schema types move:
+`startRun(Run.insert)`, `insertEvents(TracedEvent.insert[])`,
+`listRuns`/`findRun` yielding `RunSummary`, `events` yielding `TracedEvent`.
+
+**Rationale:** The service surface is right; the pairs behind it were the
+problem. Keeping the operations fixed bounds the change to types plus call
+sites.
+
+**Rejected:** *Rethink the operations* — widens the blast radius into CLI and
+UI behavior, which this packet has no evidence to justify.
+
+### Q6 — Appetite
+
+**Answer:** One sitting: `Schema.ts` rewrite, `WireStore.ts` type updates,
+call sites in `packages/cli` and `apps/ui`, JSDoc examples, then green
+`bun run check` / `lint` / `test`. One goal packet.
+
+**Rejected:** *Two-step with aliases* (reinstates the aliasing rejected in Q2);
+*timeboxed spike first* (the `Run.extend` question is cheap enough to settle
+inside the change, and is logged as a risk under Q3).
+
+### Settled by research, not asked
+
+- **No new dependency.** `Model` lives in `effect/unstable/schema/Model` and
+  `effect/unstable/sql/SqlModel` in `effect@4.0.0-rc.115`, not in a separate
+  `@effect/sql` package (`RESEARCH.md`, external landscape).
+- **`Model.FieldOption` is behavior-preserving** on the database variants: it
+  is `Schema.OptionFromNullOr`, exactly today's field type
+  (`VariantSchema`-backed definition at `Model.ts:337-383`).
+- **`EventQuery` stays a plain `S.Class`.** It is a query, not a row; no
+  variants apply.
+- **`migrations.ts` is untouched.** `Model` derives no DDL.
+
+### Q7 — Keep the gated MAP candidates?
+
+**Answer:** No. `trace-model-json-variants` and `trace-datetime-fields` are
+struck from `MAP.md`. One goal graduates, and the packet keeps no re-entry
+points.
+
+**Rationale:** The user asked for one goal. Both were already out of scope in
+`BRIEF.md`'s rabbit holes, so carrying them as gated candidates duplicated that
+prose and left a false promise of future re-entry. Epitaph: *out of scope in
+the brief, so not worth a MAP row.*

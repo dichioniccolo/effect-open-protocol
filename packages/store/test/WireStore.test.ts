@@ -5,7 +5,7 @@ import { NodeServices } from "@effect/platform-node"
 import { Effect, FileSystem, Layer, Path } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import { EventId, EventQuery, NewEvent, RunId, RunStart } from "../src/Schema.ts"
+import { EventId, EventQuery, Run, RunId, TracedEvent } from "../src/Schema.ts"
 import * as WireStore from "../src/WireStore.ts"
 
 /** A fresh database file in a directory that disappears with the test. */
@@ -19,7 +19,7 @@ const tempDatabase = Effect.gen(function* () {
 
 const storeAt = (filename: string) => WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename })), Layer.fresh)
 
-const start = new RunStart({
+const start = Run.insert.make({
   side: "client",
   startedAt: "2026-09-18T10:00:00.000Z",
   host: "127.0.0.1",
@@ -29,8 +29,12 @@ const start = new RunStart({
   jitter: 0
 })
 
-const event = (runId: RunId, at: string, fields: Partial<Pick<NewEvent, "direction" | "kind" | "mid">>) =>
-  new NewEvent({
+const event = (
+  runId: RunId,
+  at: string,
+  fields: Partial<Pick<typeof TracedEvent.insert.Type, "direction" | "kind" | "mid">>
+) =>
+  TracedEvent.insert.make({
     runId,
     connection: 1,
     at,
@@ -111,7 +115,7 @@ describe("WireStore", () => {
       yield* Effect.gen(function* () {
         const store = yield* WireStore.WireStore
         const first = yield* store.startRun(start)
-        const second = yield* store.startRun(new RunStart({ ...start, side: "controller" }))
+        const second = yield* store.startRun(Run.insert.make({ ...start, side: "controller" }))
         yield* store.insertEvents([])
         const runs = yield* store.listRuns
         expect(A.map(runs, (run) => run.id)).toEqual([second, first])

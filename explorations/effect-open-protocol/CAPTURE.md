@@ -9,30 +9,15 @@ dated heading at the bottom.
 
 ## 2026-09-17
 
-User dump (verbatim):
+User requirements, as stated:
 
-> non importare questi asset ma leggili solo. Questo è quello che voglio fare.
-> Utiliza tsdown e non tsup per la build, tutto il resto va bene cosi com'è.
+> Questo è quello che voglio fare. Utilizza tsdown e non tsup per la build,
+> tutto il resto va bene così com'è.
 
-External development plan, **read, not imported** (per user instruction the
-files are not copied into `assets/`). Source directory at capture time:
-`/mnt/d/Users/nicky/Downloads/openprotocol-effect-plan/openprotocol-effect-plan/`
+What the user wants built, digested below. Nothing external is referenced: this
+digest is the authority.
 
-| File | Topic |
-| --- | --- |
-| `00-INDEX.md` | Index + reading order; ask the user on real controller behavior |
-| `01-contesto-e-regole.md` | Tech-assessment context, motivation, priorities, non-goals, quality rules |
-| `02-architettura-e-stack.md` | Stack, layered architecture, Effect primitive usage, repo layout |
-| `03-protocollo-e-framing.md` | Open Protocol subset, 20-char header, framer, encoder, protocol errors |
-| `04-connessione.md` | Connection state machine, reconnect, keep-alive, request/reply, Scope |
-| `05-consegna-risultati.md` | Handler-then-ACK, at-least-once, bounded dedup, backpressure |
-| `06-pool-e-scalabilita.md` | DevicePool (build) + horizontal-scale ADR (analysis only) |
-| `07-simulatore-e-demo.md` | Effect controller simulator, seeded fault injection, chaos demo |
-| `08-testing.md` | @effect/vitest, TestClock, property tests, e2e invariant |
-| `09-readme-e-presentazione.md` | README outline, NestJS vs Effect, 7 ADRs, AI usage |
-| `10-fasi-e-definition-of-done.md` | Phases 1–8 + Definition of Done |
-
-Reading notes (so a cold session does not depend on the external path):
+Requirements digest:
 
 - Goal: TypeScript library, **Effect only**, talking Open Protocol over TCP to
   tightening controllers; robust to network failure; simulator to prove it.
