@@ -39,5 +39,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Recorded wire traces (bun run controller / client, read by ui/)
 .effect-open-protocol/
 
+# SQLite journals the UI leaves beside the shipped trace in docs/traces/
+*.sqlite-wal
+*.sqlite-shm
+
 # turbo
 .turbo

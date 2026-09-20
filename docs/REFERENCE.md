@@ -216,10 +216,10 @@ accepting connections while it reboots.
 ```text
 Devices:                  3
 Seed:                     7
-Results generated:        87
-Results delivered:        87
-Duplicates discarded:     4
-Abandoned by controller:  2
+Results generated:        274
+Results delivered:        274
+Duplicates discarded:     41
+Abandoned by controller:  3
 Reconnects pending:       0
 Results lost:             0   OK
 Delivered twice:          0   OK
@@ -545,7 +545,8 @@ Each primitive is here because it solves a concrete problem in this domain.
 bun run test
 ```
 
-139 tests, with no real waiting outside the socket tests. What they cover:
+158 tests across 26 files, with no real waiting outside the socket tests.
+What they cover:
 
 - **Codec**: every supported MID round-trips; property tests over random
   identifiers, torque and angle values; malformed headers, bad lengths, missing
@@ -575,28 +576,85 @@ learned](#what-i-learned).
 ### Tested on a real controller
 
 Besides the simulator, the library ran against a real controller, a Rexroth
-Nexo tightening tool, with the `client` command:
+Nexo tightening tool, with the `client` command. That session is in the
+repository, so you can check every claim below against the bytes instead of
+taking it on trust:
 
-1. Handshake, then MID 0064 with id 0: the controller's latest result was 2634,
-   which became the baseline. Subscription with MID 0060, accepted with 0005.
-2. A tightening arrived as MID 0061 (2635), was delivered and acknowledged.
-3. The controller's WLAN was switched off and a new tightening was made. The
-   next keep-alive got no answer, and the session was declared lost exactly
-   one `responseTimeout` (5 s) later.
-4. When the WLAN came back, the new session asked for the latest result (2636),
-   saw the gap after 2635, fetched 2636 with MID 0064, and only then
-   subscribed again. The controller did not push 2636 on the new
-   subscription, so without recovery it would have been lost.
-5. On shutdown: `delivered: 2, duplicates: 0`, identifiers 2635 and 2636, and a
-   MID 0003 went out before the socket closed.
+```sh
+EFFECT_OPEN_PROTOCOL_TRACE_DB=../../docs/traces/nexo.sqlite bun run ui
+```
 
-The run also showed two things the simulator could not. Opening the TCP
-connection had no timeout. With the network down, the attempt stayed in
-`Connecting` for 36 seconds until the WLAN returned, instead of failing and
-retrying on the backoff schedule. An attempt now gives up after
-`connectTimeout` (10 s by default). The library also acknowledged the recovered
-2636 with a MID 0062, which only a pushed MID 0061 takes. It no longer
-acknowledges recovered results.
+One run, 142 recorded events, 71 of them frames, four minutes of a real
+controller on a real WLAN. What it shows, with the timestamps it carries:
+
+1. **16:01:33, the baseline.** MID 0001 goes out, 0002 comes back. Then MID
+   0064 with id 0, whose 0065 reply carries 2636, the controller's latest
+   result. That becomes the baseline, so older results count as history.
+   Subscription with MID 0060, accepted with 0005.
+2. **16:01:52, a tightening.** It arrives as MID 0061 with id 2637. The client
+   delivers it to the handler, and only then sends the MID 0062
+   acknowledgement.
+3. **The outage.** I switched the controller's WLAN off and made seven
+   tightenings while it was down. The keep-alive sent at 16:02:13 never got an
+   answer, and the client declared the session lost one `responseTimeout`
+   later. The trace then goes quiet. With the network down there is nothing to
+   record, because the reconnection attempts never reach a socket.
+4. **16:02:34, the recovery.** The WLAN came back and the new session
+   handshook. MID 0064 with id 0 answered 2644, which is seven ahead of the
+   last result delivered, so the client asked for 2638 to 2644 one at a time
+   and had all seven back in three hundred milliseconds. Only then did it
+   subscribe again with MID 0060. The controller did not push any of those
+   seven on the new subscription. Without this step they were gone.
+5. **16:02:59, back to normal.** The next tightening, 2645, arrives as a pushed
+   MID 0061, and the client acknowledges it like the first one. Nine results
+   reached the handler over the run, none of them twice.
+
+An earlier session on the same controller, not the one recorded here, showed
+two things the simulator could not. Opening the TCP connection had no timeout.
+With the network down, the attempt stayed in `Connecting` for 36 seconds until
+the WLAN returned, instead of failing and retrying on the backoff schedule. An
+attempt now gives up after `connectTimeout` (10 s by default). The library also
+acknowledged a recovered result with a MID 0062, which only a pushed MID 0061
+takes. It no longer acknowledges recovered results, which is why no 0062
+follows the seven 0065 replies in the trace above.
+
+#### Repeating it with your own controller
+
+Any controller that speaks Open Protocol over TCP will do. Nothing needs to be
+configured on it beyond the port the client connects to, because the client
+only reads. It subscribes to results and acknowledges them, and never sends a
+command that changes the controller's state.
+
+```sh
+bun run client -- --host <controller-ip> --port 4545 --device-id tool-1
+```
+
+1. **Handshake and baseline.** MID 0001 goes out, 0002 comes back with the
+   controller's name. Then MID 0064 with id 0, whose 0065 reply carries the
+   controller's latest result. That identifier is the baseline, and results
+   older than it count as history rather than news. Then MID 0060, accepted
+   with 0005.
+2. **A tightening.** Make one. It arrives as MID 0061, the log shows `result
+   delivered`, and the MID 0062 acknowledgement goes out after that line, not
+   before it.
+3. **The outage.** Unplug the controller's network, or switch off its WLAN, and
+   make one or more tightenings while it is down. Within `keepAliveInterval +
+   responseTimeout` (15 s by default) the log shows the keep-alive going
+   unanswered and the state moving to `Reconnecting`.
+4. **The recovery.** Put the network back. The client reconnects on its backoff
+   schedule, handshakes again, asks MID 0064 for the latest result, sees that
+   its identifier jumped past the last one delivered, fetches every missing
+   result by identifier, and only then subscribes again. The tightenings made
+   during the outage reach the handler, once each. The controller does not
+   push them on the new subscription, so without this step they would be lost.
+5. **The count.** Ctrl-C prints `delivered`, `duplicates` and the identifiers
+   received. `delivered` equals the number of tightenings you made,
+   `duplicates` counts whatever the controller resent, and no identifier
+   appears twice.
+
+Add `--trace-db <path>` to record your own run into its own file, then open it
+with the UI the same way as the recorded one, and compare the two side by
+side.
 
 ## Technical decisions
 
@@ -806,7 +864,7 @@ only when a request timed out, the recovery watermark stepped over gaps instead
 of advancing contiguously, and a result the controller abandoned on a healthy
 link was never fetched.
 
-Then I ran the same scenario across sixty seeds instead of two, and it found
+Then I ran the same scenario across fifty seeds instead of two, and it found
 five more. Every one of them was a lost tightening result. A recovery request
 that timed out was filed as "the controller does not have it" and never
 retried. A controller that was empty when we first asked wrote off the first

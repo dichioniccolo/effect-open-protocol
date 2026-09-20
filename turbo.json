@@ -1,5 +1,6 @@
 {
   "$schema": "https://turborepo.com/schema.json",
+  "globalPassThroughEnv": ["EFFECT_OPEN_PROTOCOL_TRACE_DB"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
