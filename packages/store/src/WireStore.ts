@@ -18,18 +18,17 @@
  *
  * @since 0.0.0
  */
-import { Context, Effect, Layer, pipe } from "effect"
+import { Context, Effect, Layer } from "effect"
 import * as A from "effect/Array"
 import type * as O from "effect/Option"
-import * as S from "effect/Schema"
+import type * as S from "effect/Schema"
 import * as Migrator from "effect/unstable/sql/Migrator"
-import { SqlClient } from "effect/unstable/sql/SqlClient"
+import type { SqlClient } from "effect/unstable/sql/SqlClient"
 import type { SqlError } from "effect/unstable/sql/SqlError"
-import * as SqlSchema from "effect/unstable/sql/SqlSchema"
 import { migrations } from "./migrations.ts"
 import * as Q from "./queries.ts"
 import * as RunRepository from "./RunRepository.ts"
-import { EventQuery, Run, RunId, RunSummary, TracedEvent } from "./Schema.ts"
+import type { EventQuery, Run, RunId, RunSummary, TracedEvent } from "./Schema.ts"
 
 /**
  * What the trace store can do: open and close runs, write events in batches,
@@ -81,48 +80,18 @@ export interface WireStoreService {
  * @since 0.0.0
  */
 export const make = Effect.gen(function* () {
-  const sql = yield* SqlClient
   yield* Migrator.make({})({ loader: Migrator.fromRecord(migrations) })
 
   const runs = yield* RunRepository.RunRepository
-
-  const listRuns = SqlSchema.findAll({
-    Request: S.Void,
-    Result: RunSummary,
-    execute: () => Q.listRunSummaries(sql)
-  })
-
-  const findRun = SqlSchema.findOneOption({
-    Request: RunId,
-    Result: RunSummary,
-    execute: (id) => Q.findRunSummary(sql, id)
-  })
-
-  const encodeEvents = S.encodeEffect(S.Array(TracedEvent.insert))
-
-  const events = SqlSchema.findAll({
-    Request: EventQuery,
-    Result: TracedEvent,
-    execute: (query) => Q.eventPage(sql, query)
-  })
+  const queries = yield* Q.make
 
   return WireStore.of({
     startRun: (start) => Effect.map(runs.insert(start), (run) => run.id),
-    endRun: (id, endedAt) => Effect.asVoid(Q.stampRunEnd(sql, id, endedAt)),
-    insertEvents: (batch) =>
-      A.match(batch, {
-        onEmpty: () => Effect.void,
-        onNonEmpty: (rows) =>
-          pipe(
-            encodeEvents(rows),
-            Effect.flatMap((encoded) => Q.insertEventRows(sql, encoded)),
-            sql.withTransaction,
-            Effect.asVoid
-          )
-      }),
-    listRuns: listRuns(undefined),
-    findRun,
-    events
+    endRun: queries.stampRunEnd,
+    insertEvents: (batch) => A.match(batch, { onEmpty: () => Effect.void, onNonEmpty: queries.insertEvents }),
+    listRuns: queries.listRunSummaries(undefined),
+    findRun: queries.findRunSummary,
+    events: queries.eventPage
   })
 }).pipe(Effect.withSpan("WireStore.make"))
 

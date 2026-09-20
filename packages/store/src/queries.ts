@@ -1,24 +1,25 @@
 /**
- * Every statement the trace store runs, in one place.
+ * The reads and writes no derivation expresses, each one whole.
  *
- * `WireStore` composes these into its service; it never writes SQL itself, so
- * the statement text lives here and the service reads as what it does rather
- * than how. Each function takes the client it runs on, which keeps them
- * pure descriptions: nothing here touches the database until a `SqlSchema`
- * wrapper or the store executes it.
+ * A query is its statement *and* the schemas it decodes with, so both live
+ * here rather than half in `WireStore`. The client is taken once, when the set
+ * is built, which is also what keeps encoded row shapes inside this module:
+ * `SqlSchema` hands `execute` the encoded request, and nothing outside needs to
+ * know that.
  *
- * What `Model` can derive is not here at all - a run is inserted through
- * `SqlModel.makeRepository`. These are the statements no derivation covers:
- * a projection with correlated subselects, a paged and filtered read, a
- * one-column patch, and a multi-row insert.
+ * What `Model` derives is not here at all - a run is inserted through
+ * `RunRepository`. What is left is a projection with correlated subselects, a
+ * paged and filtered read, a one-column patch, and a multi-row insert.
  *
  * @since 0.0.0
  */
+import { Effect } from "effect"
 import * as A from "effect/Array"
 import * as O from "effect/Option"
-import type { SqlClient } from "effect/unstable/sql/SqlClient"
-import type { Statement } from "effect/unstable/sql/Statement"
-import type { EventQuery, RunId, TracedEvent } from "./Schema.ts"
+import * as S from "effect/Schema"
+import { SqlClient } from "effect/unstable/sql/SqlClient"
+import * as SqlSchema from "effect/unstable/sql/SqlSchema"
+import { EventQuery, RunId, RunSummary, TracedEvent } from "./Schema.ts"
 
 /**
  * The `runs` row plus the two values a run list needs, counted from `events`.
@@ -31,67 +32,74 @@ const runSummaryColumns = `r.id, r.side, r.startedAt, r.endedAt, r.host, r.port,
   (select max(e.at) from events e where e.runId = r.id) as lastEventAt`
 
 /**
- * Every run with its event count and activity, newest first.
+ * Builds every query over whatever `SqlClient` is in context.
  *
- * @category queries
+ * @category constructors
  * @since 0.0.0
  */
-export const listRunSummaries = (sql: SqlClient): Statement<unknown> =>
-  sql`select ${sql.literal(runSummaryColumns)} from runs r order by r.id desc`
+export const make = Effect.gen(function* () {
+  const sql = yield* SqlClient
+
+  const encodeEvents = S.encodeEffect(S.Array(TracedEvent.insert))
+
+  /** Every run with its event count and activity, newest first. */
+  const listRunSummaries = SqlSchema.findAll({
+    Request: S.Void,
+    Result: RunSummary,
+    execute: () => sql`select ${sql.literal(runSummaryColumns)} from runs r order by r.id desc`
+  })
+
+  /** One run with its event count and activity, by id. */
+  const findRunSummary = SqlSchema.findOneOption({
+    Request: RunId,
+    Result: RunSummary,
+    execute: (id) => sql`select ${sql.literal(runSummaryColumns)} from runs r where r.id = ${id}`
+  })
+
+  /** A page of one run's events after a cursor, narrowed by the query's filters. */
+  const eventPage = SqlSchema.findAll({
+    Request: EventQuery,
+    Result: TracedEvent,
+    execute: (query) =>
+      sql`select * from events where ${sql.and(
+        A.getSomes([
+          O.some(sql`runId = ${query.runId}`),
+          O.some(sql`id > ${query.after}`),
+          O.map(O.fromNullishOr(query.kind), (kind) => sql`kind = ${kind}`),
+          O.map(O.fromNullishOr(query.direction), (direction) => sql`direction = ${direction}`),
+          O.map(O.fromNullishOr(query.mid), (mid) => sql`mid = ${mid}`)
+        ])
+      )} order by id limit ${query.limit}`
+  })
+
+  /** Stamps the time a run stopped recording. */
+  const stampRunEnd = (id: RunId, endedAt: string) =>
+    Effect.asVoid(sql`update runs set endedAt = ${endedAt} where id = ${id}`)
+
+  /**
+   * Writes a batch of events as one multi-row insert, in one transaction.
+   *
+   * `SqlModel.makeResolvers` builds the same statement, and is deliberately not
+   * used: a `SqlRequest` hashes by payload and deduplicates equal requests, and
+   * two traced events are equal whenever the same bytes cross the same
+   * connection inside the same millisecond. Their row ids are the only thing
+   * that differs, and the database assigns those, so the recorder would lose
+   * rows.
+   */
+  const insertEvents = (rows: A.NonEmptyReadonlyArray<typeof TracedEvent.insert.Type>) =>
+    encodeEvents(rows).pipe(
+      Effect.flatMap((encoded) => sql`insert into events ${sql.insert(encoded)}`),
+      sql.withTransaction,
+      Effect.asVoid
+    )
+
+  return { listRunSummaries, findRunSummary, eventPage, stampRunEnd, insertEvents } as const
+})
 
 /**
- * One run with its event count and activity, by id.
+ * Every query the trace store runs, already bound to its client.
  *
- * @category queries
+ * @category models
  * @since 0.0.0
  */
-export const findRunSummary = (sql: SqlClient, id: typeof RunId.Encoded): Statement<unknown> =>
-  sql`select ${sql.literal(runSummaryColumns)} from runs r where r.id = ${id}`
-
-/**
- * A page of one run's events after a cursor, oldest first, narrowed by
- * whichever filters the query carries.
- *
- * @category queries
- * @since 0.0.0
- */
-export const eventPage = (sql: SqlClient, query: typeof EventQuery.Encoded): Statement<unknown> =>
-  sql`select * from events where ${sql.and(
-    A.getSomes([
-      O.some(sql`runId = ${query.runId}`),
-      O.some(sql`id > ${query.after}`),
-      O.map(O.fromNullishOr(query.kind), (kind) => sql`kind = ${kind}`),
-      O.map(O.fromNullishOr(query.direction), (direction) => sql`direction = ${direction}`),
-      O.map(O.fromNullishOr(query.mid), (mid) => sql`mid = ${mid}`)
-    ])
-  )} order by id limit ${query.limit}`
-
-/**
- * Stamps the time a run stopped recording.
- *
- * @category statements
- * @since 0.0.0
- */
-export const stampRunEnd = (sql: SqlClient, id: RunId, endedAt: string): Statement<unknown> =>
-  sql`update runs set endedAt = ${endedAt} where id = ${id}`
-
-/**
- * Writes a batch of already-encoded events as one multi-row insert.
- *
- * **Details**
- *
- * One statement, not one per row: the recorder hands over whatever accumulated
- * while it was writing the last batch, and the wire must not wait for any of
- * it. `SqlModel.makeResolvers` builds the same statement, but a `SqlRequest`
- * hashes by payload and deduplicates equal requests, and two traced events are
- * equal whenever the same bytes cross the same connection inside the same
- * millisecond - their row ids are the only thing that differs, and the
- * database assigns those. Batching here rather than there keeps every event.
- *
- * @category statements
- * @since 0.0.0
- */
-export const insertEventRows = (
-  sql: SqlClient,
-  rows: ReadonlyArray<typeof TracedEvent.insert.Encoded>
-): Statement<unknown> => sql`insert into events ${sql.insert(rows)}`
+export interface Queries extends Effect.Success<typeof make> {}

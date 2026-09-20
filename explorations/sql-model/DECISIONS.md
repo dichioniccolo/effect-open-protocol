@@ -186,3 +186,42 @@ the id from the `update` variant, and `makeRepository` requires the id column in
 it (`Model.ts:205-229`, `SqlModel.ts:33-40`); the documented shape for a primary
 key used in update payloads is `Model.Field({ select, update, json })`.
 `Run.insert` is unchanged, so nothing the recorder writes changed.
+
+### Q9 — The first attempt at Q8 split each query across two files. What replaces it?
+
+**Answer:** A query is its statement *and* the schemas it decodes with, so
+`queries.ts` owns both: it exports `make`, which takes the client once and
+returns the whole set (`listRunSummaries`, `findRunSummary`, `eventPage`,
+`stampRunEnd`, `insertEvents`). `WireStore.make` is migrations, the repository,
+the query set, and the service assembly — nothing else.
+
+**Rationale:** The first attempt moved statement text out of `WireStore` but
+left `Request`/`Result` behind, so reading one query meant reading two files.
+Worse, `SqlSchema` hands `execute` the *encoded* request, which forced
+`typeof EventQuery.Encoded` and `typeof RunId.Encoded` into a module signature
+— and inconsistently, since `stampRunEnd` took a decoded `RunId` on the same
+page. Binding the client once puts the whole query in one place and keeps
+encoded shapes inside the module that has to know about them. The
+`Statement<unknown>` return type disappeared with it: the set now returns real
+`Effect`s of `RunSummary` and `TracedEvent`.
+
+**Rejected:** *Keeping the per-function `(sql, ...)` shape* — five one-call
+helpers, each threading a client that never varies, is indirection that buys
+nothing.
+
+### Q10 — What does `RunRepository` publish?
+
+**Answer:** `insert`, and nothing else. Its service type is
+`Pick<Effect.Success<typeof derived>, "insert">`, taken from the derivation
+rather than restated.
+
+**Rationale:** The hand-written interface had already drifted — it silently
+dropped `insertVoid`, which `makeRepository` returns. Deriving the type makes
+drift impossible. Narrowing to `insert` keeps the exported surface to what the
+package promises to keep working; the `Pick` widens the moment a caller needs
+more.
+
+**Consequence carried from Q8:** `Run.id` is `Model.Field({ select, update,
+json })` rather than `GeneratedByDb` because `makeRepository` requires the id in
+the update variant. That relaxation buys the derived `insert` alone — the
+update and delete it also derives stay unpublished.

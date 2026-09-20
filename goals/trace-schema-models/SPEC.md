@@ -132,9 +132,12 @@ Higher sources outrank lower sources when they conflict.
       typed as `Run.insert` in, `RunSummary` / `TracedEvent` out,
       `TracedEvent.insert[]` for the batch.
 - [ ] `migrations.ts` is byte-identical to before.
-- [ ] `WireStore.ts` contains no statement text: the run insert goes through
-      `RunRepository`, and every other statement lives in `queries.ts` with the
-      same text it had before.
+- [ ] `WireStore.ts` contains no statement text and no query definition: the
+      run insert goes through `RunRepository`, and every other query — statement
+      and schemas together — comes from `queries.ts`.
+- [ ] No `Encoded` type appears outside `queries.ts`, and no query returns
+      `Statement<unknown>`.
+- [ ] `RunRepositoryService` is derived from the repository, not restated.
 - [ ] `bun run check` passes across every workspace.
 - [ ] `bun run lint` and `bun run format:check` pass.
 - [ ] `bun run test` passes with test assertions unchanged except for renamed
@@ -170,6 +173,8 @@ that file is the authority for rationale and rejected options.
 | Q5 | `WireStore`'s six operations keep their semantics; only the schema types move. |
 | Q6 | Appetite: one sitting. |
 | Q8 | No statement text inside services: `RunRepository` derives the run insert, `queries.ts` holds the rest, `WireStore` composes them. `makeResolvers` stays out — it deduplicates equal payloads. |
+| Q9 | `queries.ts` owns each query whole — statement plus `Request`/`Result` — behind a `make` that binds the client once. Encoded shapes stay inside it. |
+| Q10 | `RunRepository` publishes `insert` only, with its type taken from the derivation. |
 
 ## Stop Conditions
 
