@@ -16,7 +16,7 @@ import { Context, Effect, Fiber, FileSystem, Layer, Path, pipe, Queue, Ref, type
 import * as A from "effect/Array"
 import * as DateTime from "effect/DateTime"
 import * as O from "effect/Option"
-import { NewEvent, type RunId, type RunSide, RunStart, WireStore } from "@effect-open-protocol/store"
+import { Run, type RunId, type RunSide, TracedEvent, WireStore } from "@effect-open-protocol/store"
 import { type WireEvent, wireEventLine, type WireSink } from "effect-open-protocol"
 
 /**
@@ -37,8 +37,8 @@ const now = Effect.map(DateTime.now, DateTime.formatIso)
 
 const toRow =
   (runId: RunId, connection: number) =>
-  (event: WireEvent): NewEvent =>
-    new NewEvent({
+  (event: WireEvent): typeof TracedEvent.insert.Type =>
+    TracedEvent.insert.make({
       runId,
       connection,
       at: event.at,
@@ -56,7 +56,7 @@ const toRow =
  * Writes that fail are logged and dropped. Recording is an observer, and the
  * link it watches must not notice it.
  */
-const openDatabase = Effect.fnUntraced(function* (filename: string, start: RunStart) {
+const openDatabase = Effect.fnUntraced(function* (filename: string, start: typeof Run.insert.Type) {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
   yield* fs.makeDirectory(path.dirname(filename), { recursive: true })
@@ -64,9 +64,9 @@ const openDatabase = Effect.fnUntraced(function* (filename: string, start: RunSt
   const context = yield* Layer.build(WireStore.layer.pipe(Layer.provide(SqliteClient.layer({ filename }))))
   const store = Context.get(context, WireStore.WireStore)
   const runId = yield* store.startRun(start)
-  const queue = yield* Queue.unbounded<NewEvent>()
+  const queue = yield* Queue.unbounded<typeof TracedEvent.insert.Type>()
 
-  const write = (batch: ReadonlyArray<NewEvent>) =>
+  const write = (batch: ReadonlyArray<typeof TracedEvent.insert.Type>) =>
     Effect.catchCause(store.insertEvents(batch), (cause) =>
       Effect.logWarning("could not record wire events", cause).pipe(Effect.annotateLogs({ dropped: batch.length }))
     )
@@ -158,7 +158,7 @@ export const make = Effect.fnUntraced(function* (side: RunSide, config: Recordin
   const startedAt = yield* now
   const file = yield* openTraceFile(config.traceFile)
 
-  const start = new RunStart({
+  const start = Run.insert.make({
     side,
     host: config.host,
     port: config.port,

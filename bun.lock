@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "effect-flow",
+      "name": "effect-open-protocol",
       "devDependencies": {
         "@oxlint/plugins": "1.83.0",
         "@types/bun": "latest",

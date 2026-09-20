@@ -11,7 +11,6 @@
 
 | Source | Title | Upstream | Location | Theme | Disposition |
 |--------|-------|----------|----------|-------|-------------|
-| `plan-00..10` | openprotocol-effect-plan | user-local, not in repo | `/mnt/d/Users/nicky/Downloads/openprotocol-effect-plan/openprotocol-effect-plan/*.md` | full product plan | authoritative intent; digested in `CAPTURE.md` |
 | `effect-socket` | Socket service | Effect-TS/effect v4 | `.repos/effect/packages/effect/src/unstable/socket/Socket.ts:57` | transport | reuse (dependency) |
 | `node-socket` | NodeSocket / NodeSocketServer | Effect-TS/effect v4 | `.repos/effect/packages/platform/node-shared/src/NodeSocket.ts:90` | TCP | reuse (dependency) |
 | `effect-cli` | unstable/cli | Effect-TS/effect v4 | `.repos/effect/packages/effect/src/unstable/cli/` | demo CLI | reuse (dependency) |
@@ -24,7 +23,7 @@
 |------|---------|-----------------|--------------|
 | Effect-TS/effect (`.repos/effect`) | MIT (`.repos/effect/LICENSE`) | dependency; port-with-attribution if copying snippets | runtime primitives |
 | Atlas Copco Open Protocol spec | proprietary (Atlas Copco) | reference-only; own-words description, cite | message layout facts |
-| Author's NestJS service | private | not used; the plan forbids porting | domain knowledge via user only |
+| Author's NestJS service | private | not used; porting is forbidden | domain knowledge via user only |
 | rolldown/tsdown | not verified | dependency only | build |
 
 ## 3. External research sources

@@ -391,7 +391,7 @@ const workflow = Effect.fn("Workflow.run")(function* (requestId: string) {
   return "ok"
 }).pipe(
   Effect.withLogSpan("workflow.run"),
-  Effect.annotateLogs({ service: "effect-flow" }),
+  Effect.annotateLogs({ service: "effect-open-protocol" }),
   Effect.trackDuration(durationMs),
   Effect.trackErrors(failures)
 )

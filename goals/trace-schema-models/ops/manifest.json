@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "initiative-manifest/v2",
+  "initiative": {
+    "id": "trace-schema-models",
+    "title": "Trace Schema Models",
+    "status": "active",
+    "created": "2026-09-20",
+    "updated": "2026-09-20",
+    "packetAnchorDocument": "SPEC.md"
+  },
+  "packetPath": "goals/trace-schema-models",
+  "lifecycle": "active",
+  "mission": "Declare each trace table once as an effect/unstable/schema/Model model, replacing the hand-rolled insert/select schema pairs in packages/store and updating every consumer.",
+  "executionCapable": true,
+  "reflectionRequired": true,
+  "provenance": {
+    "exploration": "explorations/sql-model",
+    "graduated": "2026-09-20",
+    "brief": "explorations/sql-model/BRIEF.md",
+    "decisions": "explorations/sql-model/DECISIONS.md",
+    "map": "explorations/sql-model/MAP.md"
+  },
+  "completionGate": {
+    "requiresPullRequest": true,
+    "requiresMergeable": true,
+    "statement": "Not achieved until this goal's work ships as a PR driven to mergeable: required checks green and every review thread answered."
+  },
+  "currentSourceOfTruth": [
+    "CLAUDE.md",
+    "goals/trace-schema-models/README.md",
+    "goals/trace-schema-models/SPEC.md",
+    "goals/trace-schema-models/PLAN.md",
+    "goals/trace-schema-models/GOAL.md",
+    "goals/trace-schema-models/research/SOURCES.md"
+  ],
+  "researchReports": [
+    "research/SOURCES.md"
+  ],
+  "agentLaunchers": [
+    {
+      "kind": "goal-launcher",
+      "path": "GOAL.md",
+      "targetChars": 3500,
+      "maxChars": 4000,
+      "command": "follow the instructions in goals/trace-schema-models/GOAL.md"
+    }
+  ],
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Research",
+      "status": "complete"
+    },
+    {
+      "id": "P1",
+      "name": "Implement",
+      "status": "complete"
+    },
+    {
+      "id": "P2",
+      "name": "Verify",
+      "status": "complete"
+    },
+    {
+      "id": "P3",
+      "name": "PR to mergeable",
+      "status": "complete"
+    },
+    {
+      "id": "P4",
+      "name": "Close",
+      "status": "pending"
+    }
+  ],
+  "verificationCommands": [
+    "bun run check",
+    "bun run lint",
+    "bun run format:check",
+    "bun run test",
+    "rg -n \"RunStart|NewEvent|StoredEvent\" packages apps",
+    "git diff -- packages/store/src/migrations.ts",
+    "test \"$(wc -m < goals/trace-schema-models/GOAL.md)\" -le 4000",
+    "jq . goals/trace-schema-models/ops/manifest.json",
+    "rg -n \"trace-schema-models|GOAL.md|agentLaunchers|packetAnchorDocument\" goals/trace-schema-models",
+    "git diff --check -- goals/trace-schema-models"
+  ],
+  "stopConditions": [
+    "Model.Class(...).extend(...) does not typecheck for RunSummary, or loses something the read path needs.",
+    "Model.FieldOption is not encoding-compatible with the current S.OptionFromNullOr columns.",
+    "The change would require touching packages/store/src/migrations.ts or altering SQL text.",
+    "The implementation would exceed named scope.",
+    "The same blocker repeats after reasonable investigation."
+  ],
+  "evidence": {
+    "pullRequest": "https://github.com/dichioniccolo/effect-open-protocol/pull/11"
+  }
+}

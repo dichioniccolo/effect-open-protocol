@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "exploration-manifest/v1",
+  "exploration": {
+    "slug": "sql-model",
+    "title": "Effect SQL Model Instead Of Raw SQL",
+    "status": "graduated",
+    "stage": "graduate",
+    "openQuestions": [],
+    "sources": [
+      "research/SOURCES.md"
+    ],
+    "links": {
+      "goals": [
+        "goals/trace-schema-models"
+      ],
+      "docs": [],
+      "supersededBy": null
+    },
+    "created": "2026-09-20",
+    "updated": "2026-09-20"
+  }
+}

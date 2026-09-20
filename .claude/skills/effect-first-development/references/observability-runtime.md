@@ -33,7 +33,7 @@ const runOperation = Effect.fn("Operation.run")(function* (id: string) {
   return "ok"
 }).pipe(
   Effect.withLogSpan("operation.run"),
-  Effect.annotateLogs({ service: "effect-flow" }),
+  Effect.annotateLogs({ service: "effect-open-protocol" }),
   Effect.trackDuration(latency),
   Effect.trackErrors(errors)
 )

@@ -9,6 +9,7 @@
  */
 import { Effect } from "effect"
 import * as S from "effect/Schema"
+import { Model } from "effect/unstable/schema"
 import { WireDirection, WireEventKind } from "effect-open-protocol"
 
 /**
@@ -97,15 +98,22 @@ export type RunSide = typeof RunSide.Type
 const Count = S.Int.check(S.isGreaterThanOrEqualTo(0))
 
 /**
- * What a CLI knows about itself when it starts recording: its side and the
- * launch flags that shape the traffic it will record.
+ * One recorded CLI run: the `runs` row, with the id SQLite assigns on insert.
+ *
+ * **Details**
+ *
+ * `Run.insert` is the same row without that id — what a CLI knows about itself
+ * when it starts recording. `endedAt` stays `None` for a run that is still
+ * recording, and also for one whose process was killed before it could stamp
+ * an end, so a caller telling them apart looks at a summary's `lastEventAt`
+ * too.
  *
  * **Example** (Describing a client launch)
  *
  * ```ts
- * import { RunStart } from "@effect-open-protocol/store"
+ * import { Run } from "@effect-open-protocol/store"
  *
- * const start = new RunStart({
+ * const start = Run.insert.make({
  *   side: "client",
  *   startedAt: "2026-09-18T10:00:00.000Z",
  *   host: "127.0.0.1",
@@ -119,46 +127,44 @@ const Count = S.Int.check(S.isGreaterThanOrEqualTo(0))
  * @category models
  * @since 0.0.0
  */
-export class RunStart extends S.Class<RunStart>("RunStart")(
-  {
-    side: RunSide,
-    startedAt: S.String,
-    host: S.String,
-    port: S.Int,
-    seed: S.Int,
-    latency: Count,
-    jitter: Count
-  },
-  { description: "The launch settings a run is recorded with" }
-) {}
+export class Run extends Model.Class<Run>("Run")({
+  id: Model.GeneratedByDb(RunId),
+  side: RunSide,
+  startedAt: S.String,
+  // Never part of an insert: a run's end is stamped later, by `endRun`.
+  endedAt: Model.FieldOption(Model.FieldExcept(["insert"])(S.String)),
+  host: S.String,
+  port: S.Int,
+  seed: Count,
+  latency: Count,
+  jitter: Count
+}) {}
 
 /**
- * A recorded run with what a run list needs: its event count, its newest
- * event's time, and its end time once the CLI has stopped.
+ * A recorded run with what a run list needs: the row plus its event count and
+ * its newest event's time.
  *
  * **Details**
  *
- * `endedAt` stays empty for a run that is still recording, and also for one
- * whose process was killed before it could stamp an end, so a caller telling
- * them apart looks at `lastEventAt` too.
+ * The two extra fields are correlated subselects, not columns of `runs`, so
+ * this is the shape the store's run queries decode - `Run` itself stays the
+ * table.
  *
  * **Example** (Finding the runs that are still open)
  *
  * ```ts
  * import * as A from "effect/Array"
  * import * as O from "effect/Option"
- * import type { Run } from "@effect-open-protocol/store"
+ * import type { RunSummary } from "@effect-open-protocol/store"
  *
- * const open = (runs: ReadonlyArray<Run>) => A.filter(runs, (run) => O.isNone(run.endedAt))
+ * const open = (runs: ReadonlyArray<RunSummary>) => A.filter(runs, (run) => O.isNone(run.endedAt))
  * ```
  *
  * @category models
  * @since 0.0.0
  */
-export class Run extends RunStart.extend<Run>("Run")(
+export class RunSummary extends Run.extend<RunSummary>("RunSummary")(
   {
-    id: RunId,
-    endedAt: S.OptionFromNullOr(S.String),
     eventCount: Count,
     lastEventAt: S.OptionFromNullOr(S.String)
   },
@@ -166,18 +172,22 @@ export class Run extends RunStart.extend<Run>("Run")(
 ) {}
 
 /**
- * One traced chunk or frame, ready to be written.
+ * One traced chunk or frame as it is stored: the `events` row, with the id that
+ * a reader pages from.
  *
- * The fields after `connection` are a `WireEvent` as the tracer emitted it;
- * `raw` stays escaped, so `unescapeWire` still recovers the bytes.
+ * **Details**
+ *
+ * `TracedEvent.insert` is the same event without that id - what a tracer emits,
+ * tagged with its run and connection. `raw` stays escaped, so `unescapeWire`
+ * still recovers the bytes.
  *
  * **Example** (Recording a handshake frame)
  *
  * ```ts
  * import * as O from "effect/Option"
- * import { NewEvent, RunId } from "@effect-open-protocol/store"
+ * import { RunId, TracedEvent } from "@effect-open-protocol/store"
  *
- * const event = new NewEvent({
+ * const event = TracedEvent.insert.make({
  *   runId: RunId.make(1),
  *   connection: 1,
  *   at: "2026-09-18T10:00:00.100Z",
@@ -189,47 +199,31 @@ export class Run extends RunStart.extend<Run>("Run")(
  * })
  * ```
  *
- * @category models
- * @since 0.0.0
- */
-export class NewEvent extends S.Class<NewEvent>("NewEvent")(
-  {
-    runId: RunId,
-    connection: S.Int.check(S.isGreaterThan(0)),
-    at: S.String,
-    direction: WireDirection,
-    kind: WireEventKind,
-    bytes: Count,
-    mid: S.OptionFromNullOr(S.String),
-    raw: S.String
-  },
-  { description: "A traced wire event tagged with its run and connection" }
-) {}
-
-/**
- * A recorded event as it is read back, carrying the row id a reader uses as
- * its next cursor.
- *
  * **Example** (Taking the cursor after a page)
  *
  * ```ts
  * import * as A from "effect/Array"
  * import * as O from "effect/Option"
- * import { EventId, type StoredEvent } from "@effect-open-protocol/store"
+ * import { EventId, type TracedEvent } from "@effect-open-protocol/store"
  *
- * const cursorAfter = (page: ReadonlyArray<StoredEvent>) =>
+ * const cursorAfter = (page: ReadonlyArray<TracedEvent>) =>
  *   O.getOrElse(O.map(A.last(page), (event) => event.id), () => EventId.make(0))
  * ```
  *
  * @category models
  * @since 0.0.0
  */
-export class StoredEvent extends NewEvent.extend<StoredEvent>("StoredEvent")(
-  {
-    id: EventId
-  },
-  { description: "A recorded wire event with its row id" }
-) {}
+export class TracedEvent extends Model.Class<TracedEvent>("TracedEvent")({
+  id: Model.GeneratedByDb(EventId),
+  runId: RunId,
+  connection: S.Int.check(S.isGreaterThan(0)),
+  at: S.String,
+  direction: WireDirection,
+  kind: WireEventKind,
+  bytes: Count,
+  mid: Model.FieldOption(S.String),
+  raw: S.String
+}) {}
 
 /**
  * Which events of a run to read: a page after a cursor, oldest first,

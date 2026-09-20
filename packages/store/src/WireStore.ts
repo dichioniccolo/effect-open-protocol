@@ -21,7 +21,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import * as SqlSchema from "effect/unstable/sql/SqlSchema"
 import { migrations } from "./migrations.ts"
-import { EventQuery, NewEvent, Run, RunId, RunStart, StoredEvent } from "./Schema.ts"
+import { EventQuery, Run, RunId, RunSummary, TracedEvent } from "./Schema.ts"
 
 /**
  * What the trace store can do: open and close runs, write events in batches,
@@ -32,17 +32,19 @@ import { EventQuery, NewEvent, Run, RunId, RunStart, StoredEvent } from "./Schem
  */
 export interface WireStoreService {
   /** Records the start of a run and returns its id. */
-  readonly startRun: (start: RunStart) => Effect.Effect<RunId, SqlError | S.SchemaError>
+  readonly startRun: (start: typeof Run.insert.Type) => Effect.Effect<RunId, SqlError | S.SchemaError>
   /** Stamps the time a run stopped recording. */
   readonly endRun: (id: RunId, endedAt: string) => Effect.Effect<void, SqlError>
   /** Writes a batch of events in one transaction. */
-  readonly insertEvents: (events: ReadonlyArray<NewEvent>) => Effect.Effect<void, SqlError | S.SchemaError>
+  readonly insertEvents: (
+    events: ReadonlyArray<typeof TracedEvent.insert.Type>
+  ) => Effect.Effect<void, SqlError | S.SchemaError>
   /** Every run, newest first. */
-  readonly listRuns: Effect.Effect<ReadonlyArray<Run>, SqlError | S.SchemaError>
+  readonly listRuns: Effect.Effect<ReadonlyArray<RunSummary>, SqlError | S.SchemaError>
   /** One run, if it exists. */
-  readonly findRun: (id: RunId) => Effect.Effect<O.Option<Run>, SqlError | S.SchemaError>
+  readonly findRun: (id: RunId) => Effect.Effect<O.Option<RunSummary>, SqlError | S.SchemaError>
   /** A page of a run's events after a cursor, oldest first. */
-  readonly events: (query: EventQuery) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError | S.SchemaError>
+  readonly events: (query: EventQuery) => Effect.Effect<ReadonlyArray<TracedEvent>, SqlError | S.SchemaError>
 }
 
 const runColumns = `r.id, r.side, r.startedAt, r.endedAt, r.host, r.port, r.seed, r.latency, r.jitter,
@@ -79,28 +81,28 @@ export const make = Effect.gen(function* () {
   yield* Migrator.make({})({ loader: Migrator.fromRecord(migrations) })
 
   const insertRun = SqlSchema.findOne({
-    Request: RunStart,
+    Request: Run.insert,
     Result: S.Struct({ id: RunId }),
     execute: (start) => sql`insert into runs ${sql.insert(start)} returning id`
   })
 
   const listRuns = SqlSchema.findAll({
     Request: S.Void,
-    Result: Run,
+    Result: RunSummary,
     execute: () => sql`select ${sql.literal(runColumns)} from runs r order by r.id desc`
   })
 
   const findRun = SqlSchema.findOneOption({
     Request: RunId,
-    Result: Run,
+    Result: RunSummary,
     execute: (id) => sql`select ${sql.literal(runColumns)} from runs r where r.id = ${id}`
   })
 
-  const encodeEvents = S.encodeEffect(S.Array(NewEvent))
+  const encodeEvents = S.encodeEffect(S.Array(TracedEvent.insert))
 
   const events = SqlSchema.findAll({
     Request: EventQuery,
-    Result: StoredEvent,
+    Result: TracedEvent,
     execute: (query) =>
       sql`select * from events where ${sql.and(
         A.getSomes([
