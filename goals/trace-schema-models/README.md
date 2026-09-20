@@ -2,7 +2,7 @@
 
 ## Status
 
-Lifecycle: `active`
+Lifecycle: `completed-retained`
 
 Source: [`ops/manifest.json`](./ops/manifest.json)
 
@@ -44,19 +44,19 @@ not `@effect/sql`, and why `makeRepository` and `makeResolvers` are both out),
 
 ## Current Phase
 
-P3 PR to mergeable, second pass — [PR #11](https://github.com/dichioniccolo/effect-open-protocol/pull/11)
-is open and `mergeStateStatus` is `CLEAN` with no unresolved threads. Next:
-P4 Close, once it merges.
+P4 Close — complete. The work merged and the closeout reflection is written;
+the packet stays as evidence and as precedent for the next `Model` change.
 
 ## Latest Evidence
 
-[PR #11](https://github.com/dichioniccolo/effect-open-protocol/pull/11)
-(2026-09-20), `mergeStateStatus: CLEAN`, no configured status checks.
+[PR #11](https://github.com/dichioniccolo/effect-open-protocol/pull/11), merged
+2026-09-20 by rebase as `fdf87c7`, `a937066`, `afdb891`, `b3d6c5a`.
 
-Local, 2026-09-20: `bun run check` (4/4 workspaces), `bun run lint`,
-`bun run format:check`, `bun run test` (158 tests) all pass.
-`rg -n "RunStart|NewEvent|StoredEvent" packages apps` returns nothing;
-`git diff -- packages/store/src/migrations.ts` is empty.
+Closeout reflection:
+[`history/reflections/2026-09-20-claude.md`](./history/reflections/2026-09-20-claude.md).
+
+Local, on `main` after the merge: `bun run check` (4/4 workspaces),
+`bun run lint`, `bun run format:check`, `bun run test` (158 tests) all pass.
 
 ## Notes
 

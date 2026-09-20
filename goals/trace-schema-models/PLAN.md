@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: `in-progress`
+Status: `complete`
 
 ## Phases
 
@@ -12,7 +12,7 @@ Status: `in-progress`
 | P1 Implement | complete | `Run` + `RunSummary` first, then `TracedEvent`, barrel, call sites, tests, JSDoc examples. | `SPEC.md` acceptance criteria are met. |
 | P2 Verify | complete | `bun run check`, `lint`, `format:check`, `test`; confirm the old names are gone and `migrations.ts` is untouched. | Verification matrix is green or blockers are documented. |
 | P3 PR to mergeable | complete | Open a pull request and drive it to mergeable: required checks green, review comments answered and resolved. | `mergeStateStatus` is `CLEAN`; zero unresolved review threads. |
-| P4 Close | pending | Write the closeout reflection and flip packet state. | Packet status and evidence are updated; a closeout reflection exists. |
+| P4 Close | complete | Write the closeout reflection and flip packet state. | Packet status and evidence are updated; a closeout reflection exists. |
 
 <!--
 Phase ids must match ops/manifest.json `phases[]`.
@@ -37,8 +37,8 @@ the same assumption.
 
 ## Current Blockers
 
-None. P0-P3 are done: [PR #11](https://github.com/dichioniccolo/effect-open-protocol/pull/11)
-is `CLEAN`. The next action is P4 Close, once it merges.
+None. Closed 2026-09-20: PR #11 merged by rebase, reflection written, packet
+flipped to `completed-retained`.
 
 ### Notes from execution (2026-09-20)
 

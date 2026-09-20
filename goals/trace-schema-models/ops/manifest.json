@@ -3,13 +3,13 @@
   "initiative": {
     "id": "trace-schema-models",
     "title": "Trace Schema Models",
-    "status": "active",
+    "status": "completed-retained",
     "created": "2026-09-20",
     "updated": "2026-09-20",
     "packetAnchorDocument": "SPEC.md"
   },
   "packetPath": "goals/trace-schema-models",
-  "lifecycle": "active",
+  "lifecycle": "completed-retained",
   "mission": "Declare each trace table once as an effect/unstable/schema/Model model, replacing the hand-rolled insert/select schema pairs in packages/store and updating every consumer.",
   "executionCapable": true,
   "reflectionRequired": true,
@@ -69,7 +69,7 @@
     {
       "id": "P4",
       "name": "Close",
-      "status": "pending"
+      "status": "complete"
     }
   ],
   "verificationCommands": [
@@ -92,6 +92,14 @@
     "The same blocker repeats after reasonable investigation."
   ],
   "evidence": {
-    "pullRequest": "https://github.com/dichioniccolo/effect-open-protocol/pull/11"
+    "pullRequest": "https://github.com/dichioniccolo/effect-open-protocol/pull/11",
+    "merged": "2026-09-20",
+    "commits": [
+      "fdf87c7",
+      "a937066",
+      "afdb891",
+      "b3d6c5a"
+    ],
+    "reflection": "history/reflections/2026-09-20-claude.md"
   }
 }
