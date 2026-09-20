@@ -225,3 +225,34 @@ more.
 json })` rather than `GeneratedByDb` because `makeRepository` requires the id in
 the update variant. That relaxation buys the derived `insert` alone — the
 update and delete it also derives stay unpublished.
+
+### Q11 — A second review: what was left?
+
+**Answer:** Five cleanups, all applied. The query set is named for the store
+operations it backs (`listRuns`, `findRun`, `events`, `endRun`,
+`insertEvents`), so `WireStore` assembles rather than translates; the unused
+`Queries` type is gone; `RunRepository` left the package barrel; the two
+composition idioms are now explained where they live; and the transaction
+around the event insert is gone.
+
+**Rationale:**
+
+- *Names.* `Queries` and `WireStoreService` were the same six operations under
+  two vocabularies, with the assembly performing the mapping. Aligning them
+  makes the identity visible and removes the `listRuns(undefined)` wart, which
+  the query set now applies itself.
+- *Dead type.* `Queries` was exported, referenced nowhere, and its module is not
+  public. Speculative surface.
+- *Barrel.* Exporting `RunRepository` with no consumer outside the package
+  contradicted the rule used to narrow it to `insert`. It is internal until
+  something imports it.
+- *Idioms.* A service for the table's CRUD, a plain `make` for the store's own
+  queries. Both module headers now say which and why, so the next reader does
+  not have to guess the house style.
+- *Transaction.* One multi-row insert is atomic in SQLite, so `withTransaction`
+  bought nothing and cost a `BEGIN`/`COMMIT` pair per batch on the recorder's
+  hot path - the same path that blocks the event loop under `bun:sqlite`.
+
+**Rejected:** *`WireStore.of({ ...queries, startRun })`* — shorter, but TypeScript
+does not excess-property-check a spread, so a future query member would ride
+along on the runtime object without appearing in the contract.
