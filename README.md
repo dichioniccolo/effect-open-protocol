@@ -1,39 +1,32 @@
 # effect-open-protocol
 
 Client Open Protocol per avvitatori industriali, scritto con
-[Effect](https://effect.website) v4. Tiene la connessione con i controller e
-passa ogni risultato di serraggio all'applicazione una volta sola: si
-riconnette da solo, rifà l'handshake, chiede di nuovo al controller di
-mandargli i risultati, e recupera quelli prodotti mentre il collegamento era
-giù.
+[Effect](https://effect.website) v4.
 
-Lo stesso servizio l'ho già scritto con NestJS e ce l'ho in produzione. Lì i
-problemi che ho avuto li ho risolti, ma volevo vedere come evitarli da subito
-con Effect.
-
-Documentazione completa, in inglese, in [docs/REFERENCE.md](docs/REFERENCE.md).
+Lo stesso servizio l'ho già scritto con NestJS e ce l'ho in produzione. Questa
+è una libreria riscritta da capo, con Effect.
 
 ## I tre problemi della versione NestJS
 
 Un risultato salvato due volte. Un messaggio inatteso che ha fatto cadere il
 servizio, e con lui le connessioni verso tutti gli altri controller. E dei
 risultati persi mentre la rete era giù. In produzione li ho sistemati tutti e
-tre, uno alla volta, come si presentavano. Riscrivendo il codice per questo
-test, senza riportare niente dalla versione vecchia, volevo vedere che forma
-prendevano se li affrontavo con Effect dall'inizio.
+tre, uno alla volta, come si sono presentati. Riscrivendo il codice per questo
+test, senza riportare niente dalla versione vecchia, volevo vedere come
+affrontarli con Effect dall'inizio.
 
 ## Le scelte principali
 
 - **Solo Effect, senza NestJS.** Ogni errore è dichiarato nella firma della
   funzione, ogni risorsa la chiude chi l'ha aperta (`Scope`), e ogni
-  ritentativo segue una politica scritta una volta sola (`Schedule`). Nella
+  ritentativo segue una politica definita con il modulo `Schedule`. Nella
   versione NestJS erano eccezioni, lifecycle hook e cicli scritti a mano.
 - **La connessione non conosce i socket.** Parla con un'interfaccia,
   `Transport`, e chi la costruisce decide se dietro c'è il TCP vero o una rete
-  finta. Nei test uso la seconda, così i tempi e i guasti li decido io.
-- **Una richiesta alla volta per controller.** Le risposte non dicono a quale
-  domanda rispondono, quindi il client ne manda una, aspetta risposta, e solo
-  dopo manda la prossima.
+  finta. Nei test uso la seconda, così i tempi e i guasti li posso decidere io.
+- **Una richiesta alla volta per controller.** Le risposte del controller non
+  dicono a quale richiesta rispondono, quindi il client ne manda una, aspetta
+  risposta, e solo dopo manda la prossima.
 - **Il client conferma solo dopo che l'applicazione ha gestito il risultato.**
   Se confermasse subito e poi l'applicazione si rompesse, quel risultato
   sarebbe perso. Il costo è che ogni tanto ne arriva uno doppio, e
@@ -145,15 +138,10 @@ recuperati con lo 0064, che la conferma non la vogliono. Corretti tutti e due.
 I tre problemi qui sopra, in questa versione, hanno una risposta nel codice.
 Il doppione: il client riconosce i rinvii, e lo stesso risultato
 all'applicazione non ci arriva due volte. Il crash che si portava dietro le
-altre connessioni: ogni controller ha la sua fiber supervisionata, e quello che
-va storto su uno resta lì. I risultati persi: quelli prodotti mentre il
-collegamento era giù li richiede con lo 0064 appena torna su.
-
-La UI è stata l'occasione per provare gli atom di Effect, che non avevo mai
-usato: lo stato della pagina sta tutto lì, dai dati che arrivano dal server ai
-filtri e alla riga selezionata, e il valore derivato si dichiara invece di
-tenerlo in sincrono a mano. Con più tempo ci guarderei ancora, a partire
-dall'idratazione tra server e client.
+altre connessioni: ogni controller ha la sua fiber supervisionata, e quello
+che va in errore su uno resta lì. I risultati persi: quelli prodotti mentre il
+collegamento era giù la libreria li richiede con lo 0064 appena la connessione
+torna su.
 
 Effect mi ha aiutato su tre cose. Le dipendenze stanno nel tipo, quindi se al
 programma manca un pezzo, per esempio il `Transport`, TypeScript non me lo fa
@@ -162,7 +150,8 @@ avviato. Anche gli errori stanno nel tipo: quelli che non gestisco restano
 nella firma, e se ne resta uno dove ho dichiarato che non ce ne sono più, non
 compila. E il tempo si prova senza aspettarlo.
 
-In produzione non lo terrei come libreria. Metterei tutto dentro il servizio,
-con i MID definiti lì, senza un livello in mezzo da tenere generico. Poi
-guarderei Cluster di Effect: oggi serve un'istanza per ogni gruppo di
-controller, e se quella cade porta giù le connessioni con tutti.
+La UI è stata l'occasione per provare gli atom di Effect, che non avevo mai
+usato: lo stato della pagina sta tutto lì, dai dati che arrivano dal server ai
+filtri e alla riga selezionata, e il valore derivato si dichiara invece di
+tenerlo in sincrono a mano. Con più tempo ci guarderei ancora, a partire
+dall'idratazione tra server e client.
