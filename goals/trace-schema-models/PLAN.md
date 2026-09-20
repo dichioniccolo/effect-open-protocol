@@ -61,6 +61,14 @@ is `CLEAN`. The next action is P4 Close, once it merges.
 - `makeResolvers` stays rejected — `SqlRequest` deduplicates equal payloads and
   two traced events can be equal, so the recorder would lose rows.
 
+### Third pass (2026-09-20), `DECISIONS.md` Q9-Q10
+
+A quality review found the second pass had split each query across two files
+and leaked encoded types into `queries.ts` signatures. `queries.ts` now owns
+each query whole behind a `make` that binds the client once; `WireStore.make`
+is 11 lines of assembly; `RunRepositoryService` is derived from the
+repository and narrowed to `insert`.
+
 ## P4 Closeout Checklist
 
 Before marking the packet closed (and `status` → `completed-retained` / `complete`):

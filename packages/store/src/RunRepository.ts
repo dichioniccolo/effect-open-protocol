@@ -13,32 +13,31 @@
  * @since 0.0.0
  */
 import { Context, Effect, Layer } from "effect"
-import type * as Cause from "effect/Cause"
-import type * as S from "effect/Schema"
 import { SqlClient } from "effect/unstable/sql/SqlClient"
-import type { SqlError } from "effect/unstable/sql/SqlError"
 import * as SqlModel from "effect/unstable/sql/SqlModel"
-import { Run, type RunId } from "./Schema.ts"
+import { Run } from "./Schema.ts"
+
+const derived = SqlModel.makeRepository(Run, {
+  tableName: "runs",
+  spanPrefix: "RunRepository",
+  idColumn: "id"
+})
 
 /**
- * Insert, update, find-by-id and delete for one `runs` row, derived from the
- * `Run` model.
+ * What the `runs` repository offers, taken from the derivation itself so the
+ * two cannot drift.
+ *
+ * **Details**
+ *
+ * `SqlModel.makeRepository` also derives `update`, `updateVoid`, `findById` and
+ * `delete`. Nothing needs them yet, and a package's exported surface should be
+ * what it promises to keep working, so only `insert` is published; widen this
+ * `Pick` when a caller appears.
  *
  * @category models
  * @since 0.0.0
  */
-export interface RunRepositoryService {
-  /** Writes a new run and returns the row the database assigned an id to. */
-  readonly insert: (run: typeof Run.insert.Type) => Effect.Effect<Run, SqlError | S.SchemaError>
-  /** Overwrites a run with the values it carries. */
-  readonly update: (run: typeof Run.update.Type) => Effect.Effect<Run, SqlError | S.SchemaError>
-  /** Overwrites a run, discarding the row it returns. */
-  readonly updateVoid: (run: typeof Run.update.Type) => Effect.Effect<void, SqlError | S.SchemaError>
-  /** One run by id, failing when there is none. */
-  readonly findById: (id: RunId) => Effect.Effect<Run, Cause.NoSuchElementError | SqlError | S.SchemaError>
-  /** Removes a run by id. */
-  readonly delete: (id: RunId) => Effect.Effect<void, SqlError | S.SchemaError>
-}
+export interface RunRepositoryService extends Pick<Effect.Success<typeof derived>, "insert"> {}
 
 /**
  * The `runs` repository as a service, so whoever needs a run row asks for one
@@ -81,11 +80,7 @@ export class RunRepository extends Context.Service<RunRepository, RunRepositoryS
  * @category constructors
  * @since 0.0.0
  */
-export const make: Effect.Effect<RunRepositoryService, never, SqlClient> = SqlModel.makeRepository(Run, {
-  tableName: "runs",
-  spanPrefix: "RunRepository",
-  idColumn: "id"
-})
+export const make: Effect.Effect<RunRepositoryService, never, SqlClient> = derived
 
 /**
  * The `runs` repository over a `SqlClient`.
