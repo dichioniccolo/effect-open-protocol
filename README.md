@@ -65,8 +65,9 @@ bun run test
 
 ### Il simulatore
 
-Nel repository c'è un controller finto, così la caduta della rete si comanda a
-mano invece di aspettarla. Tre comandi, ognuno nel suo terminale.
+Nel repository c'è un controller finto, così il collegamento lo si butta giù a
+mano invece di aspettare che cada da solo. Tre comandi, ognuno nel suo
+terminale.
 
 ```sh
 bun run controller -- --port 4545
@@ -74,8 +75,8 @@ bun run client     -- --port 4545 --latency 40 --jitter 15
 bun run ui                                    # http://localhost:3000
 ```
 
-La caduta la si comanda dal terminale del controller. I comandi sono righe,
-quindi ognuno finisce con Invio.
+I comandi si danno dal terminale del controller. Sono righe, quindi ognuno
+finisce con Invio.
 
 1. **Invio** da solo, e il controller fa un risultato. Il client lo consegna
    all'applicazione e poi conferma.
