@@ -13,9 +13,4 @@ export * from "./Schema.ts"
 /**
  * @since 0.0.0
  */
-export * as RunRepository from "./RunRepository.ts"
-
-/**
- * @since 0.0.0
- */
 export * as WireStore from "./WireStore.ts"

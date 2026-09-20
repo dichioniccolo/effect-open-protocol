@@ -19,7 +19,6 @@
  * @since 0.0.0
  */
 import { Context, Effect, Layer } from "effect"
-import * as A from "effect/Array"
 import type * as O from "effect/Option"
 import type * as S from "effect/Schema"
 import * as Migrator from "effect/unstable/sql/Migrator"
@@ -86,12 +85,13 @@ export const make = Effect.gen(function* () {
   const queries = yield* Q.make
 
   return WireStore.of({
+    // The one operation that is not a query: a row in, its id out.
     startRun: (start) => Effect.map(runs.insert(start), (run) => run.id),
-    endRun: queries.stampRunEnd,
-    insertEvents: (batch) => A.match(batch, { onEmpty: () => Effect.void, onNonEmpty: queries.insertEvents }),
-    listRuns: queries.listRunSummaries(undefined),
-    findRun: queries.findRunSummary,
-    events: queries.eventPage
+    endRun: queries.endRun,
+    insertEvents: queries.insertEvents,
+    listRuns: queries.listRuns,
+    findRun: queries.findRun,
+    events: queries.events
   })
 }).pipe(Effect.withSpan("WireStore.make"))
 

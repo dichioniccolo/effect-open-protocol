@@ -10,6 +10,11 @@
  * Only the reads a derivation cannot express - a run list with its event counts
  * - stay with the store, in `queries.ts`.
  *
+ * A service rather than a plain constructor, because a table's CRUD is its own
+ * replaceable piece with its own lifetime: whoever needs a run row asks for the
+ * repository instead of deriving a second one. The store's other queries are
+ * construction detail and stay a plain `make`.
+ *
  * @since 0.0.0
  */
 import { Context, Effect, Layer } from "effect"
@@ -30,9 +35,10 @@ const derived = SqlModel.makeRepository(Run, {
  * **Details**
  *
  * `SqlModel.makeRepository` also derives `update`, `updateVoid`, `findById` and
- * `delete`. Nothing needs them yet, and a package's exported surface should be
- * what it promises to keep working, so only `insert` is published; widen this
- * `Pick` when a caller appears.
+ * `delete`. Nothing needs them yet, so only `insert` is offered; widen this
+ * `Pick` when a caller appears. The module itself is not in the package
+ * barrel for the same reason - it becomes public when something outside this
+ * package imports it.
  *
  * @category models
  * @since 0.0.0
@@ -47,10 +53,11 @@ export interface RunRepositoryService extends Pick<Effect.Success<typeof derived
  *
  * ```ts
  * import { Effect } from "effect"
- * import { Run, RunRepository } from "@effect-open-protocol/store"
+ * import { Run } from "@effect-open-protocol/store"
+ * import { RunRepository } from "./RunRepository.ts"
  *
  * const started = Effect.gen(function* () {
- *   const runs = yield* RunRepository.RunRepository
+ *   const runs = yield* RunRepository
  *   const run = yield* runs.insert(
  *     Run.insert.make({
  *       side: "client",

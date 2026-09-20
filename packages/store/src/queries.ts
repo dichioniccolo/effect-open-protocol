@@ -11,6 +11,11 @@
  * `RunRepository`. What is left is a projection with correlated subselects, a
  * paged and filtered read, a one-column patch, and a multi-row insert.
  *
+ * Each query is named for the store operation it backs, so `WireStore` reads as
+ * an assembly rather than a translation. This is construction detail rather
+ * than a published contract - no service, no layer, and no place in the
+ * package barrel - which is the same reason `migrations.ts` is not one either.
+ *
  * @since 0.0.0
  */
 import { Effect } from "effect"
@@ -43,21 +48,21 @@ export const make = Effect.gen(function* () {
   const encodeEvents = S.encodeEffect(S.Array(TracedEvent.insert))
 
   /** Every run with its event count and activity, newest first. */
-  const listRunSummaries = SqlSchema.findAll({
+  const runSummaries = SqlSchema.findAll({
     Request: S.Void,
     Result: RunSummary,
     execute: () => sql`select ${sql.literal(runSummaryColumns)} from runs r order by r.id desc`
   })
 
   /** One run with its event count and activity, by id. */
-  const findRunSummary = SqlSchema.findOneOption({
+  const findRun = SqlSchema.findOneOption({
     Request: RunId,
     Result: RunSummary,
     execute: (id) => sql`select ${sql.literal(runSummaryColumns)} from runs r where r.id = ${id}`
   })
 
   /** A page of one run's events after a cursor, narrowed by the query's filters. */
-  const eventPage = SqlSchema.findAll({
+  const events = SqlSchema.findAll({
     Request: EventQuery,
     Result: TracedEvent,
     execute: (query) =>
@@ -73,11 +78,11 @@ export const make = Effect.gen(function* () {
   })
 
   /** Stamps the time a run stopped recording. */
-  const stampRunEnd = (id: RunId, endedAt: string) =>
+  const endRun = (id: RunId, endedAt: string) =>
     Effect.asVoid(sql`update runs set endedAt = ${endedAt} where id = ${id}`)
 
   /**
-   * Writes a batch of events as one multi-row insert, in one transaction.
+   * Writes a non-empty batch of events as one multi-row insert.
    *
    * `SqlModel.makeResolvers` builds the same statement, and is deliberately not
    * used: a `SqlRequest` hashes by payload and deduplicates equal requests, and
@@ -86,20 +91,16 @@ export const make = Effect.gen(function* () {
    * that differs, and the database assigns those, so the recorder would lose
    * rows.
    */
-  const insertEvents = (rows: A.NonEmptyReadonlyArray<typeof TracedEvent.insert.Type>) =>
+  const writeEvents = (rows: A.NonEmptyReadonlyArray<typeof TracedEvent.insert.Type>) =>
     encodeEvents(rows).pipe(
+      // One multi-row insert is atomic on its own; a transaction around it
+      // would only add a BEGIN and a COMMIT to the recorder's hot path.
       Effect.flatMap((encoded) => sql`insert into events ${sql.insert(encoded)}`),
-      sql.withTransaction,
       Effect.asVoid
     )
 
-  return { listRunSummaries, findRunSummary, eventPage, stampRunEnd, insertEvents } as const
-})
+  const insertEvents = (batch: ReadonlyArray<typeof TracedEvent.insert.Type>) =>
+    A.match(batch, { onEmpty: () => Effect.void, onNonEmpty: writeEvents })
 
-/**
- * Every query the trace store runs, already bound to its client.
- *
- * @category models
- * @since 0.0.0
- */
-export interface Queries extends Effect.Success<typeof make> {}
+  return { listRuns: runSummaries(undefined), findRun, events, endRun, insertEvents } as const
+})
