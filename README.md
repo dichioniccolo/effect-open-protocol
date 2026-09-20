@@ -8,7 +8,7 @@ mandargli i risultati, e recupera quelli prodotti mentre il collegamento era
 giù.
 
 Lo stesso servizio l'ho già scritto con NestJS e ce l'ho in produzione. Lì i
-problemi che ho avuto li ho risolti, ma volevo vedere come evitarli sin da subito
+problemi che ho avuto li ho risolti, ma volevo vedere come evitarli da subito
 con Effect.
 
 Documentazione completa, in inglese, in [docs/REFERENCE.md](docs/REFERENCE.md).
@@ -121,9 +121,14 @@ l'ultimo che il controller ha fatto) e lo 0065 è la risposta.
   come il primo. In tutta la sessione l'applicazione ha ricevuto nove
   risultati, nessuno due volte.
 
-Nel codice si parte da `DeviceConnection.ts` e `ResultDelivery.ts`, in
-`packages/open-protocol`. `packages/store` e `apps/ui` registrano e mostrano il
-traffico, `packages/cli` sono i comandi qui sopra.
+## Dov'è il codice
+
+Il grosso è in `packages/open-protocol`: `DeviceConnection.ts` tiene su la
+connessione con un controller, `ResultDelivery.ts` prende il risultato che
+arriva, chiama l'handler dell'applicazione e manda l'ack solo se l'handler è
+andato a buon fine, riconoscendo i rinvii di quello che ha già passato.
+`packages/store` e `apps/ui` registrano e mostrano il traffico, `packages/cli`
+sono i comandi qui sopra.
 
 ## Cosa ho imparato
 
@@ -143,6 +148,12 @@ all'applicazione non ci arriva due volte. Il crash che si portava dietro le
 altre connessioni: ogni controller ha la sua fiber supervisionata, e quello che
 va storto su uno resta lì. I risultati persi: quelli prodotti mentre il
 collegamento era giù li richiede con lo 0064 appena torna su.
+
+La UI è stata l'occasione per provare gli atom di Effect, che non avevo mai
+usato: lo stato della pagina sta tutto lì, dai dati che arrivano dal server ai
+filtri e alla riga selezionata, e il valore derivato si dichiara invece di
+tenerlo in sincrono a mano. Con più tempo ci guarderei ancora, a partire
+dall'idratazione tra server e client.
 
 Effect mi ha aiutato su tre cose. Le dipendenze stanno nel tipo, quindi se al
 programma manca un pezzo, per esempio il `Transport`, TypeScript non me lo fa
