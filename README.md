@@ -1,171 +1,142 @@
 # effect-open-protocol
 
-Un client per Open Protocol, il protocollo con cui si parla con gli avvitatori
-industriali (i controller), scritto con [Effect](https://effect.website) v4.
-La libreria non gestisce i controller: si occupa solo della connessione con
-loro. Deve restare collegata anche quando la rete cade, e consegnare ogni
-risultato di serraggio all'applicazione una volta sola, oppure dire che non ci
-riesce.
+Gli avvitatori industriali si comandano via rete, con un protocollo che si
+chiama Open Protocol. Questa libreria ci parla, ed è scritta con
+[Effect](https://effect.website) v4. Tiene la connessione con i controller e
+passa ogni risultato di serraggio all'applicazione una volta sola.
 
-Ogni serraggio produce un risultato: coppia, angolo, esito. È un dato di
-tracciabilità. Se un'auto esce dalla linea e la coppia di un bullone non è
-stata registrata, nessuno può più dire se era stretto bene. Ma le reti di
-fabbrica non aiutano, e il protocollo nemmeno. Non ha un identificativo di
-correlazione, ammette un solo messaggio in attesa di risposta, chiude dopo
-quindici secondi di silenzio, e abbandona un risultato di cui non arriva la
-conferma. La parte difficile non è leggere i byte. È quando riprovare, quando
-arrendersi, e come dimostrare che funziona.
+Ogni serraggio produce un risultato: coppia, angolo, esito, identificativo. È
+il dato che certifica quel bullone, e se non arriva all'applicazione è perso.
+Il protocollo non aiuta: un messaggio alla volta, risposte che non dicono a
+quale domanda rispondono, e dopo quindici secondi di silenzio il controller
+chiude.
 
 Documentazione completa, in inglese, in [docs/REFERENCE.md](docs/REFERENCE.md).
 
+## Perché l'ho fatto
+
+Questo servizio l'ho già scritto una volta con NestJS, ed è in produzione. Lì
+ho avuto tre problemi seri: un risultato salvato due volte, un messaggio
+inatteso che ha fatto cadere il servizio e con lui le connessioni verso tutti
+gli altri controller, e dei risultati persi mentre la rete era giù.
+
+Volevo rifarlo da zero con Effect e vedere quanto mi aiutava su quei tre
+problemi. Non ho riportato niente dalla versione vecchia.
+
+## Le scelte principali
+
+- **Solo Effect, senza NestJS.** Ogni errore è dichiarato nella firma, ogni
+  risorsa muore con il suo `Scope`, ogni retry è uno `Schedule`. Nella versione
+  NestJS erano eccezioni, lifecycle hook e cicli scritti a mano.
+- **La connessione non conosce i socket.** Parla con l'interfaccia `Transport`,
+  e chi la costruisce decide se dietro c'è il TCP o una rete in memoria. Nei
+  test uso quella in memoria, così i tempi e i guasti li decido io.
+- **Una richiesta alla volta per controller.** Le risposte non dicono a quale
+  domanda rispondono, quindi il client ne manda una, aspetta risposta, e solo dopo manda
+  la prossima.
+- **Il client conferma solo dopo che l'applicazione ha gestito il risultato.**
+  Se confermasse subito e poi l'applicazione si rompesse, quel risultato
+  sarebbe perso. Il costo è che ogni tanto ne arriva uno doppio, e
+  l'applicazione deve saperlo buttare.
+- **Una callback, non uno stream.** Con uno stream non sai quando chi consuma
+  ha finito davvero, quindi non sai nemmeno quando confermare.
+
 ## Come provarlo
 
-Serve [Bun](https://bun.sh) 1.3. `bun install`, poi `bun run test`: 158 test,
-con il tempo simulato, quindi keep-alive, timeout e backoff si verificano senza
-aspettare davvero.
+Serve [Bun](https://bun.sh) 1.3. I 158 test girano su tempo finto, quindi
+keep-alive, timeout e backoff si controllano senza aspettare davvero.
 
-### Sul controller vero
+```sh
+bun install
+bun run test
+```
 
-La prova che conta l'ho fatta su un avvitatore Rexroth Nexo che ho in casa, e
-quella sessione è dentro il repository. Quattro minuti di controller vero su
-WLAN vera, 142 eventi registrati, ogni byte che è passato sul socket:
+### La sessione reale
+
+La prova vera l'ho fatta su un avvitatore Rexroth Nexo che ho in casa, e quella
+sessione è dentro il repository. Quattro minuti su WLAN vera, ogni byte passato
+sul socket.
 
 ```sh
 EFFECT_OPEN_PROTOCOL_TRACE_DB=../../docs/traces/nexo.sqlite bun run ui
 ```
 
-Nella lista c'è un run solo. Aprendolo si vedono i suoi frame in ordine, con
-tempo, direzione e MID. La storia da seguire è questa:
+C'è un run solo. Aprilo, e vedi i frame in ordine con ora, direzione e MID.
 
-- **16:01:33.** Handshake (MID 0001/0002), poi MID 0064 per chiedere l'ultimo
-  risultato del controller. È 2636, e diventa la base da cui contare. Poi la
-  sottoscrizione, MID 0060, accettata con 0005.
-- **16:01:52.** Arriva un serraggio, MID 0061 con id 2637. Il client lo
-  consegna all'applicazione e **solo dopo** risponde con 0062.
-- **16:02:13.** Qui ho spento la WLAN del controller e ho fatto sette serraggi.
-  Il keep-alive di quel minuto non riceve risposta, e il client dichiara persa
-  la sessione. Poi la traccia tace. Con la rete giù non c'è niente da
-  registrare.
-- **16:02:34.** Riaccendo la WLAN. Nuovo handshake, e il MID 0064 risponde
-  2644, sette avanti rispetto all'ultimo consegnato. Il client chiede 2638,
-  2639, fino a 2644, uno alla volta, e in trecento millisecondi li ha tutti.
-  **Solo a quel punto** si risottoscrive. Il controller quei sette non li ha
-  mai spinti sulla nuova sottoscrizione. Senza questo passaggio erano persi.
-- **16:02:59.** Arriva un serraggio nuovo, 2645, e il client lo conferma come
-  il primo. Nove risultati consegnati in tutto il run, nessuno due volte.
+- **16:01:33.** Handshake. Il client chiede al controller l'ultimo risultato,
+  è il 2636, e da lì in poi conta. Poi si iscrive ai risultati.
+- **16:01:52.** Arriva il serraggio 2637. Il client lo passa all'applicazione,
+  e **solo dopo** risponde 0062.
+- **16:02:13.** Qui ho spento la WLAN e ho fatto sette serraggi. Il keep-alive
+  non riceve risposta, il client considera persa la sessione, e la traccia si
+  ferma.
+- **16:02:34.** Riaccendo la WLAN. Il client si riconnette, chiede l'ultimo
+  risultato, è il 2644: sette avanti rispetto all'ultimo che ha passato.
+  Allora chiede uno per uno dal 2638 al 2644, e in trecento millisecondi li ha
+  tutti. **Solo a quel punto** si iscrive di nuovo.
+- **16:02:59.** Arriva un serraggio nuovo, il 2645, e il client lo conferma
+  come il primo. In tutto il run l'applicazione ha ricevuto nove risultati,
+  nessuno due volte.
 
-Chi ha un controller Open Protocol può rifare la stessa prova puntandoci il
-client. Sul controller non serve configurare niente, perché il client legge e
-basta. Non manda comandi che ne cambiano lo stato.
+### Il simulatore
+
+La stessa cosa si può far succedere a comando, con un controller finto. Tre
+comandi, ognuno nel suo terminale.
 
 ```sh
-bun run client -- --host <ip-del-controller> --port 4545
-```
-
-I passi, e cosa deve comparire a ognuno, sono in
-[Repeating it with your own controller](docs/REFERENCE.md#repeating-it-with-your-own-controller).
-
-### Senza un controller
-
-C'è un controller simulato, nel repository solo per questo motivo. Tre
-terminali dalla radice:
-
-```sh
-bun run controller -- --port 4545 --result-interval 2000 --fault-rate 0.15
+bun run controller -- --port 4545
 bun run client     -- --port 4545 --latency 40 --jitter 15
 bun run ui                                    # http://localhost:3000
 ```
 
-Il client è sempre la libreria vera. Aspetta che `--fault-rate` rompa il link.
-Premi Invio nel controller mentre è giù, e produce un risultato che il client
-non può ricevere. Poi guarda succedere quello che si è visto sul Nexo. Ctrl-C
-stampa i conti da entrambi i lati.
+Il client è lo stesso codice del run sul Nexo. L'outage lo si comanda dal
+terminale del controller. I comandi sono righe, quindi ognuno finisce con
+Invio.
 
-E c'è una demo non interattiva: tre controller simulati, guasti a seed fisso.
+1. **Invio** da solo, e il controller fa un risultato. Il client lo consegna e
+   risponde 0062.
+2. **`d` e Invio**, e il collegamento va giù. Il client perde la sessione e
+   ricomincia a riprovare.
+3. **Invio** altre due volte, e il controller fa due risultati che il client
+   non può ricevere.
+4. **`u` e Invio**, e il collegamento torna. Il client si riconnette, si
+   accorge che gliene mancano due e li chiede.
 
-```sh
-bun run demo -- --seed 7 --duration 20 --devices 3 --fault-rate 0.2
-```
+Ctrl-C stampa i conti dei due lati, che devono essere uguali.
 
-```text
-Results generated:        274
-Results delivered:        274
-Duplicates discarded:     41
-Results lost:             0   OK
-Delivered twice:          0   OK
-```
-
-**Generati uguali a consegnati, e nessuno consegnato due volte.** Ogni
-decisione casuale viene dal seed, quindi un run che fallisce si riproduce
-identico. Lo stesso scenario gira su cinquanta seed con `bun run soak`.
-
-Per leggere il codice partirei da `DeviceConnection.ts` e `ResultDelivery.ts`,
-poi dal test `Chaos.test.ts`, tutti in `packages/open-protocol`. Il resto del
-workspace è di contorno: `packages/store` e `apps/ui` sono il registratore di
-traffico e il suo visualizzatore, `packages/cli` i comandi qui sopra.
-
-## Perché l'ho fatto
-
-Questo servizio l'ho già scritto una volta, con NestJS, ed è in produzione. Lì
-ho avuto tre problemi seri: un risultato salvato due volte; un messaggio
-inatteso da un controller, che ha fatto cadere il servizio e con lui la
-connessione verso tutti gli altri controller; dei risultati persi mentre la
-rete era giù. Volevo riscriverlo da zero con Effect per vedere quanto mi
-avrebbe aiutato a gestire, o a evitare del tutto, quei problemi. Nessuna riga
-riportata dalla versione precedente. Il confronto fra le due, con quello che
-Effect ha reso più facile e quello che è costato, è in
-[NestJS vs Effect](docs/REFERENCE.md#nestjs-vs-effect).
-
-## Le scelte principali
-
-- **Solo Effect, senza NestJS.** Chi non conosce Effect fa più fatica a
-  leggerlo, ma errori, risorse e retry funzionano tutti allo stesso modo.
-- **La rete è un servizio sostituibile.** Nei test uso una versione in memoria,
-  così controllo tempo e guasti. Il rovescio è che è più gentile della rete
-  vera: un bug l'ho visto solo con la connessione TCP.
-- **Una richiesta alla volta per controller.** Le risposte non dicono a quale
-  richiesta si riferiscono, e la specifica ammette un solo messaggio in attesa.
-  Le richieste vanno in fila, ma sono poche e non pesa.
-- **L'ack parte solo dopo che l'applicazione ha gestito il risultato.**
-  L'alternativa era confermare subito, ma se l'applicazione poi fallisce il
-  risultato è perso. Il prezzo è che l'applicazione deve saper ignorare un
-  doppione: dedup e watermark stanno in memoria, e un riavvio li dimentica.
-- **Una callback, non uno stream.** Con uno stream la libreria non sa quando il
-  consumer ha davvero gestito un elemento, e l'ack diventa una scommessa.
-
-Più nel dettaglio in
-[Technical decisions](docs/REFERENCE.md#technical-decisions), insieme ai
-[limiti noti](docs/REFERENCE.md#known-limits).
+Nel codice parti da `DeviceConnection.ts` e `ResultDelivery.ts`, in
+`packages/open-protocol`. `packages/store` e `apps/ui`
+registrano e mostrano il traffico, `packages/cli` sono i comandi qui sopra.
 
 ## Uso dell'AI
 
-Il design l'ho scritto io, partendo da quello che avevo già sviluppato con
-NestJS: modello di concorrenza, gestione delle connessioni, delivery dei
-risultati e comportamento in caso di errore. Il codice e i test li ha poi
-scritti Claude, seguendo quel design e i miei suggerimenti durante lo sviluppo.
-L'ho usato anche per esplorare alternative e per fare review del codice.
-
-Non ho mai considerato l'output dell'AI come fonte di verità: il comportamento
-l'ho verificato contro la specifica del protocollo e, per Effect, contro la
-documentazione e il codice sorgente. Nelle cartelle `.claude/`, `explorations/`
-e `goals/` ho lasciato parte del processo.
+Il design l'ho scritto io, partendo da quello che avevo già fatto con NestJS:
+concorrenza, connessioni, consegna dei risultati, errori. Il codice e i test li
+ha scritti Claude, seguendo quel design e i miei suggerimenti. Non ho mai preso
+quello che usciva come verità: il comportamento l'ho controllato sulla
+specifica del protocollo, e per Effect sulla documentazione e sul codice
+sorgente. Nelle cartelle `.claude/`, `explorations/` e `goals/` ho lasciato
+parte del lavoro.
 
 ## Cosa ho imparato
 
-Che certi bug non si trovano rileggendo il codice. Otto risultati persi in
-silenzio: tre trovati dal test di caos, altri cinque dal soak quando sono
-passato da due seed a decine. Nessuno alzava un errore o faceva fallire un
-test. Il codice sembrava giusto, ed era giusto per il percorso che avevo in
-mente. Due dei cinque erano dentro codice scritto per correggere i primi tre.
-La prova sul Nexo ha aggiunto quello che il simulatore non poteva mostrare: il
-tentativo di connessione non aveva timeout, e la libreria confermava con 0062
-anche i risultati recuperati, che non lo richiedono. Entrambi corretti.
+I bug che contavano non li ho trovati rileggendo il codice, ma rompendo la
+rete e contando i risultati alla fine del run. Otto risultati persi, e nessuno
+dava segnali: niente errore, nessun test rosso, solo un numero più basso. Il
+codice era giusto per il caso che stavo immaginando.
 
-Su questo problema Effect ha aiutato soprattutto in due punti: gli errori
-stanno nel tipo, e il tempo si testa senza aspettare davvero.
+Il Nexo ha aggiunto quello che il simulatore non poteva far vedere. La
+connessione non aveva un timeout, e il client rispondeva 0062 anche ai
+risultati recuperati, che la conferma non la vogliono. Corretti tutti e due.
 
-Con più tempo approfondirei Cluster di Effect. Oggi serve un'istanza del
-servizio per ogni gruppo di controller, e se quell'istanza cade si perde la
-connessione con tutti; con Cluster ogni controller sarebbe un'entità che
-qualsiasi istanza può possedere, e passerebbe a un'altra se la prima cade. Poi
-proverei altri modelli di controller e interruzioni più lunghe.
+Effect mi ha aiutato su tre cose. Le dipendenze stanno nel tipo, quindi se al
+programma manca un pezzo, per esempio il `Transport`, TypeScript non me lo fa
+compilare; con NestJS lo stesso errore lo vedi a runtime, a servizio già
+avviato. Anche gli errori stanno nel tipo: quelli che non gestisco restano
+nella firma, e se ne resta uno dove ho dichiarato che non ce ne sono più, non
+compila. E il tempo si prova senza aspettarlo.
+
+In produzione non lo terrei come libreria. Metterei tutto dentro il servizio,
+con i MID definiti lì, senza un livello in mezzo da tenere generico. Poi
+guarderei Cluster di Effect: oggi serve un'istanza per ogni gruppo di
+controller, e se quella cade porta giù le connessioni con tutti.
