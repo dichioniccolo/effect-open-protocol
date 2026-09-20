@@ -50,6 +50,17 @@ is `CLEAN`. The next action is P4 Close, once it merges.
 - Variant schemas construct with `.make(...)`; `.makeUnsafe(...)` does not
   exist on `Schema.Struct`.
 
+### Second pass (2026-09-20), `DECISIONS.md` Q8
+
+- `WireStore.ts` holds no statement text. `RunRepository` (its own service,
+  `SqlModel.makeRepository` over `Run`) does the run insert; `queries.ts` holds
+  the projection, the event page, the end stamp and the batch insert.
+- `Run.id` moved from `Model.GeneratedByDb` to
+  `Model.Field({ select, update, json })`: `makeRepository` needs the id in the
+  update variant. `Run.insert` is unchanged.
+- `makeResolvers` stays rejected — `SqlRequest` deduplicates equal payloads and
+  two traced events can be equal, so the recorder would lose rows.
+
 ## P4 Closeout Checklist
 
 Before marking the packet closed (and `status` → `completed-retained` / `complete`):

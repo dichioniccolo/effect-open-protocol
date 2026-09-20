@@ -22,11 +22,12 @@ change anywhere.
 
 - No new dependency. `Model` ships inside `effect@4.0.0-rc.115` as
   `effect/unstable/schema/Model`; `@effect/sql` is neither installed nor needed.
-- No `SqlModel.makeRepository` and no `SqlModel.makeResolvers`. The
-  repository derives six operations, four of which this store cannot use, and
-  its insert is row-at-a-time. The resolvers do batch a multi-row insert, but
-  across concurrent requests rather than the time window the recorder's queue
-  opens — see `DECISIONS.md` Q1 and its correction.
+- No `SqlModel.makeResolvers`. It emits the same multi-row insert, but
+  `SqlRequest` deduplicates equal payloads, and two traced events are equal
+  whenever the same bytes cross the same connection inside the same
+  millisecond — the recorder would lose rows. See `DECISIONS.md` Q8.
+  (`SqlModel.makeRepository` **is** used, through `RunRepository`; the original
+  Q1 rejection of it was narrowed in Q8.)
 - No change to the six `WireStoreService` operations: same names, same argument
   order, same error channels, `findRun` still returning `Option`.
 - No compatibility aliases for the old schema names.
@@ -69,7 +70,9 @@ Higher sources outrank lower sources when they conflict.
 
   ```ts
   export class Run extends Model.Class<Run>("Run")({
-    id: Model.GeneratedByDb(RunId),
+    // `GeneratedByDb` omits the id from `update`, which `makeRepository`
+    // requires; this is the documented shape for a primary key.
+    id: Model.Field({ select: RunId, update: RunId, json: RunId }),
     side: RunSide,
     startedAt: S.String,
     endedAt: Model.FieldOption(S.String),
@@ -128,8 +131,10 @@ Higher sources outrank lower sources when they conflict.
 - [ ] `WireStoreService` keeps its six operations with unchanged semantics,
       typed as `Run.insert` in, `RunSummary` / `TracedEvent` out,
       `TracedEvent.insert[]` for the batch.
-- [ ] The SQL text in `WireStore.ts` and every migration in `migrations.ts` is
-      byte-identical to before.
+- [ ] `migrations.ts` is byte-identical to before.
+- [ ] `WireStore.ts` contains no statement text: the run insert goes through
+      `RunRepository`, and every other statement lives in `queries.ts` with the
+      same text it had before.
 - [ ] `bun run check` passes across every workspace.
 - [ ] `bun run lint` and `bun run format:check` pass.
 - [ ] `bun run test` passes with test assertions unchanged except for renamed
@@ -145,7 +150,8 @@ Higher sources outrank lower sources when they conflict.
 | Format | `bun run format:check` | Passes |
 | Tests | `bun run test` | Passes |
 | Old names gone | `rg -n "RunStart\|NewEvent\|StoredEvent" packages apps` | No matches |
-| SQL untouched | `git diff -- packages/store/src/migrations.ts` | Empty |
+| Migrations untouched | `git diff -- packages/store/src/migrations.ts` | Empty |
+| No SQL in the service | `rg -n "sql\`" packages/store/src/WireStore.ts` | Prose only, no statements |
 | Packet launcher size | `test "$(wc -m < goals/trace-schema-models/GOAL.md)" -le 4000` | Passes |
 | Manifest JSON | `jq . goals/trace-schema-models/ops/manifest.json` | Passes |
 | Whitespace | `git diff --check -- goals/trace-schema-models` | Passes |
@@ -163,6 +169,7 @@ that file is the authority for rationale and rejected options.
 | Q4 | The event model is `TracedEvent`. |
 | Q5 | `WireStore`'s six operations keep their semantics; only the schema types move. |
 | Q6 | Appetite: one sitting. |
+| Q8 | No statement text inside services: `RunRepository` derives the run insert, `queries.ts` holds the rest, `WireStore` composes them. `makeResolvers` stays out — it deduplicates equal payloads. |
 
 ## Stop Conditions
 

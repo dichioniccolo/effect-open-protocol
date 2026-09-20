@@ -128,7 +128,9 @@ const Count = S.Int.check(S.isGreaterThanOrEqualTo(0))
  * @since 0.0.0
  */
 export class Run extends Model.Class<Run>("Run")({
-  id: Model.GeneratedByDb(RunId),
+  // The database assigns it, so it is absent from `insert`; `update` keeps it
+  // because that is how a repository names the row it is updating.
+  id: Model.Field({ select: RunId, update: RunId, json: RunId }),
   side: RunSide,
   startedAt: S.String,
   // Never part of an insert: a run's end is stamped later, by `endRun`.

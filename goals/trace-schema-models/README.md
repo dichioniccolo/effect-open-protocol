@@ -44,7 +44,7 @@ not `@effect/sql`, and why `makeRepository` and `makeResolvers` are both out),
 
 ## Current Phase
 
-P3 PR to mergeable — [PR #11](https://github.com/dichioniccolo/effect-open-protocol/pull/11)
+P3 PR to mergeable, second pass — [PR #11](https://github.com/dichioniccolo/effect-open-protocol/pull/11)
 is open and `mergeStateStatus` is `CLEAN` with no unresolved threads. Next:
 P4 Close, once it merges.
 
@@ -60,10 +60,12 @@ Local, 2026-09-20: `bun run check` (4/4 workspaces), `bun run lint`,
 
 ## Notes
 
-- The store is **not** raw-SQL-naive today: every query already runs through
-  `SqlSchema` (`packages/store/src/WireStore.ts:81-114`). The duplication this
-  packet removes is in `Schema.ts`, not in the query layer. Do not "improve"
-  the queries along the way.
+- The store was never raw-SQL-naive: every query already ran through
+  `SqlSchema`. The duplication this packet set out to remove was in
+  `Schema.ts`. A second pass (`DECISIONS.md` Q8) then moved the statements
+  themselves out of the service — `RunRepository` derives the run insert,
+  `queries.ts` holds what no derivation expresses, and `WireStore` composes
+  them.
 - The `Model.Class(...).extend(...)` assumption for `RunSummary` held: it
   typechecks and yields a plain `Schema.Class`, exactly what a read model
   wants.
